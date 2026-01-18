@@ -2,6 +2,40 @@
 
 A comprehensive CRM and sales intelligence platform for Paintless Dent Repair (PDR) businesses, featuring real-time hail storm tracking, lead management, and a mobile Progressive Web App for field sales teams.
 
+## Screenshots
+
+### Mobile App - Dashboard
+<!-- TODO: Add screenshot -->
+![Dashboard](docs/screenshots/mobile-dashboard.png)
+*Real-time sales metrics, daily goals, and performance tracking*
+
+### Mobile App - Route Planning
+<!-- TODO: Add screenshot -->
+![Route Planning](docs/screenshots/mobile-route.png)
+*Optimized daily routes with map integration*
+
+### Mobile App - Lead Capture
+<!-- TODO: Add screenshot -->
+![Lead Capture](docs/screenshots/mobile-leads.png)
+*Quick lead entry with property details*
+
+### Mobile App - Leaderboard
+<!-- TODO: Add screenshot -->
+![Leaderboard](docs/screenshots/mobile-leaderboard.png)
+*Gamified team competition and achievements*
+
+### Mobile App - Sales Scripts
+<!-- TODO: Add screenshot -->
+![Sales Scripts](docs/screenshots/mobile-scripts.png)
+*Objection handling and closing techniques*
+
+### Mobile App - Competitor Intel
+<!-- TODO: Add screenshot -->
+![Competitor Intel](docs/screenshots/mobile-competitors.png)
+*Track competitor activity in your territory*
+
+---
+
 ## Features
 
 ### Core Platform

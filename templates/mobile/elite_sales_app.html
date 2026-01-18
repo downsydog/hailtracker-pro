@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#00d4ff">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="msapplication-TileColor" content="#1a1a2e">
+    <meta name="msapplication-TileImage" content="/static/mobile/icons/icon-144.png">
+    <title>Elite Sales - HailTracker Pro</title>
+
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="/mobile/manifest.json">
+
+    <!-- Icons -->
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/mobile/icons/favicon-32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/static/mobile/icons/favicon-16.png">
+    <link rel="apple-touch-icon" href="/static/mobile/icons/apple-touch-icon.png">
+    <link rel="apple-touch-icon" sizes="152x152" href="/static/mobile/icons/icon-152.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/static/mobile/icons/apple-touch-icon.png">
+    <link rel="apple-touch-icon" sizes="192x192" href="/static/mobile/icons/icon-192.png">
+
+    <!-- Styles -->
+    <link rel="stylesheet" href="/static/mobile/css/elite_sales.css">
+
+    <!-- Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <!-- App Container -->
+    <div id="app">
+        <!-- Top Header -->
+        <header class="top-header" id="topHeader">
+            <div class="header-left">
+                <button class="menu-btn" onclick="toggleMenu()">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <span class="app-title">Elite Sales</span>
+            </div>
+            <div class="header-right">
+                <span class="points-badge" id="pointsBadge">0 pts</span>
+                <span class="rank-badge" id="rankBadge">#-</span>
+            </div>
+        </header>
+
+        <!-- Side Menu -->
+        <div class="side-menu" id="sideMenu">
+            <div class="menu-header">
+                <div class="user-avatar" id="userAvatar">MJ</div>
+                <div class="user-info">
+                    <div class="user-name" id="userName">Loading...</div>
+                    <div class="user-stats" id="userStats">0 leads today</div>
+                </div>
+            </div>
+            <nav class="menu-nav">
+                <a href="#" class="menu-item active" data-view="dashboard">
+                    <i class="fas fa-home"></i> Dashboard
+                </a>
+                <a href="#" class="menu-item" data-view="route">
+                    <i class="fas fa-route"></i> Today's Route
+                </a>
+                <a href="#" class="menu-item" data-view="leads">
+                    <i class="fas fa-user-plus"></i> My Leads
+                </a>
+                <a href="#" class="menu-item" data-view="estimate">
+                    <i class="fas fa-calculator"></i> Instant Estimate
+                </a>
+                <a href="#" class="menu-item" data-view="scripts">
+                    <i class="fas fa-comment-dots"></i> Scripts
+                </a>
+                <a href="#" class="menu-item" data-view="leaderboard">
+                    <i class="fas fa-trophy"></i> Leaderboard
+                </a>
+                <a href="#" class="menu-item" data-view="competitors">
+                    <i class="fas fa-eye"></i> Competitors
+                </a>
+                <a href="#" class="menu-item" data-view="settings">
+                    <i class="fas fa-cog"></i> Settings
+                </a>
+            </nav>
+        </div>
+        <div class="menu-overlay" id="menuOverlay" onclick="toggleMenu()"></div>
+
+        <!-- Main Content Views -->
+        <main class="main-content">
+            <!-- Dashboard View -->
+            <div class="view active" id="dashboardView">
+                <!-- Quick Stats -->
+                <div class="stats-row">
+                    <div class="stat-card">
+                        <div class="stat-value" id="statLeadsToday">0</div>
+                        <div class="stat-label">Leads Today</div>
+                    </div>
+                    <div class="stat-card hot">
+                        <div class="stat-value" id="statHotLeads">0</div>
+                        <div class="stat-label">Hot Leads</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="statDoorsKnocked">0</div>
+                        <div class="stat-label">Doors</div>
+                    </div>
+                </div>
+
+                <!-- Current Stop Card -->
+                <div class="card current-stop-card" id="currentStopCard">
+                    <div class="card-header">
+                        <span class="card-title"><i class="fas fa-map-marker-alt"></i> Next Stop</span>
+                        <span class="stop-number" id="stopNumber">#1 of 50</span>
+                    </div>
+                    <div class="stop-address" id="stopAddress">Loading route...</div>
+                    <div class="property-intel" id="propertyIntel">
+                        <!-- Property intelligence loaded here -->
+                    </div>
+                    <div class="stop-actions">
+                        <button class="btn btn-primary" onclick="navigateToStop()">
+                            <i class="fas fa-directions"></i> Navigate
+                        </button>
+                        <button class="btn btn-success" onclick="showQuickLead()">
+                            <i class="fas fa-plus"></i> Add Lead
+                        </button>
+                        <button class="btn btn-secondary" onclick="skipStop()">
+                            <i class="fas fa-forward"></i> Skip
+                        </button>
+                    </div>
+                </div>
+
+                <!-- DNK Warning (hidden by default) -->
+                <div class="alert alert-warning dnk-alert" id="dnkAlert" style="display: none;">
+                    <i class="fas fa-ban"></i>
+                    <div class="alert-content">
+                        <strong>Do Not Knock</strong>
+                        <span id="dnkReason"></span>
+                    </div>
+                </div>
+
+                <!-- Competitor Alert (hidden by default) -->
+                <div class="alert alert-danger competitor-alert" id="competitorAlert" style="display: none;">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <div class="alert-content">
+                        <strong>Competitor Nearby</strong>
+                        <span id="competitorInfo"></span>
+                    </div>
+                </div>
+
+                <!-- Quick Actions -->
+                <div class="quick-actions">
+                    <button class="action-btn" onclick="showView('estimate')">
+                        <i class="fas fa-camera"></i>
+                        <span>Photo Estimate</span>
+                    </button>
+                    <button class="action-btn" onclick="logCompetitor()">
+                        <i class="fas fa-eye"></i>
+                        <span>Log Competitor</span>
+                    </button>
+                    <button class="action-btn" onclick="markDNK()">
+                        <i class="fas fa-ban"></i>
+                        <span>Mark DNK</span>
+                    </button>
+                    <button class="action-btn" onclick="showView('scripts')">
+                        <i class="fas fa-comment"></i>
+                        <span>Scripts</span>
+                    </button>
+                </div>
+
+                <!-- Recent Achievements -->
+                <div class="card" id="achievementsCard">
+                    <div class="card-header">
+                        <span class="card-title"><i class="fas fa-medal"></i> Recent Achievements</span>
+                    </div>
+                    <div class="achievements-list" id="achievementsList">
+                        <!-- Achievements loaded here -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Route View -->
+            <div class="view" id="routeView">
+                <div class="route-header">
+                    <div class="route-stats">
+                        <div class="route-stat">
+                            <span class="route-stat-value" id="routeStops">0</span>
+                            <span class="route-stat-label">Stops</span>
+                        </div>
+                        <div class="route-stat">
+                            <span class="route-stat-value" id="routeDistance">0</span>
+                            <span class="route-stat-label">Miles</span>
+                        </div>
+                        <div class="route-stat">
+                            <span class="route-stat-value" id="routeTime">0:00</span>
+                            <span class="route-stat-label">Est. Time</span>
+                        </div>
+                    </div>
+                    <div class="route-progress">
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="routeProgress" style="width: 0%"></div>
+                        </div>
+                        <span class="progress-text" id="routeProgressText">0% complete</span>
+                    </div>
+                </div>
+
+                <div class="route-list" id="routeList">
+                    <!-- Route stops loaded here -->
+                </div>
+
+                <button class="btn btn-primary btn-block" onclick="generateNewRoute()">
+                    <i class="fas fa-sync"></i> Generate New Route
+                </button>
+            </div>
+
+            <!-- Leads View -->
+            <div class="view" id="leadsView">
+                <div class="leads-header">
+                    <div class="leads-filter">
+                        <button class="filter-btn active" data-filter="all">All</button>
+                        <button class="filter-btn" data-filter="HOT">Hot</button>
+                        <button class="filter-btn" data-filter="WARM">Warm</button>
+                        <button class="filter-btn" data-filter="COLD">Cold</button>
+                    </div>
+                </div>
+
+                <div class="leads-list" id="leadsList">
+                    <!-- Leads loaded here -->
+                </div>
+
+                <button class="fab" onclick="showQuickLead()">
+                    <i class="fas fa-plus"></i>
+                </button>
+            </div>
+
+            <!-- Instant Estimate View -->
+            <div class="view" id="estimateView">
+                <div class="estimate-steps">
+                    <!-- Step 1: Vehicle Info -->
+                    <div class="estimate-step active" id="estimateStep1">
+                        <h3>Vehicle Information</h3>
+                        <div class="form-group">
+                            <label>Year</label>
+                            <input type="number" id="vehicleYear" placeholder="2022" min="1990" max="2026">
+                        </div>
+                        <div class="form-group">
+                            <label>Make</label>
+                            <input type="text" id="vehicleMake" placeholder="Toyota">
+                        </div>
+                        <div class="form-group">
+                            <label>Model</label>
+                            <input type="text" id="vehicleModel" placeholder="Camry">
+                        </div>
+                        <button class="btn btn-primary btn-block" onclick="nextEstimateStep()">
+                            Next: Take Photos <i class="fas fa-arrow-right"></i>
+                        </button>
+                    </div>
+
+                    <!-- Step 2: Photos -->
+                    <div class="estimate-step" id="estimateStep2">
+                        <h3>Capture Damage Photos</h3>
+                        <p class="step-hint">Take 3-5 photos of the damaged areas</p>
+
+                        <div class="photo-grid" id="photoGrid">
+                            <div class="photo-slot" onclick="capturePhoto()">
+                                <i class="fas fa-camera"></i>
+                                <span>Add Photo</span>
+                            </div>
+                        </div>
+
+                        <input type="file" id="photoInput" accept="image/*" capture="environment" style="display: none;" onchange="handlePhoto(event)">
+
+                        <div class="step-actions">
+                            <button class="btn btn-secondary" onclick="prevEstimateStep()">
+                                <i class="fas fa-arrow-left"></i> Back
+                            </button>
+                            <button class="btn btn-primary" onclick="generateEstimate()">
+                                Generate Estimate <i class="fas fa-magic"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Step 3: Results -->
+                    <div class="estimate-step" id="estimateStep3">
+                        <h3>Instant Estimate</h3>
+
+                        <div class="estimate-result" id="estimateResult">
+                            <!-- Results loaded here -->
+                        </div>
+
+                        <div class="step-actions">
+                            <button class="btn btn-secondary" onclick="resetEstimate()">
+                                <i class="fas fa-redo"></i> New Estimate
+                            </button>
+                            <button class="btn btn-success" onclick="createContract()">
+                                <i class="fas fa-file-signature"></i> Create Contract
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Scripts View -->
+            <div class="view" id="scriptsView">
+                <div class="scripts-tabs">
+                    <button class="script-tab active" data-script="DOOR_APPROACH">Opening</button>
+                    <button class="script-tab" data-script="OBJECTION_PRICE">Price</button>
+                    <button class="script-tab" data-script="OBJECTION_TIME">Time</button>
+                    <button class="script-tab" data-script="OBJECTION_INSURANCE">Insurance</button>
+                    <button class="script-tab" data-script="CLOSE_APPOINTMENT">Close</button>
+                </div>
+
+                <div class="script-content" id="scriptContent">
+                    <!-- Script content loaded here -->
+                </div>
+
+                <div class="script-tips" id="scriptTips">
+                    <!-- Tips loaded here -->
+                </div>
+
+                <div class="objection-log">
+                    <h4>Log Objection Outcome</h4>
+                    <div class="outcome-buttons">
+                        <button class="outcome-btn success" onclick="logObjection('CONVERTED')">
+                            <i class="fas fa-check"></i> Converted
+                        </button>
+                        <button class="outcome-btn warning" onclick="logObjection('FOLLOW_UP')">
+                            <i class="fas fa-clock"></i> Follow Up
+                        </button>
+                        <button class="outcome-btn danger" onclick="logObjection('LOST')">
+                            <i class="fas fa-times"></i> Lost
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Leaderboard View -->
+            <div class="view" id="leaderboardView">
+                <div class="leaderboard-tabs">
+                    <button class="lb-tab active" data-period="TODAY">Today</button>
+                    <button class="lb-tab" data-period="THIS_WEEK">This Week</button>
+                </div>
+
+                <div class="leaderboard-list" id="leaderboardList">
+                    <!-- Leaderboard loaded here -->
+                </div>
+
+                <div class="team-stats" id="teamStats">
+                    <!-- Team stats loaded here -->
+                </div>
+            </div>
+
+            <!-- Competitors View -->
+            <div class="view" id="competitorsView">
+                <div class="competitors-header">
+                    <h3>Competitor Activity</h3>
+                    <span class="last-7-days">Last 7 days</span>
+                </div>
+
+                <div class="competitor-summary" id="competitorSummary">
+                    <!-- Summary loaded here -->
+                </div>
+
+                <div class="competitor-list" id="competitorList">
+                    <!-- Activity loaded here -->
+                </div>
+
+                <button class="fab" onclick="logCompetitor()">
+                    <i class="fas fa-plus"></i>
+                </button>
+            </div>
+
+            <!-- Settings View -->
+            <div class="view" id="settingsView">
+                <div class="settings-section">
+                    <h3>Profile</h3>
+                    <div class="setting-item">
+                        <span>Salesperson ID</span>
+                        <span id="settingSalespersonId">-</span>
+                    </div>
+                    <div class="setting-item">
+                        <span>Name</span>
+                        <span id="settingName">-</span>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <h3>Notifications</h3>
+                    <div class="setting-item toggle">
+                        <span>Push Notifications</span>
+                        <label class="switch">
+                            <input type="checkbox" id="settingPush" checked>
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div class="setting-item toggle">
+                        <span>Competitor Alerts</span>
+                        <label class="switch">
+                            <input type="checkbox" id="settingCompetitor" checked>
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div class="setting-item toggle">
+                        <span>Achievement Sounds</span>
+                        <label class="switch">
+                            <input type="checkbox" id="settingSounds" checked>
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <h3>Route Preferences</h3>
+                    <div class="setting-item">
+                        <span>Default Stops</span>
+                        <select id="settingStops">
+                            <option value="25">25 stops</option>
+                            <option value="50" selected>50 stops</option>
+                            <option value="75">75 stops</option>
+                            <option value="100">100 stops</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <h3>Data</h3>
+                    <button class="btn btn-secondary btn-block" onclick="syncData()">
+                        <i class="fas fa-sync"></i> Sync Now
+                    </button>
+                    <button class="btn btn-danger btn-block" onclick="clearCache()">
+                        <i class="fas fa-trash"></i> Clear Cache
+                    </button>
+                </div>
+            </div>
+        </main>
+
+        <!-- Bottom Navigation -->
+        <nav class="bottom-nav">
+            <a href="#" class="nav-item active" data-view="dashboard">
+                <i class="fas fa-home"></i>
+                <span>Home</span>
+            </a>
+            <a href="#" class="nav-item" data-view="route">
+                <i class="fas fa-route"></i>
+                <span>Route</span>
+            </a>
+            <a href="#" class="nav-item nav-center" data-view="estimate">
+                <div class="nav-center-btn">
+                    <i class="fas fa-camera"></i>
+                </div>
+            </a>
+            <a href="#" class="nav-item" data-view="leads">
+                <i class="fas fa-users"></i>
+                <span>Leads</span>
+            </a>
+            <a href="#" class="nav-item" data-view="leaderboard">
+                <i class="fas fa-trophy"></i>
+                <span>Rank</span>
+            </a>
+        </nav>
+    </div>
+
+    <!-- Modals -->
+    <!-- Quick Lead Modal -->
+    <div class="modal" id="quickLeadModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Add Lead</h3>
+                <button class="modal-close" onclick="closeModal('quickLeadModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Customer Name *</label>
+                    <input type="text" id="leadName" placeholder="John Smith">
+                </div>
+                <div class="form-group">
+                    <label>Phone</label>
+                    <input type="tel" id="leadPhone" placeholder="(555) 123-4567">
+                </div>
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" id="leadEmail" placeholder="john@email.com">
+                </div>
+                <div class="form-group">
+                    <label>Lead Quality</label>
+                    <div class="quality-selector">
+                        <button class="quality-btn hot" data-quality="HOT">Hot</button>
+                        <button class="quality-btn warm active" data-quality="WARM">Warm</button>
+                        <button class="quality-btn cold" data-quality="COLD">Cold</button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Notes</label>
+                    <textarea id="leadNotes" placeholder="Damage description, vehicle info..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('quickLeadModal')">Cancel</button>
+                <button class="btn btn-success" onclick="saveLead()">
+                    <i class="fas fa-save"></i> Save Lead
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Competitor Modal -->
+    <div class="modal" id="competitorModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Log Competitor</h3>
+                <button class="modal-close" onclick="closeModal('competitorModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Competitor Name *</label>
+                    <input type="text" id="compName" placeholder="Dent Wizard" list="competitorNames">
+                    <datalist id="competitorNames">
+                        <option value="Dent Wizard">
+                        <option value="PDR Nation">
+                        <option value="Dent Pro">
+                        <option value="Paintless Dent Repair Co">
+                        <option value="Other">
+                    </datalist>
+                </div>
+                <div class="form-group">
+                    <label>Activity Type</label>
+                    <select id="compActivity">
+                        <option value="CANVASSING">Canvassing / Door-to-Door</option>
+                        <option value="TRUCK_PARKED">Truck Parked</option>
+                        <option value="WORKING_JOB">Working on Vehicle</option>
+                        <option value="SIGN_PLACED">Yard Sign Placed</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Notes</label>
+                    <textarea id="compNotes" placeholder="Description of what you saw..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('competitorModal')">Cancel</button>
+                <button class="btn btn-warning" onclick="saveCompetitor()">
+                    <i class="fas fa-exclamation-triangle"></i> Log Activity
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- DNK Modal -->
+    <div class="modal" id="dnkModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Mark Do-Not-Knock</h3>
+                <button class="modal-close" onclick="closeModal('dnkModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Reason *</label>
+                    <select id="dnkReason">
+                        <option value="NO_SOLICITING">No Soliciting Sign</option>
+                        <option value="REQUESTED">Customer Requested</option>
+                        <option value="AGGRESSIVE">Hostile/Aggressive</option>
+                        <option value="COMPETITOR">Working with Competitor</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Notes</label>
+                    <textarea id="dnkNotes" placeholder="Additional details..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('dnkModal')">Cancel</button>
+                <button class="btn btn-danger" onclick="saveDNK()">
+                    <i class="fas fa-ban"></i> Mark DNK
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Achievement Toast -->
+    <div class="achievement-toast" id="achievementToast">
+        <div class="achievement-icon" id="achievementIcon"></div>
+        <div class="achievement-info">
+            <div class="achievement-title" id="achievementTitle">Achievement Unlocked!</div>
+            <div class="achievement-name" id="achievementName"></div>
+            <div class="achievement-points" id="achievementPoints">+0 points</div>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="spinner"></div>
+        <div class="loading-text">Loading...</div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="/static/mobile/js/elite_sales_app.js"></script>
+</body>
+</html>

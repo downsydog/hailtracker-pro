@@ -2139,6 +2139,14 @@ def create_app(config=None):
     app.register_blueprint(mobile_bp)
     logger.info("Mobile app routes registered")
 
+    # ====================
+    # Customer Portal Routes
+    # ====================
+
+    from src.web.routes.customer_portal import customer_portal_bp
+    app.register_blueprint(customer_portal_bp)
+    logger.info("Customer Portal routes registered")
+
     return app
 
 

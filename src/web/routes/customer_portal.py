@@ -16,13 +16,16 @@ Routes:
 - /portal/documents - View documents
 """
 
-from flask import Blueprint, render_template, request, redirect, url_for, flash, session, jsonify, abort
+from flask import Blueprint, render_template, request, redirect, url_for, flash, session, jsonify, abort, Response
 from functools import wraps
 from datetime import datetime
 import os
+import json
+import time
 
 from src.crm.managers.customer_portal_manager import CustomerPortalManager
 from src.crm.managers.digital_flyer_manager import DigitalFlyerManager
+from src.crm.managers.job_notification_manager import JobNotificationManager
 
 # Create blueprint
 customer_portal_bp = Blueprint('customer_portal', __name__, url_prefix='/portal')
@@ -54,6 +57,11 @@ def get_portal_manager():
 def get_flyer_manager():
     """Get DigitalFlyerManager instance"""
     return DigitalFlyerManager(DB_PATH)
+
+
+def get_notification_manager():
+    """Get JobNotificationManager instance"""
+    return JobNotificationManager(DB_PATH)
 
 
 # ============================================================================
@@ -779,3 +787,249 @@ def api_unread_count():
     unread = manager.get_messages(customer_id, unread_only=True)
 
     return jsonify({'unread_count': len(unread)})
+
+
+# ============================================================================
+# NOTIFICATIONS
+# ============================================================================
+
+@customer_portal_bp.route('/notifications')
+@portal_login_required
+def notifications():
+    """View all notifications"""
+
+    customer_id = session['portal_customer_id']
+    notification_manager = get_notification_manager()
+
+    all_notifications = notification_manager.get_notifications(customer_id, limit=100)
+    unread_count = notification_manager.get_unread_count(customer_id)
+    preferences = notification_manager.get_customer_preferences(customer_id)
+
+    return render_template('customer_portal/notifications.html',
+        customer_name=session.get('portal_customer_name'),
+        notifications=all_notifications,
+        unread_count=unread_count,
+        preferences=preferences
+    )
+
+
+@customer_portal_bp.route('/notifications/preferences', methods=['GET', 'POST'])
+@portal_login_required
+def notification_preferences():
+    """View and update notification preferences"""
+
+    customer_id = session['portal_customer_id']
+    notification_manager = get_notification_manager()
+
+    if request.method == 'POST':
+        # Build preferences from form
+        preferences = {
+            'email_enabled': request.form.get('email_enabled') == 'on',
+            'sms_enabled': request.form.get('sms_enabled') == 'on',
+            'push_enabled': request.form.get('push_enabled') == 'on',
+            'in_app_enabled': request.form.get('in_app_enabled') == 'on',
+            'quiet_hours_start': request.form.get('quiet_hours_start') or None,
+            'quiet_hours_end': request.form.get('quiet_hours_end') or None
+        }
+
+        # Get selected statuses
+        notify_statuses = request.form.getlist('notify_statuses')
+        if notify_statuses:
+            preferences['notify_on_statuses'] = notify_statuses
+
+        notification_manager.update_customer_preferences(customer_id, preferences)
+        flash('Notification preferences updated successfully!', 'success')
+        return redirect(url_for('customer_portal.notification_preferences'))
+
+    # GET - show preferences form
+    preferences = notification_manager.get_customer_preferences(customer_id)
+
+    # All available statuses for selection
+    all_statuses = [
+        ('APPROVED', 'Insurance Approved'),
+        ('SCHEDULED', 'Repair Scheduled'),
+        ('DROPPED_OFF', 'Vehicle Received'),
+        ('IN_PROGRESS', 'Repair Started'),
+        ('TECH_COMPLETE', 'Repair Work Complete'),
+        ('QC_COMPLETE', 'Quality Check Passed'),
+        ('READY_FOR_PICKUP', 'Ready for Pickup'),
+        ('COMPLETED', 'Job Completed'),
+        ('WAITING_PARTS', 'Waiting for Parts'),
+        ('PARTS_RECEIVED', 'Parts Arrived'),
+        ('ESTIMATE_CREATED', 'Estimate Ready'),
+        ('INVOICED', 'Invoice Ready')
+    ]
+
+    return render_template('customer_portal/notification_preferences.html',
+        customer_name=session.get('portal_customer_name'),
+        preferences=preferences,
+        all_statuses=all_statuses
+    )
+
+
+# ============================================================================
+# NOTIFICATION API ENDPOINTS
+# ============================================================================
+
+@customer_portal_bp.route('/api/notifications')
+@portal_login_required
+def api_notifications():
+    """API: Get all notifications"""
+
+    customer_id = session['portal_customer_id']
+    notification_manager = get_notification_manager()
+
+    unread_only = request.args.get('unread_only', 'false').lower() == 'true'
+    limit = min(int(request.args.get('limit', 50)), 100)
+
+    notifications = notification_manager.get_notifications(
+        customer_id,
+        unread_only=unread_only,
+        limit=limit
+    )
+
+    return jsonify({
+        'notifications': notifications,
+        'unread_count': notification_manager.get_unread_count(customer_id)
+    })
+
+
+@customer_portal_bp.route('/api/notifications/unread-count')
+@portal_login_required
+def api_notification_unread_count():
+    """API: Get unread notification count"""
+
+    customer_id = session['portal_customer_id']
+    notification_manager = get_notification_manager()
+
+    return jsonify({
+        'unread_count': notification_manager.get_unread_count(customer_id)
+    })
+
+
+@customer_portal_bp.route('/api/notifications/<int:notif_id>/read', methods=['POST'])
+@portal_login_required
+def api_mark_notification_read(notif_id):
+    """API: Mark notification as read"""
+
+    notification_manager = get_notification_manager()
+    notification_manager.mark_as_read(notif_id)
+
+    return jsonify({'success': True})
+
+
+@customer_portal_bp.route('/api/notifications/mark-all-read', methods=['POST'])
+@portal_login_required
+def api_mark_all_notifications_read():
+    """API: Mark all notifications as read"""
+
+    customer_id = session['portal_customer_id']
+    notification_manager = get_notification_manager()
+
+    notification_manager.mark_all_as_read(customer_id)
+
+    return jsonify({'success': True})
+
+
+@customer_portal_bp.route('/api/notifications/<int:notif_id>/dismiss', methods=['POST'])
+@portal_login_required
+def api_dismiss_notification(notif_id):
+    """API: Dismiss a notification"""
+
+    notification_manager = get_notification_manager()
+    notification_manager.dismiss_notification(notif_id)
+
+    return jsonify({'success': True})
+
+
+@customer_portal_bp.route('/api/notifications/stream')
+@portal_login_required
+def notification_stream():
+    """Server-Sent Events stream for real-time notifications"""
+
+    customer_id = session['portal_customer_id']
+
+    def generate():
+        notification_manager = get_notification_manager()
+        last_check = datetime.now()
+
+        # Send initial connection message
+        yield f"data: {json.dumps({'type': 'connected', 'timestamp': last_check.isoformat()})}\n\n"
+
+        while True:
+            try:
+                # Check for new notifications since last check
+                new_notifications = notification_manager.get_notifications_since(customer_id, last_check)
+
+                for notif in new_notifications:
+                    # Convert to JSON-serializable format
+                    notif_data = {
+                        'type': 'notification',
+                        'id': notif['id'],
+                        'notification_type': notif['notification_type'],
+                        'title': notif['title'],
+                        'message': notif['message'],
+                        'priority': notif['priority'],
+                        'job_id': notif.get('job_id'),
+                        'job_number': notif.get('job_number'),
+                        'created_at': notif['created_at']
+                    }
+                    yield f"data: {json.dumps(notif_data)}\n\n"
+
+                last_check = datetime.now()
+
+                # Send heartbeat every 30 seconds
+                yield f"data: {json.dumps({'type': 'heartbeat', 'timestamp': last_check.isoformat()})}\n\n"
+
+                # Wait before next check
+                time.sleep(5)
+
+            except GeneratorExit:
+                # Client disconnected
+                break
+            except Exception as e:
+                # Send error and continue
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+                time.sleep(5)
+
+    return Response(
+        generate(),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no'
+        }
+    )
+
+
+@customer_portal_bp.route('/api/notifications/preferences', methods=['GET', 'POST'])
+@portal_login_required
+def api_notification_preferences():
+    """API: Get or update notification preferences"""
+
+    customer_id = session['portal_customer_id']
+    notification_manager = get_notification_manager()
+
+    if request.method == 'POST':
+        data = request.get_json() or {}
+
+        preferences = {
+            'email_enabled': data.get('email_enabled', True),
+            'sms_enabled': data.get('sms_enabled', False),
+            'push_enabled': data.get('push_enabled', False),
+            'in_app_enabled': data.get('in_app_enabled', True),
+            'quiet_hours_start': data.get('quiet_hours_start'),
+            'quiet_hours_end': data.get('quiet_hours_end')
+        }
+
+        if 'notify_on_statuses' in data:
+            preferences['notify_on_statuses'] = data['notify_on_statuses']
+
+        notification_manager.update_customer_preferences(customer_id, preferences)
+
+        return jsonify({'success': True})
+
+    # GET
+    preferences = notification_manager.get_customer_preferences(customer_id)
+    return jsonify(preferences)

@@ -155,18 +155,10 @@ class OnboardingSchema:
         # JOB STATUS TABLES
         # ====================================================================
 
-        # Job status history - audit trail of status changes
+        # Job status history index (table is created by schema.py)
         db.execute("""
-            CREATE TABLE IF NOT EXISTS job_status_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                job_id INTEGER NOT NULL,
-                status TEXT NOT NULL,
-                notes TEXT,
-                changed_at TEXT,
-                changed_by INTEGER,
-                FOREIGN KEY (job_id) REFERENCES jobs(id),
-                FOREIGN KEY (changed_by) REFERENCES technicians(id)
-            )
+            CREATE INDEX IF NOT EXISTS idx_job_status_history_job
+            ON job_status_history(job_id)
         """)
 
         # ====================================================================
@@ -331,6 +323,46 @@ class OnboardingSchema:
         """)
 
         # ====================================================================
+        # NOTIFICATION TABLES
+        # ====================================================================
+
+        # Customer notification preferences
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS customer_notification_preferences (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_id INTEGER NOT NULL UNIQUE,
+                email_enabled INTEGER DEFAULT 1,
+                sms_enabled INTEGER DEFAULT 0,
+                push_enabled INTEGER DEFAULT 0,
+                in_app_enabled INTEGER DEFAULT 1,
+                notify_on_statuses TEXT,
+                quiet_hours_start TEXT,
+                quiet_hours_end TEXT,
+                created_at TEXT,
+                updated_at TEXT,
+                FOREIGN KEY (customer_id) REFERENCES customers(id)
+            )
+        """)
+
+        # In-app notifications for customer portal
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS customer_notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_id INTEGER NOT NULL,
+                job_id INTEGER,
+                notification_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                message TEXT NOT NULL,
+                status TEXT DEFAULT 'UNREAD',
+                priority TEXT DEFAULT 'NORMAL',
+                created_at TEXT,
+                read_at TEXT,
+                FOREIGN KEY (customer_id) REFERENCES customers(id),
+                FOREIGN KEY (job_id) REFERENCES jobs(id)
+            )
+        """)
+
+        # ====================================================================
         # CREATE INDEXES
         # ====================================================================
 
@@ -388,6 +420,20 @@ class OnboardingSchema:
             ON flyer_views(customer_id)
         """)
 
+        # Notification indexes
+        db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_customer_notifications_customer_id
+            ON customer_notifications(customer_id)
+        """)
+        db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_customer_notifications_status
+            ON customer_notifications(status)
+        """)
+        db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_customer_notifications_created_at
+            ON customer_notifications(created_at)
+        """)
+
         print("[OK] Created onboarding schema tables")
         print("     - enrollment_sessions")
         print("     - enrollment_photos")
@@ -396,7 +442,6 @@ class OnboardingSchema:
         print("     - portal_credentials")
         print("     - customer_portal_access")
         print("     - customer_portal_logins")
-        print("     - job_status_history")
         print("     - customer_referrals")
         print("     - referral_link_clicks")
         print("     - referral_commission_payments")
@@ -407,3 +452,5 @@ class OnboardingSchema:
         print("     - flyer_ab_variants")
         print("     - customer_documents")
         print("     - customer_communications")
+        print("     - customer_notification_preferences")
+        print("     - customer_notifications")

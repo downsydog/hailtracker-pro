@@ -53,6 +53,66 @@
         .status-in_progress { background: #dbeafe; color: #1e40af; }
         .status-completed { background: #d1fae5; color: #065f46; }
         .status-scheduled { background: #e0e7ff; color: #3730a3; }
+
+        /* Notification styles */
+        .notification-dropdown {
+            position: absolute;
+            right: 0;
+            top: 100%;
+            width: 320px;
+            max-height: 400px;
+            overflow-y: auto;
+            background: white;
+            border-radius: 0.5rem;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+            z-index: 50;
+        }
+
+        .notification-item {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid #e5e7eb;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .notification-item:hover {
+            background: #f9fafb;
+        }
+
+        .notification-item.unread {
+            background: #eff6ff;
+        }
+
+        .notification-item.unread:hover {
+            background: #dbeafe;
+        }
+
+        .notification-badge-pulse {
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .notification-toast {
+            position: fixed;
+            bottom: 1.5rem;
+            right: 1.5rem;
+            background: white;
+            border-radius: 0.5rem;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+            padding: 1rem;
+            max-width: 350px;
+            z-index: 100;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
     </style>
 
     {% block head %}{% endblock %}
@@ -65,9 +125,18 @@
             <i class="fas fa-cloud-rain text-2xl text-emerald-400"></i>
             <span class="font-bold text-lg">Customer Portal</span>
         </div>
-        <button id="mobile-menu-btn" class="text-2xl">
-            <i class="fas fa-bars"></i>
-        </button>
+        <div class="flex items-center space-x-4">
+            <!-- Mobile Notification Bell -->
+            <div class="relative">
+                <button onclick="toggleNotifications()" class="text-xl relative">
+                    <i class="fas fa-bell"></i>
+                    <span id="mobile-notification-badge" class="hidden absolute -top-1 -right-1 bg-red-500 text-xs w-5 h-5 rounded-full flex items-center justify-center notification-badge-pulse">0</span>
+                </button>
+            </div>
+            <button id="mobile-menu-btn" class="text-2xl">
+                <i class="fas fa-bars"></i>
+            </button>
+        </div>
     </div>
 
     <div class="flex min-h-screen">
@@ -84,15 +153,40 @@
                 </div>
             </div>
 
-            <!-- User Info -->
+            <!-- User Info with Notification Bell -->
             <div class="p-4 border-b border-white/10">
-                <div class="flex items-center space-x-3">
-                    <div class="w-10 h-10 bg-emerald-500 rounded-full flex items-center justify-center">
-                        <i class="fas fa-user"></i>
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-10 h-10 bg-emerald-500 rounded-full flex items-center justify-center">
+                            <i class="fas fa-user"></i>
+                        </div>
+                        <div>
+                            <p class="font-medium">{{ customer_name or 'Customer' }}</p>
+                            <p class="text-xs text-gray-400">Welcome back!</p>
+                        </div>
                     </div>
-                    <div>
-                        <p class="font-medium">{{ customer_name or 'Customer' }}</p>
-                        <p class="text-xs text-gray-400">Welcome back!</p>
+                    <!-- Desktop Notification Bell -->
+                    <div class="relative" id="notification-container">
+                        <button onclick="toggleNotifications()" class="text-xl relative p-2 hover:bg-white/10 rounded-lg transition">
+                            <i class="fas fa-bell"></i>
+                            <span id="notification-badge" class="hidden absolute -top-0 -right-0 bg-red-500 text-xs w-5 h-5 rounded-full flex items-center justify-center notification-badge-pulse">0</span>
+                        </button>
+                        <!-- Notification Dropdown -->
+                        <div id="notification-dropdown" class="hidden notification-dropdown text-gray-800">
+                            <div class="p-3 border-b border-gray-200 flex items-center justify-between bg-gray-50">
+                                <span class="font-semibold">Notifications</span>
+                                <button onclick="markAllAsRead()" class="text-xs text-blue-600 hover:text-blue-800">Mark all read</button>
+                            </div>
+                            <div id="notification-list" class="max-h-80 overflow-y-auto">
+                                <div class="p-4 text-center text-gray-500 text-sm">
+                                    <i class="fas fa-bell-slash text-2xl mb-2"></i>
+                                    <p>No notifications</p>
+                                </div>
+                            </div>
+                            <div class="p-2 border-t border-gray-200 bg-gray-50">
+                                <a href="{{ url_for('customer_portal.notifications') }}" class="block text-center text-sm text-blue-600 hover:text-blue-800">View all notifications</a>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -128,6 +222,11 @@
                     <i class="fas fa-envelope w-5"></i>
                     <span>Messages</span>
                     <span id="unread-badge" class="ml-auto bg-red-500 text-xs px-2 py-0.5 rounded-full hidden">0</span>
+                </a>
+                <a href="{{ url_for('customer_portal.notifications') }}" class="nav-link flex items-center space-x-3 px-4 py-3 rounded-lg {% if 'notification' in request.endpoint %}active{% endif %}">
+                    <i class="fas fa-bell w-5"></i>
+                    <span>Notifications</span>
+                    <span id="nav-notification-badge" class="ml-auto bg-red-500 text-xs px-2 py-0.5 rounded-full hidden">0</span>
                 </a>
                 <a href="{{ url_for('customer_portal.loyalty') }}" class="nav-link flex items-center space-x-3 px-4 py-3 rounded-lg {% if 'loyalty' in request.endpoint %}active{% endif %}">
                     <i class="fas fa-star w-5"></i>
@@ -259,6 +358,238 @@
         checkUnreadMessages();
         // Check every 30 seconds
         setInterval(checkUnreadMessages, 30000);
+
+        // ================================================================
+        // NOTIFICATION SYSTEM
+        // ================================================================
+
+        let notificationDropdownOpen = false;
+        let eventSource = null;
+
+        // Toggle notification dropdown
+        function toggleNotifications() {
+            const dropdown = document.getElementById('notification-dropdown');
+            notificationDropdownOpen = !notificationDropdownOpen;
+
+            if (notificationDropdownOpen) {
+                dropdown.classList.remove('hidden');
+                loadNotifications();
+            } else {
+                dropdown.classList.add('hidden');
+            }
+        }
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', function(event) {
+            const container = document.getElementById('notification-container');
+            const dropdown = document.getElementById('notification-dropdown');
+            if (container && dropdown && !container.contains(event.target)) {
+                dropdown.classList.add('hidden');
+                notificationDropdownOpen = false;
+            }
+        });
+
+        // Load notifications
+        async function loadNotifications() {
+            try {
+                const response = await fetch('/portal/api/notifications?limit=10');
+                const data = await response.json();
+
+                updateNotificationBadges(data.unread_count);
+                renderNotificationList(data.notifications);
+            } catch (e) {
+                console.error('Failed to load notifications:', e);
+            }
+        }
+
+        // Update all notification badges
+        function updateNotificationBadges(count) {
+            const badges = [
+                document.getElementById('notification-badge'),
+                document.getElementById('mobile-notification-badge'),
+                document.getElementById('nav-notification-badge')
+            ];
+
+            badges.forEach(badge => {
+                if (badge) {
+                    if (count > 0) {
+                        badge.textContent = count > 99 ? '99+' : count;
+                        badge.classList.remove('hidden');
+                    } else {
+                        badge.classList.add('hidden');
+                    }
+                }
+            });
+        }
+
+        // Render notification list in dropdown
+        function renderNotificationList(notifications) {
+            const list = document.getElementById('notification-list');
+            if (!list) return;
+
+            if (!notifications || notifications.length === 0) {
+                list.innerHTML = `
+                    <div class="p-4 text-center text-gray-500 text-sm">
+                        <i class="fas fa-bell-slash text-2xl mb-2"></i>
+                        <p>No notifications</p>
+                    </div>
+                `;
+                return;
+            }
+
+            list.innerHTML = notifications.map(notif => {
+                const isUnread = notif.status === 'UNREAD';
+                const timeAgo = formatTimeAgo(notif.created_at);
+                const priorityIcon = notif.priority === 'HIGH' ? '<i class="fas fa-exclamation-circle text-red-500 mr-1"></i>' : '';
+
+                return `
+                    <div class="notification-item ${isUnread ? 'unread' : ''}" onclick="handleNotificationClick(${notif.id}, ${notif.job_id || 'null'})">
+                        <div class="flex items-start">
+                            <div class="flex-1">
+                                <p class="font-medium text-sm">${priorityIcon}${notif.title}</p>
+                                <p class="text-xs text-gray-600 mt-1 line-clamp-2">${notif.message}</p>
+                                <p class="text-xs text-gray-400 mt-1">${timeAgo}</p>
+                            </div>
+                            ${isUnread ? '<span class="w-2 h-2 bg-blue-500 rounded-full ml-2 mt-1"></span>' : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Handle notification click
+        async function handleNotificationClick(notifId, jobId) {
+            // Mark as read
+            await fetch(`/portal/api/notifications/${notifId}/read`, { method: 'POST' });
+
+            // Navigate to job if applicable
+            if (jobId) {
+                window.location.href = `/portal/jobs/${jobId}`;
+            } else {
+                window.location.href = '/portal/notifications';
+            }
+        }
+
+        // Mark all as read
+        async function markAllAsRead() {
+            try {
+                await fetch('/portal/api/notifications/mark-all-read', { method: 'POST' });
+                loadNotifications();
+            } catch (e) {
+                console.error('Failed to mark all as read:', e);
+            }
+        }
+
+        // Format time ago
+        function formatTimeAgo(dateString) {
+            const date = new Date(dateString);
+            const now = new Date();
+            const seconds = Math.floor((now - date) / 1000);
+
+            if (seconds < 60) return 'Just now';
+            if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+            if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+            if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`;
+            return date.toLocaleDateString();
+        }
+
+        // Show toast notification
+        function showToast(notification) {
+            const toast = document.createElement('div');
+            toast.className = 'notification-toast';
+            toast.innerHTML = `
+                <div class="flex items-start">
+                    <div class="flex-shrink-0">
+                        <i class="fas fa-bell text-emerald-500 text-xl"></i>
+                    </div>
+                    <div class="ml-3 flex-1">
+                        <p class="font-medium text-gray-900">${notification.title}</p>
+                        <p class="text-sm text-gray-600 mt-1">${notification.message}</p>
+                    </div>
+                    <button onclick="this.parentElement.parentElement.remove()" class="ml-3 text-gray-400 hover:text-gray-600">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            `;
+
+            document.body.appendChild(toast);
+
+            // Remove after 5 seconds
+            setTimeout(() => {
+                if (toast.parentElement) {
+                    toast.style.animation = 'slideIn 0.3s ease reverse';
+                    setTimeout(() => toast.remove(), 300);
+                }
+            }, 5000);
+        }
+
+        // Initialize Server-Sent Events for real-time notifications
+        function initSSE() {
+            if (eventSource) {
+                eventSource.close();
+            }
+
+            eventSource = new EventSource('/portal/api/notifications/stream');
+
+            eventSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+
+                    if (data.type === 'notification') {
+                        // Show toast
+                        showToast(data);
+
+                        // Update badge count
+                        checkNotificationCount();
+
+                        // Refresh dropdown if open
+                        if (notificationDropdownOpen) {
+                            loadNotifications();
+                        }
+                    }
+                } catch (e) {
+                    console.error('SSE parse error:', e);
+                }
+            };
+
+            eventSource.onerror = function(e) {
+                console.log('SSE connection error, will retry...');
+                eventSource.close();
+
+                // Retry after 5 seconds
+                setTimeout(initSSE, 5000);
+            };
+        }
+
+        // Check notification count
+        async function checkNotificationCount() {
+            try {
+                const response = await fetch('/portal/api/notifications/unread-count');
+                const data = await response.json();
+                updateNotificationBadges(data.unread_count);
+            } catch (e) {
+                console.log('Could not check notification count');
+            }
+        }
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            // Check notification count
+            checkNotificationCount();
+
+            // Check every 30 seconds as fallback
+            setInterval(checkNotificationCount, 30000);
+
+            // Initialize SSE for real-time updates
+            initSSE();
+        });
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', function() {
+            if (eventSource) {
+                eventSource.close();
+            }
+        });
     </script>
 
     {% block scripts %}{% endblock %}

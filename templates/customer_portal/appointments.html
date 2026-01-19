@@ -1,0 +1,66 @@
+{% extends "customer_portal/base.html" %}
+{% block title %}Appointments{% endblock %}
+{% block content %}
+<div class="p-6 lg:p-8">
+    <div class="flex items-center justify-between mb-6">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-800">Appointments</h1>
+            <p class="text-gray-500">Manage your service appointments</p>
+        </div>
+        <a href="{{ url_for('customer_portal.book_appointment') }}" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg transition">
+            <i class="fas fa-plus mr-2"></i>Book New
+        </a>
+    </div>
+
+    <div class="card p-6 mb-6">
+        <h2 class="text-lg font-bold text-gray-800 mb-4"><i class="fas fa-calendar-check mr-2 text-emerald-600"></i>Upcoming</h2>
+        {% if upcoming_appointments %}
+        <div class="space-y-3">
+            {% for appt in upcoming_appointments %}
+            <div class="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                <div class="flex items-center space-x-4">
+                    <div class="w-14 h-14 bg-emerald-100 rounded-lg flex flex-col items-center justify-center">
+                        <span class="text-xs text-emerald-600">{{ appt.service_date[:3] if appt.service_date else '' }}</span>
+                        <span class="text-xl font-bold text-emerald-700">{{ appt.service_date.split('-')[2] if appt.service_date else '--' }}</span>
+                    </div>
+                    <div>
+                        <p class="font-medium text-gray-800">{{ appt.service_type or 'PDR Service' }}</p>
+                        <p class="text-sm text-gray-500">{{ appt.service_time }}</p>
+                    </div>
+                </div>
+                <form action="{{ url_for('customer_portal.cancel_appointment', appointment_id=appt.id) }}" method="POST">
+                    <button type="submit" class="text-red-600 hover:text-red-700 text-sm" onclick="return confirm('Cancel this appointment?')">
+                        <i class="fas fa-times mr-1"></i>Cancel
+                    </button>
+                </form>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-center py-8 text-gray-500">
+            <i class="fas fa-calendar text-4xl text-gray-300 mb-3"></i>
+            <p>No upcoming appointments</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="card p-6">
+        <h2 class="text-lg font-bold text-gray-800 mb-4"><i class="fas fa-history mr-2 text-gray-600"></i>Past Appointments</h2>
+        {% if past_appointments %}
+        <div class="space-y-2">
+            {% for appt in past_appointments[:5] %}
+            <div class="flex items-center justify-between p-3 border-b border-gray-100">
+                <div>
+                    <p class="font-medium text-gray-700">{{ appt.service_type or 'PDR Service' }}</p>
+                    <p class="text-sm text-gray-500">{{ appt.service_date }} at {{ appt.service_time }}</p>
+                </div>
+                <span class="text-sm text-gray-400">{{ appt.status }}</span>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-gray-500 text-center py-4">No past appointments</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,29 @@
+{% extends "customer_portal/base.html" %}
+{% block title %}Reviews{% endblock %}
+{% block content %}
+<div class="p-6 lg:p-8">
+    <h1 class="text-2xl font-bold text-gray-800 mb-6">My Reviews</h1>
+    <div class="card p-6">
+        {% if reviews %}
+        <div class="space-y-4">
+            {% for review in reviews %}
+            <div class="p-4 bg-gray-50 rounded-lg">
+                <div class="flex items-center mb-2">
+                    {% for i in range(review.rating) %}<i class="fas fa-star text-yellow-400"></i>{% endfor %}
+                    {% for i in range(5 - review.rating) %}<i class="fas fa-star text-gray-300"></i>{% endfor %}
+                    <span class="ml-2 text-sm text-gray-500">{{ review.created_at }}</span>
+                </div>
+                <p class="text-gray-700">{{ review.review_text or 'No comment' }}</p>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-center py-8 text-gray-500">
+            <i class="fas fa-star text-4xl text-gray-300 mb-3"></i>
+            <p>No reviews yet</p>
+            <p class="text-sm">Complete a repair to leave a review</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

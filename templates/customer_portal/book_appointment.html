@@ -1,0 +1,60 @@
+{% extends "customer_portal/base.html" %}
+{% block title %}Book Appointment{% endblock %}
+{% block content %}
+<div class="p-6 lg:p-8">
+    <a href="{{ url_for('customer_portal.appointments') }}" class="text-gray-600 hover:text-gray-800 mb-4 inline-block"><i class="fas fa-arrow-left mr-2"></i>Back</a>
+    <h1 class="text-2xl font-bold text-gray-800 mb-6">Book an Appointment</h1>
+
+    <div class="card p-6 max-w-2xl">
+        <form method="POST" class="space-y-6">
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">Select Date & Time</label>
+                <select name="service_date" required class="w-full px-3 py-2 border rounded-lg mb-2">
+                    <option value="">Choose a date...</option>
+                    {% for date in available_dates %}
+                    <option value="{{ date.date }}">{{ date.display }}</option>
+                    {% endfor %}
+                </select>
+                <select name="service_time" required class="w-full px-3 py-2 border rounded-lg">
+                    <option value="">Choose a time...</option>
+                    <option value="08:00">8:00 AM</option>
+                    <option value="09:00">9:00 AM</option>
+                    <option value="10:00">10:00 AM</option>
+                    <option value="11:00">11:00 AM</option>
+                    <option value="13:00">1:00 PM</option>
+                    <option value="14:00">2:00 PM</option>
+                    <option value="15:00">3:00 PM</option>
+                    <option value="16:00">4:00 PM</option>
+                </select>
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">Vehicle Information</label>
+                <div class="grid grid-cols-3 gap-2">
+                    <input type="text" name="vehicle_year" placeholder="Year" class="px-3 py-2 border rounded-lg">
+                    <input type="text" name="vehicle_make" placeholder="Make" class="px-3 py-2 border rounded-lg">
+                    <input type="text" name="vehicle_model" placeholder="Model" class="px-3 py-2 border rounded-lg">
+                </div>
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">Describe the Damage</label>
+                <textarea name="damage_description" rows="3" class="w-full px-3 py-2 border rounded-lg" placeholder="Hail damage on hood and roof..."></textarea>
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">Service Type</label>
+                <select name="service_type" class="w-full px-3 py-2 border rounded-lg">
+                    <option value="PDR">Paintless Dent Repair</option>
+                    <option value="HAIL">Hail Damage Repair</option>
+                    <option value="ESTIMATE">Free Estimate</option>
+                </select>
+            </div>
+
+            <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-lg font-medium">
+                <i class="fas fa-calendar-check mr-2"></i>Book Appointment
+            </button>
+        </form>
+    </div>
+</div>
+{% endblock %}

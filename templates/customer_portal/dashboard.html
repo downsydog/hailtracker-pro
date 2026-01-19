@@ -1,0 +1,205 @@
+{% extends "customer_portal/base.html" %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="p-6 lg:p-8">
+    <!-- Welcome Header -->
+    <div class="mb-8">
+        <h1 class="text-2xl lg:text-3xl font-bold text-gray-800">Welcome back, {{ customer_name.split()[0] if customer_name else 'Customer' }}!</h1>
+        <p class="text-gray-500 mt-1">Here's what's happening with your repairs</p>
+    </div>
+
+    <!-- Quick Stats -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <!-- Active Repairs -->
+        <div class="card p-5">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-sm text-gray-500">Active Repairs</p>
+                    <p class="text-2xl font-bold text-gray-800">{{ dashboard.active_jobs|length }}</p>
+                </div>
+                <div class="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
+                    <i class="fas fa-car text-blue-600"></i>
+                </div>
+            </div>
+        </div>
+
+        <!-- Referrals -->
+        <div class="card p-5">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-sm text-gray-500">Referrals Made</p>
+                    <p class="text-2xl font-bold text-gray-800">{{ dashboard.referrals.total or 0 }}</p>
+                </div>
+                <div class="w-12 h-12 bg-emerald-100 rounded-full flex items-center justify-center">
+                    <i class="fas fa-user-plus text-emerald-600"></i>
+                </div>
+            </div>
+        </div>
+
+        <!-- Earnings -->
+        <div class="card p-5">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-sm text-gray-500">Total Earnings</p>
+                    <p class="text-2xl font-bold text-emerald-600">${{ "%.2f"|format(dashboard.referrals.earnings or 0) }}</p>
+                </div>
+                <div class="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center">
+                    <i class="fas fa-dollar-sign text-green-600"></i>
+                </div>
+            </div>
+        </div>
+
+        <!-- Loyalty Points -->
+        <div class="card p-5">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-sm text-gray-500">Loyalty Points</p>
+                    <p class="text-2xl font-bold text-purple-600">{{ dashboard.loyalty.points_balance or 0 }}</p>
+                </div>
+                <div class="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center">
+                    <i class="fas fa-star text-purple-600"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="grid lg:grid-cols-2 gap-6">
+        <!-- Active Repairs -->
+        <div class="card p-6">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-bold text-gray-800">
+                    <i class="fas fa-car mr-2 text-blue-600"></i>Active Repairs
+                </h2>
+                <a href="{{ url_for('customer_portal.jobs') }}" class="text-sm text-emerald-600 hover:underline">View All</a>
+            </div>
+
+            {% if dashboard.active_jobs %}
+                <div class="space-y-4">
+                    {% for job in dashboard.active_jobs[:3] %}
+                    <a href="{{ url_for('customer_portal.job_detail', job_id=job.job_id) }}" class="block p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="font-medium text-gray-800">
+                                {% if job.vehicle %}
+                                    {{ job.vehicle.year }} {{ job.vehicle.make }} {{ job.vehicle.model }}
+                                {% else %}
+                                    Job #{{ job.job_id }}
+                                {% endif %}
+                            </span>
+                            <span class="status-badge status-{{ job.status|lower }}">{{ job.status|replace('_', ' ')|title }}</span>
+                        </div>
+                        <div class="relative h-2 bg-gray-200 rounded-full overflow-hidden">
+                            <div class="progress-bar" style="width: {{ job.progress_percent }}%"></div>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-2">{{ job.progress_percent }}% Complete</p>
+                    </a>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="text-center py-8 text-gray-500">
+                    <i class="fas fa-check-circle text-4xl text-emerald-500 mb-3"></i>
+                    <p>No active repairs</p>
+                    <p class="text-sm">All your vehicles are looking great!</p>
+                </div>
+            {% endif %}
+        </div>
+
+        <!-- Referral Program -->
+        <div class="card p-6">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-bold text-gray-800">
+                    <i class="fas fa-gift mr-2 text-emerald-600"></i>Referral Program
+                </h2>
+                <a href="{{ url_for('customer_portal.referrals') }}" class="text-sm text-emerald-600 hover:underline">View Details</a>
+            </div>
+
+            <div class="bg-gradient-to-r from-emerald-500 to-teal-600 rounded-xl p-5 text-white mb-4">
+                <p class="text-sm opacity-90">Earn for every friend you refer!</p>
+                <p class="text-3xl font-bold mt-1">$50 <span class="text-lg font-normal">per referral</span></p>
+            </div>
+
+            <div class="grid grid-cols-3 gap-4 text-center">
+                <div>
+                    <p class="text-2xl font-bold text-gray-800">{{ dashboard.referrals.total or 0 }}</p>
+                    <p class="text-xs text-gray-500">Total Referrals</p>
+                </div>
+                <div>
+                    <p class="text-2xl font-bold text-emerald-600">{{ dashboard.referrals.completed or 0 }}</p>
+                    <p class="text-xs text-gray-500">Completed</p>
+                </div>
+                <div>
+                    <p class="text-2xl font-bold text-blue-600">${{ "%.2f"|format(dashboard.referrals.balance or 0) }}</p>
+                    <p class="text-xs text-gray-500">Balance Due</p>
+                </div>
+            </div>
+
+            <a href="{{ url_for('customer_portal.share_referral') }}" class="mt-4 block w-full text-center bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-lg font-medium transition">
+                <i class="fas fa-share-alt mr-2"></i>Share & Earn
+            </a>
+        </div>
+
+        <!-- Upcoming Appointments -->
+        <div class="card p-6">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-bold text-gray-800">
+                    <i class="fas fa-calendar mr-2 text-purple-600"></i>Upcoming Appointments
+                </h2>
+                <a href="{{ url_for('customer_portal.appointments') }}" class="text-sm text-emerald-600 hover:underline">View All</a>
+            </div>
+
+            {% if dashboard.upcoming_appointments %}
+                <div class="space-y-3">
+                    {% for appt in dashboard.upcoming_appointments[:2] %}
+                    <div class="flex items-center p-3 bg-gray-50 rounded-lg">
+                        <div class="w-12 h-12 bg-purple-100 rounded-lg flex flex-col items-center justify-center mr-4">
+                            <span class="text-xs text-purple-600">{{ appt.service_date|truncate(3, True, '') }}</span>
+                            <span class="text-lg font-bold text-purple-700">{{ appt.service_date.split('-')[2] if appt.service_date else '--' }}</span>
+                        </div>
+                        <div>
+                            <p class="font-medium text-gray-800">{{ appt.service_type or 'PDR Service' }}</p>
+                            <p class="text-sm text-gray-500">{{ appt.service_time }}</p>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="text-center py-6 text-gray-500">
+                    <i class="fas fa-calendar-check text-3xl text-gray-300 mb-2"></i>
+                    <p class="text-sm">No upcoming appointments</p>
+                    <a href="{{ url_for('customer_portal.book_appointment') }}" class="text-emerald-600 text-sm hover:underline">Book one now</a>
+                </div>
+            {% endif %}
+        </div>
+
+        <!-- Quick Actions -->
+        <div class="card p-6">
+            <h2 class="text-lg font-bold text-gray-800 mb-4">
+                <i class="fas fa-bolt mr-2 text-yellow-500"></i>Quick Actions
+            </h2>
+
+            <div class="grid grid-cols-2 gap-3">
+                <a href="{{ url_for('customer_portal.request_estimate') }}" class="flex flex-col items-center p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition">
+                    <i class="fas fa-calculator text-2xl text-blue-600 mb-2"></i>
+                    <span class="text-sm font-medium text-gray-700">Request Estimate</span>
+                </a>
+                <a href="{{ url_for('customer_portal.book_appointment') }}" class="flex flex-col items-center p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition">
+                    <i class="fas fa-calendar-plus text-2xl text-purple-600 mb-2"></i>
+                    <span class="text-sm font-medium text-gray-700">Book Appointment</span>
+                </a>
+                <a href="{{ url_for('customer_portal.flyers') }}" class="flex flex-col items-center p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition">
+                    <i class="fas fa-file-image text-2xl text-emerald-600 mb-2"></i>
+                    <span class="text-sm font-medium text-gray-700">My Flyers</span>
+                </a>
+                <a href="{{ url_for('customer_portal.messages') }}" class="flex flex-col items-center p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition">
+                    <i class="fas fa-envelope text-2xl text-red-500 mb-2"></i>
+                    <span class="text-sm font-medium text-gray-700">Messages</span>
+                    {% if dashboard.unread_messages > 0 %}
+                    <span class="mt-1 bg-red-500 text-white text-xs px-2 py-0.5 rounded-full">{{ dashboard.unread_messages }}</span>
+                    {% endif %}
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

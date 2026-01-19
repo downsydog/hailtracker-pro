@@ -1,0 +1,35 @@
+{% extends "customer_portal/base.html" %}
+{% block title %}Flyer Analytics{% endblock %}
+{% block content %}
+<div class="p-6 lg:p-8">
+    <a href="{{ url_for('customer_portal.flyers') }}" class="text-gray-600 hover:text-gray-800 mb-4 inline-block"><i class="fas fa-arrow-left mr-2"></i>Back to Flyers</a>
+    <h1 class="text-2xl font-bold text-gray-800 mb-6">Flyer Analytics</h1>
+
+    <div class="grid md:grid-cols-4 gap-4 mb-6">
+        <div class="card p-5 text-center">
+            <p class="text-3xl font-bold text-blue-600">{{ analytics.total_views or 0 }}</p>
+            <p class="text-sm text-gray-500">Total Views</p>
+        </div>
+        <div class="card p-5 text-center">
+            <p class="text-3xl font-bold text-purple-600">{{ analytics.unique_viewers or 0 }}</p>
+            <p class="text-sm text-gray-500">Unique Viewers</p>
+        </div>
+        <div class="card p-5 text-center">
+            <p class="text-3xl font-bold text-emerald-600">{{ analytics.total_referrals or 0 }}</p>
+            <p class="text-sm text-gray-500">Referrals</p>
+        </div>
+        <div class="card p-5 text-center">
+            <p class="text-3xl font-bold text-orange-600">{{ "%.1f"|format(analytics.conversion_rate or 0) }}%</p>
+            <p class="text-sm text-gray-500">Conversion Rate</p>
+        </div>
+    </div>
+
+    <div class="card p-6">
+        <h2 class="text-lg font-bold text-gray-800 mb-4">Performance Summary</h2>
+        <p class="text-gray-600">Your flyers have been viewed {{ analytics.total_views or 0 }} times and generated {{ analytics.total_referrals or 0 }} referrals.</p>
+        {% if analytics.total_views > 0 and analytics.total_referrals > 0 %}
+        <p class="text-emerald-600 mt-2"><i class="fas fa-chart-line mr-1"></i> Great job! Your flyers are converting at {{ "%.1f"|format(analytics.conversion_rate or 0) }}%</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

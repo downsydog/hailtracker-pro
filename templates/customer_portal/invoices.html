@@ -1,0 +1,47 @@
+{% extends "customer_portal/base.html" %}
+{% block title %}Invoices{% endblock %}
+{% block content %}
+<div class="p-6 lg:p-8">
+    <h1 class="text-2xl font-bold text-gray-800 mb-6">Invoices & Payments</h1>
+
+    {% if unpaid_invoices %}
+    <div class="card p-6 mb-6 border-l-4 border-yellow-500">
+        <h2 class="text-lg font-bold text-gray-800 mb-4"><i class="fas fa-exclamation-circle mr-2 text-yellow-500"></i>Outstanding Balance</h2>
+        <div class="space-y-3">
+            {% for inv in unpaid_invoices %}
+            <div class="flex items-center justify-between p-4 bg-yellow-50 rounded-lg">
+                <div>
+                    <p class="font-medium text-gray-800">Invoice #{{ inv.id }}</p>
+                    <p class="text-sm text-gray-500">Due: ${{ "%.2f"|format(inv.balance_due or 0) }}</p>
+                </div>
+                <a href="{{ url_for('customer_portal.pay_invoice', invoice_id=inv.id) }}" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm">Pay Now</a>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="card p-6">
+        <h2 class="text-lg font-bold text-gray-800 mb-4"><i class="fas fa-file-invoice mr-2 text-gray-600"></i>All Invoices</h2>
+        {% if invoices %}
+        <div class="overflow-x-auto">
+            <table class="w-full">
+                <thead><tr class="border-b"><th class="text-left py-3 px-4 text-sm text-gray-500">Invoice</th><th class="text-left py-3 px-4 text-sm text-gray-500">Date</th><th class="text-right py-3 px-4 text-sm text-gray-500">Total</th><th class="text-right py-3 px-4 text-sm text-gray-500">Status</th></tr></thead>
+                <tbody>
+                    {% for inv in invoices %}
+                    <tr class="border-b border-gray-100">
+                        <td class="py-3 px-4 font-medium">#{{ inv.id }}</td>
+                        <td class="py-3 px-4 text-gray-600">{{ inv.invoice_date or '--' }}</td>
+                        <td class="py-3 px-4 text-right">${{ "%.2f"|format(inv.total or 0) }}</td>
+                        <td class="py-3 px-4 text-right"><span class="{% if inv.balance_due > 0 %}text-yellow-600{% else %}text-emerald-600{% endif %}">{% if inv.balance_due > 0 %}Unpaid{% else %}Paid{% endif %}</span></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-gray-500 text-center py-8">No invoices yet</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

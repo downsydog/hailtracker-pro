@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ flyer.flyer_name or 'PDR Service Flyer' }}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
+    <div class="max-w-2xl w-full bg-white rounded-2xl shadow-xl overflow-hidden">
+        {% if flyer.flyer_html %}
+            {{ flyer.flyer_html|safe }}
+        {% else %}
+        <div class="bg-gradient-to-br from-emerald-500 to-teal-600 p-8 text-white text-center">
+            <h1 class="text-3xl font-bold mb-2">Hail Damage?</h1>
+            <p class="text-lg opacity-90">We Can Help!</p>
+        </div>
+        <div class="p-8 text-center">
+            <p class="text-gray-600 mb-6">Get professional paintless dent repair from the experts.</p>
+            <div class="bg-emerald-50 rounded-xl p-6 mb-6">
+                <p class="text-sm text-emerald-700 mb-2">Referred by</p>
+                <p class="text-xl font-bold text-emerald-800">{{ flyer.first_name }} {{ flyer.last_name }}</p>
+            </div>
+            <a href="{{ flyer.referral_link }}" class="inline-block bg-emerald-600 hover:bg-emerald-700 text-white px-8 py-3 rounded-lg font-medium transition">
+                Get Your Free Estimate
+            </a>
+        </div>
+        {% endif %}
+    </div>
+</body>
+</html>

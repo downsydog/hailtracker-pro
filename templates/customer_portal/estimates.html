@@ -1,0 +1,30 @@
+{% extends "customer_portal/base.html" %}
+{% block title %}Estimates{% endblock %}
+{% block content %}
+<div class="p-6 lg:p-8">
+    <div class="flex items-center justify-between mb-6">
+        <h1 class="text-2xl font-bold text-gray-800">Estimate Requests</h1>
+        <a href="{{ url_for('customer_portal.request_estimate') }}" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg"><i class="fas fa-plus mr-2"></i>Request Estimate</a>
+    </div>
+    <div class="card p-6">
+        {% if estimates %}
+        <div class="space-y-3">
+            {% for est in estimates %}
+            <div class="p-4 bg-gray-50 rounded-lg flex justify-between items-center">
+                <div>
+                    <p class="font-medium">{{ est.vehicle_info }}</p>
+                    <p class="text-sm text-gray-500">{{ est.created_at }}</p>
+                </div>
+                <span class="status-badge status-{{ est.status|lower }}">{{ est.status }}</span>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-center py-8 text-gray-500">
+            <i class="fas fa-calculator text-4xl text-gray-300 mb-3"></i>
+            <p>No estimate requests</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

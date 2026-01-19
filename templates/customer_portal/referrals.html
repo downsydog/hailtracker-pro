@@ -1,0 +1,192 @@
+{% extends "customer_portal/base.html" %}
+
+{% block title %}Referrals{% endblock %}
+
+{% block content %}
+<div class="p-6 lg:p-8">
+    <div class="mb-6">
+        <h1 class="text-2xl font-bold text-gray-800">Referral Program</h1>
+        <p class="text-gray-500">Earn $50 for every friend you refer!</p>
+    </div>
+
+    <!-- Earnings Overview -->
+    <div class="card p-6 mb-6 bg-gradient-to-r from-emerald-500 to-teal-600 text-white">
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-6">
+            <div class="text-center">
+                <p class="text-3xl font-bold">${{ "%.2f"|format(referrals.earnings.total_earned or 0) }}</p>
+                <p class="text-sm opacity-80">Total Earned</p>
+            </div>
+            <div class="text-center">
+                <p class="text-3xl font-bold">${{ "%.2f"|format(referrals.earnings.total_paid or 0) }}</p>
+                <p class="text-sm opacity-80">Already Paid</p>
+            </div>
+            <div class="text-center">
+                <p class="text-3xl font-bold">${{ "%.2f"|format(referrals.earnings.balance_due or 0) }}</p>
+                <p class="text-sm opacity-80">Balance Due</p>
+            </div>
+            <div class="text-center">
+                <p class="text-3xl font-bold">${{ "%.2f"|format(referrals.earnings.pending_earnings or 0) }}</p>
+                <p class="text-sm opacity-80">Pending</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Share Section -->
+    <div class="card p-6 mb-6">
+        <h2 class="text-lg font-bold text-gray-800 mb-4">
+            <i class="fas fa-share-alt mr-2 text-emerald-600"></i>Share Your Referral Link
+        </h2>
+
+        <div class="flex flex-col lg:flex-row lg:items-center space-y-4 lg:space-y-0 lg:space-x-4">
+            <div class="flex-1">
+                <div class="flex items-center bg-gray-100 rounded-lg p-3">
+                    <input type="text" id="referral-link" value="{{ referrals.referral_link }}" readonly
+                        class="flex-1 bg-transparent border-none focus:outline-none text-gray-700">
+                    <button onclick="copyLink()" class="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition">
+                        <i class="fas fa-copy mr-1"></i>Copy
+                    </button>
+                </div>
+            </div>
+
+            <div class="flex space-x-3">
+                <a href="https://www.facebook.com/sharer/sharer.php?u={{ referrals.referral_link }}" target="_blank"
+                    class="w-10 h-10 bg-blue-600 text-white rounded-lg flex items-center justify-center hover:bg-blue-700 transition">
+                    <i class="fab fa-facebook-f"></i>
+                </a>
+                <a href="https://twitter.com/intent/tweet?url={{ referrals.referral_link }}&text=Check%20out%20this%20great%20PDR%20service!" target="_blank"
+                    class="w-10 h-10 bg-sky-500 text-white rounded-lg flex items-center justify-center hover:bg-sky-600 transition">
+                    <i class="fab fa-twitter"></i>
+                </a>
+                <a href="sms:?body=I%20highly%20recommend%20this%20PDR%20service!%20{{ referrals.referral_link }}"
+                    class="w-10 h-10 bg-green-500 text-white rounded-lg flex items-center justify-center hover:bg-green-600 transition">
+                    <i class="fas fa-sms"></i>
+                </a>
+                <a href="mailto:?subject=Great%20PDR%20Service&body=Check%20out%20this%20PDR%20service:%20{{ referrals.referral_link }}"
+                    class="w-10 h-10 bg-gray-600 text-white rounded-lg flex items-center justify-center hover:bg-gray-700 transition">
+                    <i class="fas fa-envelope"></i>
+                </a>
+            </div>
+        </div>
+
+        <a href="{{ url_for('customer_portal.share_referral') }}" class="mt-4 inline-flex items-center text-emerald-600 hover:text-emerald-700">
+            <i class="fas fa-file-image mr-2"></i>Get Shareable Flyer
+        </a>
+    </div>
+
+    <div class="grid lg:grid-cols-3 gap-6">
+        <!-- Stats -->
+        <div class="card p-6">
+            <h3 class="font-bold text-gray-800 mb-4">Statistics</h3>
+            <div class="space-y-4">
+                <div class="flex items-center justify-between">
+                    <span class="text-gray-600">Total Referrals</span>
+                    <span class="text-xl font-bold text-gray-800">{{ referrals.summary.total_referrals }}</span>
+                </div>
+                <div class="flex items-center justify-between">
+                    <span class="text-gray-600">Pending</span>
+                    <span class="text-xl font-bold text-yellow-600">{{ referrals.summary.pending }}</span>
+                </div>
+                <div class="flex items-center justify-between">
+                    <span class="text-gray-600">Scheduled</span>
+                    <span class="text-xl font-bold text-blue-600">{{ referrals.summary.scheduled }}</span>
+                </div>
+                <div class="flex items-center justify-between">
+                    <span class="text-gray-600">Completed</span>
+                    <span class="text-xl font-bold text-emerald-600">{{ referrals.summary.completed }}</span>
+                </div>
+                <hr class="border-gray-200">
+                <div class="flex items-center justify-between">
+                    <span class="text-gray-600">Link Clicks</span>
+                    <span class="text-xl font-bold text-purple-600">{{ referrals.summary.link_clicks }}</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Referral List -->
+        <div class="lg:col-span-2 card p-6">
+            <h3 class="font-bold text-gray-800 mb-4">Your Referrals</h3>
+
+            {% if referrals.referrals %}
+            <div class="space-y-3">
+                {% for ref in referrals.referrals %}
+                <div class="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center">
+                            <i class="fas fa-user text-emerald-600"></i>
+                        </div>
+                        <div>
+                            <p class="font-medium text-gray-800">{{ ref.name }}</p>
+                            <p class="text-sm text-gray-500">{{ ref.referred_date }}</p>
+                        </div>
+                    </div>
+                    <div class="text-right">
+                        <span class="status-badge status-{{ ref.status|lower }}">{{ ref.status|replace('_', ' ')|title }}</span>
+                        <p class="text-sm mt-1 {% if ref.commission_status == 'PAID' %}text-emerald-600{% else %}text-gray-500{% endif %}">
+                            ${{ "%.2f"|format(ref.commission_amount or 50) }}
+                            {% if ref.commission_status == 'PAID' %}
+                                <i class="fas fa-check-circle ml-1"></i>
+                            {% endif %}
+                        </p>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="text-center py-8 text-gray-500">
+                <i class="fas fa-users text-4xl text-gray-300 mb-3"></i>
+                <p>No referrals yet</p>
+                <p class="text-sm">Share your link to start earning!</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Payment History -->
+    {% if referrals.payments %}
+    <div class="card p-6 mt-6">
+        <h3 class="font-bold text-gray-800 mb-4">Payment History</h3>
+        <div class="overflow-x-auto">
+            <table class="w-full">
+                <thead>
+                    <tr class="border-b border-gray-200">
+                        <th class="text-left py-3 px-4 text-sm font-medium text-gray-500">Date</th>
+                        <th class="text-left py-3 px-4 text-sm font-medium text-gray-500">Method</th>
+                        <th class="text-right py-3 px-4 text-sm font-medium text-gray-500">Amount</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for payment in referrals.payments %}
+                    <tr class="border-b border-gray-100">
+                        <td class="py-3 px-4">{{ payment.paid_at }}</td>
+                        <td class="py-3 px-4">{{ payment.payment_method }}</td>
+                        <td class="py-3 px-4 text-right font-medium text-emerald-600">
+                            ${{ "%.2f"|format(payment.amount) }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+function copyLink() {
+    const input = document.getElementById('referral-link');
+    input.select();
+    document.execCommand('copy');
+
+    // Show feedback
+    const btn = event.target.closest('button');
+    const originalHTML = btn.innerHTML;
+    btn.innerHTML = '<i class="fas fa-check mr-1"></i>Copied!';
+    btn.classList.add('bg-green-600');
+
+    setTimeout(() => {
+        btn.innerHTML = originalHTML;
+        btn.classList.remove('bg-green-600');
+    }, 2000);
+}
+</script>
+{% endblock %}

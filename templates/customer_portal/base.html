@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Portal{% endblock %} - Customer Portal</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        .portal-bg {
+            background: linear-gradient(135deg, #1e3a5f 0%, #0d1b2a 100%);
+        }
+
+        .card {
+            background: white;
+            border-radius: 1rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+
+        .progress-bar {
+            background: linear-gradient(90deg, #10b981 0%, #059669 100%);
+            border-radius: 9999px;
+            height: 8px;
+            transition: width 0.5s ease;
+        }
+
+        .nav-link {
+            transition: all 0.2s;
+        }
+
+        .nav-link:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .nav-link.active {
+            background: rgba(255, 255, 255, 0.15);
+            border-left: 3px solid #10b981;
+        }
+
+        .status-badge {
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .status-pending { background: #fef3c7; color: #92400e; }
+        .status-in_progress { background: #dbeafe; color: #1e40af; }
+        .status-completed { background: #d1fae5; color: #065f46; }
+        .status-scheduled { background: #e0e7ff; color: #3730a3; }
+    </style>
+
+    {% block head %}{% endblock %}
+</head>
+<body class="bg-gray-100">
+
+    <!-- Mobile Header -->
+    <div class="lg:hidden portal-bg text-white p-4 flex items-center justify-between">
+        <div class="flex items-center space-x-3">
+            <i class="fas fa-cloud-rain text-2xl text-emerald-400"></i>
+            <span class="font-bold text-lg">Customer Portal</span>
+        </div>
+        <button id="mobile-menu-btn" class="text-2xl">
+            <i class="fas fa-bars"></i>
+        </button>
+    </div>
+
+    <div class="flex min-h-screen">
+        <!-- Sidebar -->
+        <aside id="sidebar" class="hidden lg:flex flex-col w-64 portal-bg text-white">
+            <!-- Logo -->
+            <div class="p-6 border-b border-white/10">
+                <div class="flex items-center space-x-3">
+                    <i class="fas fa-cloud-rain text-3xl text-emerald-400"></i>
+                    <div>
+                        <h1 class="font-bold text-lg">HailTracker</h1>
+                        <p class="text-xs text-gray-400">Customer Portal</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- User Info -->
+            <div class="p-4 border-b border-white/10">
+                <div class="flex items-center space-x-3">
+                    <div class="w-10 h-10 bg-emerald-500 rounded-full flex items-center justify-center">
+                        <i class="fas fa-user"></i>
+                    </div>
+                    <div>
+                        <p class="font-medium">{{ customer_name or 'Customer' }}</p>
+                        <p class="text-xs text-gray-400">Welcome back!</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Navigation -->
+            <nav class="flex-1 p-4 space-y-1">
+                <a href="{{ url_for('customer_portal.dashboard') }}" class="nav-link flex items-center space-x-3 px-4 py-3 rounded-lg {% if request.endpoint == 'customer_portal.dashboard' %}active{% endif %}">
+                    <i class="fas fa-home w-5"></i>
+                    <span>Dashboard</span>
+                </a>
+                <a href="{{ url_for('customer_portal.jobs') }}" class="nav-link flex items-center space-x-3 px-4 py-3 rounded-lg {% if 'job' in request.endpoint %}active{% endif %}">
+                    <i class="fas fa-car w-5"></i>
+                    <span>My Repairs</span>
+                </a>
+                <a href="{{ url_for('customer_portal.referrals') }}" class="nav-link flex items-center space-x-3 px-4 py-3 rounded-lg {% if 'referral' in request.endpoint %}active{% endif %}">
+                    <i class="fas fa-user-plus w-5"></i>
+                    <span>Referrals</span>
+                    <span class="ml-auto bg-emerald-500 text-xs px-2 py-0.5 rounded-full">$50</span>
+                </a>
+                <a href="{{ url_for('customer_portal.flyers') }}" class="nav-link flex items-center space-x-3 px-4 py-3 rounded-lg {% if 'flyer' in request.endpoint %}active{% endif %}">
+                    <i class="fas fa-file-image w-5"></i>
+                    <span>Digital Flyers</span>
+                </a>
+                <a href="{{ url_for('customer_portal.appointments') }}" class="nav-link flex items-center space-x-3 px-4 py-3 rounded-lg {% if 'appointment' in request.endpoint %}active{% endif %}">
+                    <i class="fas fa-calendar w-5"></i>
+                    <span>Appointments</span>
+                </a>
+                <a href="{{ url_for('customer_portal.invoices') }}" class="nav-link flex items-center space-x-3 px-4 py-3 rounded-lg {% if 'invoice' in request.endpoint %}active{% endif %}">
+                    <i class="fas fa-file-invoice-dollar w-5"></i>
+                    <span>Invoices</span>
+                </a>
+                <a href="{{ url_for('customer_portal.messages') }}" class="nav-link flex items-center space-x-3 px-4 py-3 rounded-lg {% if 'message' in request.endpoint %}active{% endif %}">
+                    <i class="fas fa-envelope w-5"></i>
+                    <span>Messages</span>
+                    <span id="unread-badge" class="ml-auto bg-red-500 text-xs px-2 py-0.5 rounded-full hidden">0</span>
+                </a>
+                <a href="{{ url_for('customer_portal.loyalty') }}" class="nav-link flex items-center space-x-3 px-4 py-3 rounded-lg {% if 'loyalty' in request.endpoint %}active{% endif %}">
+                    <i class="fas fa-star w-5"></i>
+                    <span>Rewards</span>
+                </a>
+            </nav>
+
+            <!-- Footer -->
+            <div class="p-4 border-t border-white/10 space-y-2">
+                <a href="{{ url_for('customer_portal.profile') }}" class="nav-link flex items-center space-x-3 px-4 py-2 rounded-lg text-sm">
+                    <i class="fas fa-cog w-5"></i>
+                    <span>Settings</span>
+                </a>
+                <a href="{{ url_for('customer_portal.logout') }}" class="nav-link flex items-center space-x-3 px-4 py-2 rounded-lg text-sm text-red-400 hover:text-red-300">
+                    <i class="fas fa-sign-out-alt w-5"></i>
+                    <span>Logout</span>
+                </a>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="flex-1 overflow-auto">
+            <!-- Flash Messages -->
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    <div class="p-4 space-y-2">
+                        {% for category, message in messages %}
+                            <div class="p-4 rounded-lg flex items-center {% if category == 'error' %}bg-red-100 text-red-700{% elif category == 'success' %}bg-green-100 text-green-700{% elif category == 'warning' %}bg-yellow-100 text-yellow-700{% else %}bg-blue-100 text-blue-700{% endif %}">
+                                <i class="fas {% if category == 'error' %}fa-exclamation-circle{% elif category == 'success' %}fa-check-circle{% elif category == 'warning' %}fa-exclamation-triangle{% else %}fa-info-circle{% endif %} mr-3"></i>
+                                {{ message }}
+                                <button onclick="this.parentElement.remove()" class="ml-auto">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            {% endwith %}
+
+            <!-- Page Content -->
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+
+    <!-- Mobile Menu Overlay -->
+    <div id="mobile-menu" class="hidden fixed inset-0 z-50 lg:hidden">
+        <div class="absolute inset-0 bg-black/50" onclick="closeMobileMenu()"></div>
+        <div class="absolute left-0 top-0 bottom-0 w-64 portal-bg text-white overflow-y-auto">
+            <!-- Same nav as sidebar -->
+            <div class="p-6 border-b border-white/10 flex items-center justify-between">
+                <div class="flex items-center space-x-3">
+                    <i class="fas fa-cloud-rain text-2xl text-emerald-400"></i>
+                    <span class="font-bold">Portal</span>
+                </div>
+                <button onclick="closeMobileMenu()" class="text-xl">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <nav class="p-4 space-y-1">
+                <a href="{{ url_for('customer_portal.dashboard') }}" class="nav-link flex items-center space-x-3 px-4 py-3 rounded-lg">
+                    <i class="fas fa-home w-5"></i>
+                    <span>Dashboard</span>
+                </a>
+                <a href="{{ url_for('customer_portal.jobs') }}" class="nav-link flex items-center space-x-3 px-4 py-3 rounded-lg">
+                    <i class="fas fa-car w-5"></i>
+                    <span>My Repairs</span>
+                </a>
+                <a href="{{ url_for('customer_portal.referrals') }}" class="nav-link flex items-center space-x-3 px-4 py-3 rounded-lg">
+                    <i class="fas fa-user-plus w-5"></i>
+                    <span>Referrals</span>
+                </a>
+                <a href="{{ url_for('customer_portal.flyers') }}" class="nav-link flex items-center space-x-3 px-4 py-3 rounded-lg">
+                    <i class="fas fa-file-image w-5"></i>
+                    <span>Digital Flyers</span>
+                </a>
+                <a href="{{ url_for('customer_portal.appointments') }}" class="nav-link flex items-center space-x-3 px-4 py-3 rounded-lg">
+                    <i class="fas fa-calendar w-5"></i>
+                    <span>Appointments</span>
+                </a>
+                <a href="{{ url_for('customer_portal.invoices') }}" class="nav-link flex items-center space-x-3 px-4 py-3 rounded-lg">
+                    <i class="fas fa-file-invoice-dollar w-5"></i>
+                    <span>Invoices</span>
+                </a>
+                <a href="{{ url_for('customer_portal.messages') }}" class="nav-link flex items-center space-x-3 px-4 py-3 rounded-lg">
+                    <i class="fas fa-envelope w-5"></i>
+                    <span>Messages</span>
+                </a>
+                <a href="{{ url_for('customer_portal.loyalty') }}" class="nav-link flex items-center space-x-3 px-4 py-3 rounded-lg">
+                    <i class="fas fa-star w-5"></i>
+                    <span>Rewards</span>
+                </a>
+                <hr class="border-white/10 my-4">
+                <a href="{{ url_for('customer_portal.logout') }}" class="nav-link flex items-center space-x-3 px-4 py-3 rounded-lg text-red-400">
+                    <i class="fas fa-sign-out-alt w-5"></i>
+                    <span>Logout</span>
+                </a>
+            </nav>
+        </div>
+    </div>
+
+    <script>
+        // Mobile menu
+        document.getElementById('mobile-menu-btn')?.addEventListener('click', function() {
+            document.getElementById('mobile-menu').classList.remove('hidden');
+        });
+
+        function closeMobileMenu() {
+            document.getElementById('mobile-menu').classList.add('hidden');
+        }
+
+        // Check unread messages
+        async function checkUnreadMessages() {
+            try {
+                const response = await fetch('/portal/api/unread-count');
+                const data = await response.json();
+                const badge = document.getElementById('unread-badge');
+                if (data.unread_count > 0) {
+                    badge.textContent = data.unread_count;
+                    badge.classList.remove('hidden');
+                } else {
+                    badge.classList.add('hidden');
+                }
+            } catch (e) {
+                console.log('Could not check messages');
+            }
+        }
+
+        // Check messages on load
+        checkUnreadMessages();
+        // Check every 30 seconds
+        setInterval(checkUnreadMessages, 30000);
+    </script>
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>

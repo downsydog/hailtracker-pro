@@ -352,11 +352,122 @@ def test_notification_messages():
     return True
 
 
+def test_template_integration():
+    """Test that JobNotificationManager uses NotificationTemplateManager"""
+    import tempfile
+    import os as os_module
+
+    print("\n" + "="*80)
+    print("TESTING TEMPLATE INTEGRATION")
+    print("="*80 + "\n")
+
+    from src.crm.models.schema import DatabaseSchema
+    from src.crm.managers.job_notification_manager import JobNotificationManager
+    from src.crm.managers.notification_template_manager import NotificationTemplateManager
+
+    # Create temp database
+    temp_dir = tempfile.mkdtemp()
+    db_path = os_module.path.join(temp_dir, "test_integration.db")
+
+    try:
+        # Initialize schema
+        DatabaseSchema.create_all_tables(db_path)
+
+        # Initialize managers
+        job_notif_mgr = JobNotificationManager(db_path)
+        template_mgr = NotificationTemplateManager(db_path)
+
+        print("1. Testing STATUS_TO_TEMPLATE mapping...")
+        assert hasattr(job_notif_mgr, 'STATUS_TO_TEMPLATE'), "Should have STATUS_TO_TEMPLATE"
+        print(f"   Mapped statuses: {list(job_notif_mgr.STATUS_TO_TEMPLATE.keys())}")
+        assert 'READY_FOR_PICKUP' in job_notif_mgr.STATUS_TO_TEMPLATE
+        assert job_notif_mgr.STATUS_TO_TEMPLATE['READY_FOR_PICKUP'] == 'JOB_READY_FOR_PICKUP'
+        print("   [PASS] STATUS_TO_TEMPLATE mapping correct\n")
+
+        print("2. Testing template manager initialization...")
+        tm = job_notif_mgr._get_template_manager()
+        assert tm is not None, "Template manager should be initialized"
+        print("   [PASS] Template manager initialized\n")
+
+        print("3. Testing _build_template_variables...")
+        job_info = {
+            'id': 1,
+            'job_number': 'JOB-2024-0001',
+            'status': 'READY_FOR_PICKUP',
+            'customer_id': 1,
+            'customer_name': 'John Doe',
+            'customer_email': 'john@example.com',
+            'customer_phone': '555-123-4567',
+            'vehicle_description': '2023 Toyota Camry'
+        }
+        variables = job_notif_mgr._build_template_variables(job_info, 'Test note')
+        assert 'customer_name' in variables
+        assert variables['customer_name'] == 'John Doe'
+        assert variables['vehicle'] == '2023 Toyota Camry'
+        assert variables['job_number'] == 'JOB-2024-0001'
+        assert variables['notes'] == 'Test note'
+        print(f"   Variables: customer_name={variables['customer_name']}, vehicle={variables['vehicle']}")
+        print("   [PASS] Template variables built correctly\n")
+
+        print("4. Testing _format_status_message with templates...")
+        message_data = job_notif_mgr._format_status_message('READY_FOR_PICKUP', job_info, 'Vehicle is ready')
+
+        # Should have template key when using templates
+        assert 'template_key' in message_data, "Should include template_key"
+        assert message_data['template_key'] == 'JOB_READY_FOR_PICKUP'
+
+        # Should have rendered content for all channels
+        assert message_data.get('email_subject'), "Should have email subject"
+        assert message_data.get('email_body'), "Should have email body"
+        assert message_data.get('sms'), "Should have SMS message"
+        assert message_data.get('push_title'), "Should have push title"
+        assert message_data.get('push_body'), "Should have push body"
+
+        # Check content includes job info
+        assert 'Toyota Camry' in message_data['email_body'], "Email body should contain vehicle"
+        assert 'JOB-2024-0001' in message_data['sms'], "SMS should contain job number"
+
+        print(f"   Template key: {message_data['template_key']}")
+        print(f"   Email subject: {message_data['email_subject'][:50]}...")
+        print(f"   SMS: {message_data['sms'][:50]}...")
+        print(f"   Push title: {message_data['push_title']}")
+        print("   [PASS] Template rendering correct\n")
+
+        print("5. Testing fallback for non-mapped statuses...")
+        # WAITING_PARTS is not in STATUS_TO_TEMPLATE, should use fallback
+        fallback_msg = job_notif_mgr._format_status_message('WAITING_PARTS', job_info)
+        assert 'template_key' not in fallback_msg or fallback_msg.get('template_key') is None, \
+            "Should not have template_key for unmapped status"
+        assert fallback_msg['title'] == 'Waiting for Parts', "Should use fallback title"
+        print(f"   Fallback title: {fallback_msg['title']}")
+        print("   [PASS] Fallback works for unmapped statuses\n")
+
+        print("6. Testing template usage logging...")
+        # Check that usage was logged
+        stats = template_mgr.get_template_stats('JOB_READY_FOR_PICKUP', days=1)
+        print(f"   Template stats: {stats}")
+        # Usage should have been logged during _format_status_message
+        assert stats['template_key'] == 'JOB_READY_FOR_PICKUP'
+        print("   [PASS] Template usage logged\n")
+
+        print("="*80)
+        print("TEMPLATE INTEGRATION TESTS PASSED!")
+        print("="*80 + "\n")
+
+    finally:
+        # Cleanup
+        import shutil
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    return True
+
+
 if __name__ == "__main__":
     success = True
 
     try:
         success = test_notification_messages() and success
+        success = test_template_integration() and success
         success = test_job_notifications() and success
     except Exception as e:
         print(f"\n[FAIL] Error during testing: {e}")

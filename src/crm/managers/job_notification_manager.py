@@ -26,6 +26,7 @@ class JobNotificationManager:
     Manage real-time notifications for job status changes.
 
     Dispatches notifications to multiple channels based on customer preferences.
+    Uses NotificationTemplateManager for customizable message templates.
     """
 
     # Default statuses that trigger notifications
@@ -37,7 +38,20 @@ class JobNotificationManager:
         'COMPLETED'
     ]
 
-    # Status message templates
+    # Map job statuses to template keys
+    STATUS_TO_TEMPLATE = {
+        'DROPPED_OFF': 'JOB_DROPPED_OFF',
+        'ESTIMATE_CREATED': 'JOB_ESTIMATE_CREATED',
+        'APPROVED': 'JOB_APPROVED',
+        'SCHEDULED': 'JOB_SCHEDULED',
+        'IN_PROGRESS': 'JOB_IN_PROGRESS',
+        'READY_FOR_PICKUP': 'JOB_READY_FOR_PICKUP',
+        'COMPLETED': 'JOB_COMPLETED',
+        'INVOICED': 'INVOICE_CREATED',
+        'PAID': 'PAYMENT_RECEIVED'
+    }
+
+    # Fallback status message templates (used when template manager unavailable)
     STATUS_MESSAGES = {
         'NEW': {
             'title': 'Job Created',
@@ -140,6 +154,17 @@ class JobNotificationManager:
         """
         self.db_path = db_path
         self._ensure_tables()
+        self._template_manager = None
+
+    def _get_template_manager(self):
+        """Lazy-load the template manager."""
+        if self._template_manager is None:
+            try:
+                from src.crm.managers.notification_template_manager import NotificationTemplateManager
+                self._template_manager = NotificationTemplateManager(self.db_path)
+            except ImportError:
+                pass
+        return self._template_manager
 
     def _get_db(self):
         """Get database connection."""
@@ -321,9 +346,20 @@ class JobNotificationManager:
                 'STATUS_UPDATE',
                 message_data['title'],
                 message_data['message'],
-                message_data['priority'],
+                message_data.get('priority', 'NORMAL'),
                 datetime.now().isoformat()
             ))
+
+            # Log template usage if using templates
+            if message_data.get('template_key'):
+                template_manager = self._get_template_manager()
+                if template_manager:
+                    template_manager.log_usage(
+                        template_key=message_data['template_key'],
+                        channel='in_app',
+                        customer_id=customer_id
+                    )
+
             return True
         except Exception as e:
             print(f"[ERROR] Failed to create in-app notification: {e}")
@@ -480,10 +516,14 @@ class JobNotificationManager:
             db = self._get_db()
             email_manager = EmailManager(db)
 
-            # Create email content
-            subject = f"{message_data['title']} - {job_info['job_number']}"
-
-            body = f"""Hello {job_info['customer_name']},
+            # Use rendered template if available, otherwise build from message_data
+            if message_data.get('email_subject') and message_data.get('email_body'):
+                subject = message_data['email_subject']
+                body = message_data['email_body']
+            else:
+                # Fallback: Build email from basic message data
+                subject = f"{message_data['title']} - {job_info['job_number']}"
+                body = f"""Hello {job_info['customer_name']},
 
 {message_data['message']}
 
@@ -512,6 +552,16 @@ PDR Excellence
                 customer_id=customer_id
             )
 
+            # Log template usage if using templates
+            if message_data.get('template_key'):
+                template_manager = self._get_template_manager()
+                if template_manager:
+                    template_manager.log_usage(
+                        template_key=message_data['template_key'],
+                        channel='email',
+                        customer_id=customer_id
+                    )
+
             return True
         except Exception as e:
             print(f"[ERROR] Failed to send email notification: {e}")
@@ -537,17 +587,36 @@ PDR Excellence
                 print("[INFO] Twilio not configured - SMS notification skipped")
                 return False
 
-            # Send job notification
-            result = sms_manager.send_job_notification(
+            # Use rendered SMS template if available
+            if message_data.get('sms'):
+                sms_message = message_data['sms']
+            else:
+                # Fallback: Build SMS from basic message data
+                sms_message = f"PDR: {message_data['title']} - {message_data['message']}"
+                # Truncate if too long for SMS
+                if len(sms_message) > 160:
+                    sms_message = sms_message[:157] + "..."
+
+            # Send SMS directly with the rendered message
+            result = sms_manager.send_sms(
+                to_number=job_info.get('customer_phone', ''),
+                message=sms_message,
                 customer_id=customer_id,
                 job_id=job_info['id'],
-                title=message_data['title'],
-                message=message_data['message'],
-                job_number=job_info.get('job_number')
+                message_type='JOB_STATUS'
             )
 
             if result.get('success'):
                 print(f"[OK] SMS sent to customer {customer_id}")
+                # Log template usage
+                if message_data.get('template_key'):
+                    template_manager = self._get_template_manager()
+                    if template_manager:
+                        template_manager.log_usage(
+                            template_key=message_data['template_key'],
+                            channel='sms',
+                            customer_id=customer_id
+                        )
                 return True
             else:
                 print(f"[WARN] SMS failed: {result.get('error', 'Unknown error')}")
@@ -573,6 +642,10 @@ PDR Excellence
         try:
             sent = False
 
+            # Use rendered push template if available
+            push_title = message_data.get('push_title') or message_data.get('title', 'Notification')
+            push_body = message_data.get('push_body') or message_data.get('message', '')
+
             # Try Web Push (browser notifications) first
             try:
                 from src.crm.managers.web_push_manager import WebPushManager
@@ -580,8 +653,8 @@ PDR Excellence
                 web_push = WebPushManager(self.db_path)
                 result = web_push.send_notification(
                     customer_id=customer_id,
-                    title=message_data['title'],
-                    body=message_data['message'],
+                    title=push_title,
+                    body=push_body,
                     url=message_data.get('url', '/portal/'),
                     tag=f"job-{message_data.get('job_id', 'notification')}",
                     data={
@@ -593,6 +666,15 @@ PDR Excellence
                 if result.get('sent', 0) > 0:
                     sent = True
                     print(f"[OK] Web push sent to {result['sent']} device(s)")
+                    # Log template usage
+                    if message_data.get('template_key'):
+                        template_manager = self._get_template_manager()
+                        if template_manager:
+                            template_manager.log_usage(
+                                template_key=message_data['template_key'],
+                                channel='push',
+                                customer_id=customer_id
+                            )
             except ImportError:
                 print("[INFO] WebPushManager not available - skipping web push")
             except Exception as e:
@@ -610,9 +692,9 @@ PDR Excellence
                     payload = {
                         'token': pushover.api_token,
                         'user': pushover.user_key,
-                        'title': message_data['title'],
-                        'message': message_data['message'],
-                        'priority': 1 if message_data['priority'] == 'HIGH' else 0
+                        'title': push_title,
+                        'message': push_body,
+                        'priority': 1 if message_data.get('priority') == 'HIGH' else 0
                     }
 
                     data = urllib.parse.urlencode(payload).encode('utf-8')
@@ -636,13 +718,13 @@ PDR Excellence
                     url = f"{ntfy.server}/{ntfy.topic}"
                     headers = {
                         'Content-Type': 'text/plain; charset=utf-8',
-                        'Title': message_data['title'],
-                        'Priority': 'high' if message_data['priority'] == 'HIGH' else 'default'
+                        'Title': push_title,
+                        'Priority': 'high' if message_data.get('priority') == 'HIGH' else 'default'
                     }
 
                     req = urllib.request.Request(
                         url,
-                        data=message_data['message'].encode('utf-8'),
+                        data=push_body.encode('utf-8'),
                         headers=headers,
                         method='POST'
                     )
@@ -787,7 +869,46 @@ PDR Excellence
         job_info: Dict,
         notes: Optional[str] = None
     ) -> Dict:
-        """Format status message with job details."""
+        """Format status message with job details using template manager."""
+        # Build template variables from job info
+        variables = self._build_template_variables(job_info, notes)
+
+        # Try to use template manager first
+        template_manager = self._get_template_manager()
+        template_key = self.STATUS_TO_TEMPLATE.get(status)
+
+        if template_manager and template_key:
+            try:
+                # Render all channels at once
+                rendered = template_manager.render(template_key, variables)
+
+                # Log usage for analytics
+                template_manager.log_usage(
+                    template_key=template_key,
+                    channel='all',
+                    customer_id=job_info.get('customer_id')
+                )
+
+                # Determine priority based on status
+                priority = 'HIGH' if status in ['APPROVED', 'READY_FOR_PICKUP'] else 'NORMAL'
+
+                return {
+                    'title': rendered.get('title', f'Status Update: {status}'),
+                    'message': rendered.get('in_app', ''),
+                    'priority': priority,
+                    # Include all rendered channels for use by specific methods
+                    'email_subject': rendered.get('email_subject', ''),
+                    'email_body': rendered.get('email_body', ''),
+                    'sms': rendered.get('sms', ''),
+                    'push_title': rendered.get('push_title', ''),
+                    'push_body': rendered.get('push_body', ''),
+                    'job_id': job_info.get('id'),
+                    'template_key': template_key
+                }
+            except Exception as e:
+                print(f"[WARN] Template render failed, using fallback: {e}")
+
+        # Fallback to hardcoded templates
         template = self.STATUS_MESSAGES.get(status, {
             'title': f'Status Update: {status}',
             'message': 'Your job status has been updated to {status}.',
@@ -811,8 +932,35 @@ PDR Excellence
         return {
             'title': template['title'],
             'message': message,
-            'priority': template.get('priority', 'NORMAL')
+            'priority': template.get('priority', 'NORMAL'),
+            'job_id': job_info.get('id')
         }
+
+    def _build_template_variables(self, job_info: Dict, notes: Optional[str] = None) -> Dict[str, Any]:
+        """Build template variables from job info."""
+        variables = {
+            'customer_name': job_info.get('customer_name', 'Valued Customer'),
+            'vehicle': job_info.get('vehicle_description', 'your vehicle'),
+            'job_number': job_info.get('job_number', ''),
+            'status': job_info.get('status', ''),
+            'customer_email': job_info.get('customer_email', ''),
+            'customer_phone': job_info.get('customer_phone', ''),
+            'date': datetime.now().strftime('%B %d, %Y'),
+            'time': datetime.now().strftime('%I:%M %p'),
+            # Portal URL
+            'portal_url': 'http://localhost:5000/portal/',
+            # Location info (defaults, can be overridden)
+            'location_name': 'PDR Excellence',
+            'location_address': '123 Main St, Your City',
+            'business_hours': 'Mon-Fri 8AM-6PM, Sat 9AM-2PM',
+            # Amounts (defaults, can be overridden)
+            'estimate_amount': job_info.get('estimate_amount', 'TBD'),
+            'approved_amount': job_info.get('approved_amount', 'TBD'),
+            'final_amount': job_info.get('final_amount', 'TBD'),
+            # Notes
+            'notes': notes or ''
+        }
+        return variables
 
     # ========================================================================
     # NOTIFICATION HISTORY

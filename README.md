@@ -45,6 +45,16 @@ A comprehensive CRM and sales intelligence platform for Paintless Dent Repair (P
 - **Competitor Intelligence** - Track competitor activity and pricing in your market
 - **Sales Analytics** - Comprehensive dashboards and performance metrics
 
+### Customer Portal & Notifications
+A full-featured customer portal with real-time job status notifications:
+
+- **Real-Time Notifications** - SSE-powered instant updates when job status changes
+- **Push Notifications** - Browser push notifications via Web Push API
+- **Email Notifications** - Automated emails for key status updates
+- **In-App Notifications** - Bell icon with notification dropdown
+- **Notification Preferences** - Customers control which updates they receive
+- **Quiet Hours** - Configurable do-not-disturb periods
+
 ### Elite Sales Mobile App (PWA)
 A mobile-first Progressive Web App designed for field sales representatives:
 
@@ -108,6 +118,31 @@ python run.py
 
 The application will be available at `http://127.0.0.1:5000`
 
+### Push Notification Setup (Optional)
+
+Browser push notifications require VAPID keys for authentication:
+
+1. **Install pywebpush** (already in requirements.txt):
+```bash
+pip install pywebpush
+```
+
+2. **Generate VAPID keys** (auto-generated on first run, or set manually):
+```bash
+# Option 1: Auto-generated - keys stored in database on first WebPushManager init
+
+# Option 2: Set environment variables
+export VAPID_PRIVATE_KEY="your-base64-private-key"
+export VAPID_PUBLIC_KEY="your-base64-public-key"
+export VAPID_CLAIM_EMAIL="mailto:admin@yourcompany.com"
+```
+
+3. **Enable in Customer Portal**:
+   - Login to customer portal at `/portal/`
+   - Click "Enable" on the push notification banner
+   - Allow browser notification permission
+   - Test from Notification Preferences page
+
 ## Usage
 
 ### Demo Login
@@ -132,6 +167,18 @@ The application will be available at `http://127.0.0.1:5000`
 | `/mobile/competitors` | Competitor intelligence logging |
 
 ## API Endpoints
+
+### Customer Portal API
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/portal/api/notifications` | GET | Get customer notifications |
+| `/portal/api/notifications/<id>/read` | POST | Mark notification as read |
+| `/portal/api/notifications/mark-all-read` | POST | Mark all notifications read |
+| `/portal/api/notifications/stream` | GET | SSE stream for real-time updates |
+| `/portal/api/push/vapid-public-key` | GET | Get VAPID public key |
+| `/portal/api/push/subscribe` | POST | Subscribe to push notifications |
+| `/portal/api/push/unsubscribe` | POST | Unsubscribe from push |
+| `/portal/api/push/test` | POST | Send test push notification |
 
 ### Elite Sales API
 | Endpoint | Method | Description |

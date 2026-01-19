@@ -143,6 +143,36 @@ export VAPID_CLAIM_EMAIL="mailto:admin@yourcompany.com"
    - Allow browser notification permission
    - Test from Notification Preferences page
 
+### SMS Notification Setup (Optional)
+
+SMS notifications use Twilio for delivery:
+
+1. **Install Twilio** (already in requirements.txt):
+```bash
+pip install twilio
+```
+
+2. **Get Twilio credentials** from https://console.twilio.com/:
+   - Account SID
+   - Auth Token
+   - A Twilio phone number
+
+3. **Set environment variables**:
+```bash
+export TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+export TWILIO_AUTH_TOKEN=your_auth_token_here
+export TWILIO_FROM_NUMBER=+15551234567
+
+# Optional rate limiting (defaults shown)
+export SMS_MAX_PER_HOUR=5
+export SMS_MAX_PER_DAY=20
+```
+
+4. **Enable SMS for customers**:
+   - SMS is disabled by default in notification preferences
+   - Customers can enable it in their Notification Preferences
+   - Or enable programmatically via the API
+
 ## Usage
 
 ### Demo Login

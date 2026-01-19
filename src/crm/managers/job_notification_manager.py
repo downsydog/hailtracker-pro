@@ -279,7 +279,8 @@ class JobNotificationManager:
         if preferences.get('sms_enabled', False) and job_info.get('customer_phone'):
             results['sms'] = self._send_sms_notification(
                 job_info=job_info,
-                message_data=message_data
+                message_data=message_data,
+                customer_id=customer_id
             )
 
         if preferences.get('push_enabled', False):
@@ -523,31 +524,37 @@ PDR Excellence
     def _send_sms_notification(
         self,
         job_info: Dict,
-        message_data: Dict
+        message_data: Dict,
+        customer_id: int
     ) -> bool:
         """Send SMS notification for status change."""
         try:
-            from src.alerts.notifiers import TwilioNotifierFromEnv
+            from src.crm.managers.sms_manager import SmsManager
 
-            # Create SMS message (keep it short)
-            sms_message = f"""PDR Update: {message_data['title']}
+            sms_manager = SmsManager(self.db_path)
 
-{message_data['message'][:120]}...
-
-Job: {job_info['job_number']}
-"""
-
-            # Try to use Twilio from environment
-            notifier = TwilioNotifierFromEnv()
-            if notifier.client:
-                notifier._send_sms(job_info['customer_phone'], sms_message)
-                return True
-            else:
+            if not sms_manager.is_configured():
                 print("[INFO] Twilio not configured - SMS notification skipped")
                 return False
 
+            # Send job notification
+            result = sms_manager.send_job_notification(
+                customer_id=customer_id,
+                job_id=job_info['id'],
+                title=message_data['title'],
+                message=message_data['message'],
+                job_number=job_info.get('job_number')
+            )
+
+            if result.get('success'):
+                print(f"[OK] SMS sent to customer {customer_id}")
+                return True
+            else:
+                print(f"[WARN] SMS failed: {result.get('error', 'Unknown error')}")
+                return False
+
         except ImportError:
-            print("[INFO] Twilio not available - SMS notification skipped")
+            print("[INFO] SmsManager not available - SMS notification skipped")
             return False
         except Exception as e:
             print(f"[ERROR] Failed to send SMS notification: {e}")

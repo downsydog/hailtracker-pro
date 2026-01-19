@@ -31,4 +31,4 @@ transformers>=4.30.0
 # arm-pyart>=1.18.0
 
 # SMS Notifications (optional)
-# twilio>=8.0.0
+twilio>=8.0.0

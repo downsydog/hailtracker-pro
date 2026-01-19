@@ -715,7 +715,7 @@ class CustomerPortalManager:
         if history:
             # Build timeline from history
             for entry in history:
-                status = entry['status']
+                status = entry['to_status']
                 status_details = self._get_job_status_details(status)
 
                 timeline.append({

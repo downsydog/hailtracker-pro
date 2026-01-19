@@ -26,6 +26,7 @@ import time
 from src.crm.managers.customer_portal_manager import CustomerPortalManager
 from src.crm.managers.digital_flyer_manager import DigitalFlyerManager
 from src.crm.managers.job_notification_manager import JobNotificationManager
+from src.crm.managers.web_push_manager import WebPushManager
 
 # Create blueprint
 customer_portal_bp = Blueprint('customer_portal', __name__, url_prefix='/portal')
@@ -62,6 +63,11 @@ def get_flyer_manager():
 def get_notification_manager():
     """Get JobNotificationManager instance"""
     return JobNotificationManager(DB_PATH)
+
+
+def get_web_push_manager():
+    """Get WebPushManager instance"""
+    return WebPushManager(DB_PATH)
 
 
 # ============================================================================
@@ -1033,3 +1039,131 @@ def api_notification_preferences():
     # GET
     preferences = notification_manager.get_customer_preferences(customer_id)
     return jsonify(preferences)
+
+
+# ============================================================================
+# PUSH NOTIFICATION API ENDPOINTS
+# ============================================================================
+
+@customer_portal_bp.route('/api/push/vapid-public-key')
+@portal_login_required
+def api_vapid_public_key():
+    """API: Get VAPID public key for push subscription"""
+
+    push_manager = get_web_push_manager()
+    public_key = push_manager.get_vapid_public_key()
+
+    if not public_key:
+        return jsonify({
+            'error': 'Push notifications not configured',
+            'available': False
+        }), 503
+
+    return jsonify({
+        'publicKey': public_key,
+        'available': True
+    })
+
+
+@customer_portal_bp.route('/api/push/subscribe', methods=['POST'])
+@portal_login_required
+def api_push_subscribe():
+    """API: Subscribe to push notifications"""
+
+    customer_id = session['portal_customer_id']
+    push_manager = get_web_push_manager()
+
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'No subscription data provided'}), 400
+
+    subscription_info = {
+        'endpoint': data.get('endpoint'),
+        'keys': {
+            'p256dh': data.get('keys', {}).get('p256dh'),
+            'auth': data.get('keys', {}).get('auth')
+        }
+    }
+
+    if not subscription_info['endpoint']:
+        return jsonify({'error': 'Invalid subscription data'}), 400
+
+    user_agent = request.headers.get('User-Agent')
+
+    try:
+        subscription_id = push_manager.save_subscription(
+            customer_id=customer_id,
+            subscription_info=subscription_info,
+            user_agent=user_agent
+        )
+
+        # Update notification preferences to enable push
+        notification_manager = get_notification_manager()
+        prefs = notification_manager.get_customer_preferences(customer_id)
+        prefs['push_enabled'] = True
+        notification_manager.update_customer_preferences(customer_id, prefs)
+
+        return jsonify({
+            'success': True,
+            'subscription_id': subscription_id,
+            'message': 'Push notifications enabled'
+        })
+
+    except Exception as e:
+        return jsonify({
+            'error': str(e),
+            'success': False
+        }), 500
+
+
+@customer_portal_bp.route('/api/push/unsubscribe', methods=['POST'])
+@portal_login_required
+def api_push_unsubscribe():
+    """API: Unsubscribe from push notifications"""
+
+    customer_id = session['portal_customer_id']
+    push_manager = get_web_push_manager()
+
+    data = request.get_json()
+    endpoint = data.get('endpoint') if data else None
+
+    if endpoint:
+        push_manager.remove_subscription(endpoint)
+
+    # Update notification preferences
+    notification_manager = get_notification_manager()
+    prefs = notification_manager.get_customer_preferences(customer_id)
+
+    # Check if there are any remaining subscriptions
+    remaining = push_manager.get_customer_subscriptions(customer_id)
+    if not remaining:
+        prefs['push_enabled'] = False
+        notification_manager.update_customer_preferences(customer_id, prefs)
+
+    return jsonify({
+        'success': True,
+        'message': 'Push subscription removed'
+    })
+
+
+@customer_portal_bp.route('/api/push/test', methods=['POST'])
+@portal_login_required
+def api_push_test():
+    """API: Send a test push notification"""
+
+    customer_id = session['portal_customer_id']
+    push_manager = get_web_push_manager()
+
+    result = push_manager.send_notification(
+        customer_id=customer_id,
+        title='Test Notification',
+        body='Push notifications are working! You will receive updates about your repair status.',
+        url='/portal/notifications'
+    )
+
+    return jsonify({
+        'success': result.get('sent', 0) > 0,
+        'sent': result.get('sent', 0),
+        'failed': result.get('failed', 0),
+        'error': result.get('error')
+    })

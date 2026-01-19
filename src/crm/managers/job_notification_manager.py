@@ -562,17 +562,41 @@ Job: {job_info['job_number']}
         customer_id: int,
         message_data: Dict
     ) -> bool:
-        """Send push notification (Pushover, ntfy, etc.)."""
+        """Send push notification (Web Push, Pushover, ntfy, etc.)."""
         try:
-            from src.alerts.notifiers import PushoverNotifierFromEnv, NtfyNotifierFromEnv
-
             sent = False
 
-            # Try Pushover
+            # Try Web Push (browser notifications) first
             try:
+                from src.crm.managers.web_push_manager import WebPushManager
+
+                web_push = WebPushManager(self.db_path)
+                result = web_push.send_notification(
+                    customer_id=customer_id,
+                    title=message_data['title'],
+                    body=message_data['message'],
+                    url=message_data.get('url', '/portal/'),
+                    tag=f"job-{message_data.get('job_id', 'notification')}",
+                    data={
+                        'job_id': message_data.get('job_id'),
+                        'priority': message_data.get('priority', 'NORMAL')
+                    }
+                )
+
+                if result.get('sent', 0) > 0:
+                    sent = True
+                    print(f"[OK] Web push sent to {result['sent']} device(s)")
+            except ImportError:
+                print("[INFO] WebPushManager not available - skipping web push")
+            except Exception as e:
+                print(f"[WARN] Web push failed: {e}")
+
+            # Try Pushover as fallback
+            try:
+                from src.alerts.notifiers import PushoverNotifierFromEnv
+
                 pushover = PushoverNotifierFromEnv()
                 if pushover.user_key and pushover.api_token:
-                    # Send a simplified push notification
                     import urllib.request
                     import urllib.parse
 
@@ -589,11 +613,15 @@ Job: {job_info['job_number']}
                     with urllib.request.urlopen(req, timeout=10) as response:
                         if response.status == 200:
                             sent = True
+            except ImportError:
+                pass
             except Exception:
                 pass
 
-            # Try ntfy
+            # Try ntfy as another fallback
             try:
+                from src.alerts.notifiers import NtfyNotifierFromEnv
+
                 ntfy = NtfyNotifierFromEnv()
                 if ntfy.topic:
                     import urllib.request
@@ -614,6 +642,8 @@ Job: {job_info['job_number']}
                     with urllib.request.urlopen(req, timeout=10) as response:
                         if response.status == 200:
                             sent = True
+            except ImportError:
+                pass
             except Exception:
                 pass
 

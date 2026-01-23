@@ -8,7 +8,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { apiGet, apiPost } from "@/api/client"
 import { Lead } from "@/types"
-import { RefreshCw, Layers, MapPin, CloudLightning, Flame, Phone, Mail, Navigation, UserPlus, Edit, X, Radio } from "lucide-react"
+import { RefreshCw, Layers, MapPin, CloudLightning, Flame, Phone, Mail, Navigation, UserPlus, Edit, Radio } from "lucide-react"
 import { useNavigate } from "react-router-dom"
 import L from "leaflet"
 import "leaflet/dist/leaflet.css"

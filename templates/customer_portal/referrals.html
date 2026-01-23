@@ -34,7 +34,7 @@
     <!-- Share Section -->
     <div class="card p-6 mb-6">
         <h2 class="text-lg font-bold text-gray-800 mb-4">
-            <i class="fas fa-share-alt mr-2 text-emerald-600"></i>Share Your Referral Link
+            <i data-lucide="share-2" class="w-5 h-5 inline mr-2 text-emerald-600"></i>Share Your Referral Link
         </h2>
 
         <div class="flex flex-col lg:flex-row lg:items-center space-y-4 lg:space-y-0 lg:space-x-4">
@@ -43,7 +43,7 @@
                     <input type="text" id="referral-link" value="{{ referrals.referral_link }}" readonly
                         class="flex-1 bg-transparent border-none focus:outline-none text-gray-700">
                     <button onclick="copyLink()" class="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition">
-                        <i class="fas fa-copy mr-1"></i>Copy
+                        <i data-lucide="copy" class="w-4 h-4 inline mr-1"></i>Copy
                     </button>
                 </div>
             </div>
@@ -51,25 +51,25 @@
             <div class="flex space-x-3">
                 <a href="https://www.facebook.com/sharer/sharer.php?u={{ referrals.referral_link }}" target="_blank"
                     class="w-10 h-10 bg-blue-600 text-white rounded-lg flex items-center justify-center hover:bg-blue-700 transition">
-                    <i class="fab fa-facebook-f"></i>
+                    <i data-lucide="facebook" class="w-5 h-5"></i>
                 </a>
                 <a href="https://twitter.com/intent/tweet?url={{ referrals.referral_link }}&text=Check%20out%20this%20great%20PDR%20service!" target="_blank"
                     class="w-10 h-10 bg-sky-500 text-white rounded-lg flex items-center justify-center hover:bg-sky-600 transition">
-                    <i class="fab fa-twitter"></i>
+                    <i data-lucide="twitter" class="w-5 h-5"></i>
                 </a>
                 <a href="sms:?body=I%20highly%20recommend%20this%20PDR%20service!%20{{ referrals.referral_link }}"
                     class="w-10 h-10 bg-green-500 text-white rounded-lg flex items-center justify-center hover:bg-green-600 transition">
-                    <i class="fas fa-sms"></i>
+                    <i data-lucide="message-square" class="w-5 h-5"></i>
                 </a>
                 <a href="mailto:?subject=Great%20PDR%20Service&body=Check%20out%20this%20PDR%20service:%20{{ referrals.referral_link }}"
                     class="w-10 h-10 bg-gray-600 text-white rounded-lg flex items-center justify-center hover:bg-gray-700 transition">
-                    <i class="fas fa-envelope"></i>
+                    <i data-lucide="mail" class="w-5 h-5"></i>
                 </a>
             </div>
         </div>
 
         <a href="{{ url_for('customer_portal.share_referral') }}" class="mt-4 inline-flex items-center text-emerald-600 hover:text-emerald-700">
-            <i class="fas fa-file-image mr-2"></i>Get Shareable Flyer
+            <i data-lucide="image" class="w-5 h-5 inline mr-2"></i>Get Shareable Flyer
         </a>
     </div>
 
@@ -112,7 +112,7 @@
                 <div class="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
                     <div class="flex items-center space-x-3">
                         <div class="w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center">
-                            <i class="fas fa-user text-emerald-600"></i>
+                            <i data-lucide="user" class="w-5 h-5 text-emerald-600"></i>
                         </div>
                         <div>
                             <p class="font-medium text-gray-800">{{ ref.name }}</p>
@@ -124,7 +124,7 @@
                         <p class="text-sm mt-1 {% if ref.commission_status == 'PAID' %}text-emerald-600{% else %}text-gray-500{% endif %}">
                             ${{ "%.2f"|format(ref.commission_amount or 50) }}
                             {% if ref.commission_status == 'PAID' %}
-                                <i class="fas fa-check-circle ml-1"></i>
+                                <i data-lucide="check-circle" class="w-4 h-4 inline ml-1"></i>
                             {% endif %}
                         </p>
                     </div>
@@ -133,7 +133,7 @@
             </div>
             {% else %}
             <div class="text-center py-8 text-gray-500">
-                <i class="fas fa-users text-4xl text-gray-300 mb-3"></i>
+                <i data-lucide="users" class="w-12 h-12 text-gray-300 mb-3"></i>
                 <p>No referrals yet</p>
                 <p class="text-sm">Share your link to start earning!</p>
             </div>
@@ -180,7 +180,7 @@ function copyLink() {
     // Show feedback
     const btn = event.target.closest('button');
     const originalHTML = btn.innerHTML;
-    btn.innerHTML = '<i class="fas fa-check mr-1"></i>Copied!';
+    btn.innerHTML = '<i data-lucide="check" class="w-4 h-4 inline mr-1"></i>Copied!';
     btn.classList.add('bg-green-600');
 
     setTimeout(() => {

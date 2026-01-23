@@ -7,7 +7,7 @@
     <div class="max-w-2xl mx-auto">
         <div class="text-center mb-8">
             <div class="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <i class="fas fa-gift text-4xl text-emerald-600"></i>
+                <i data-lucide="gift" class="w-10 h-10 text-emerald-600"></i>
             </div>
             <h1 class="text-3xl font-bold text-gray-800">Earn $50 Per Referral</h1>
             <p class="text-gray-500 mt-2">Share your personalized link and earn when friends book service</p>
@@ -20,7 +20,7 @@
                 <input type="text" id="referral-link" value="{{ referral_link }}" readonly
                     class="flex-1 bg-transparent border-none focus:outline-none text-gray-700 text-sm">
                 <button onclick="copyLink()" class="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition">
-                    <i class="fas fa-copy"></i>
+                    <i data-lucide="copy" class="w-5 h-5"></i>
                 </button>
             </div>
         </div>
@@ -31,22 +31,22 @@
             <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <a href="sms:?body=I%20just%20got%20my%20hail%20damage%20fixed%20and%20it%20looks%20amazing!%20Check%20them%20out:%20{{ referral_link }}"
                     class="flex flex-col items-center p-4 bg-green-50 rounded-xl hover:bg-green-100 transition">
-                    <i class="fas fa-sms text-3xl text-green-600 mb-2"></i>
+                    <i data-lucide="message-square" class="w-8 h-8 text-green-600 mb-2"></i>
                     <span class="text-sm font-medium text-gray-700">Text</span>
                 </a>
                 <a href="mailto:?subject=Great%20PDR%20Service%20Recommendation&body=Hey!%20I%20just%20got%20my%20car's%20hail%20damage%20fixed%20and%20wanted%20to%20share.%20Check%20them%20out:%20{{ referral_link }}"
                     class="flex flex-col items-center p-4 bg-blue-50 rounded-xl hover:bg-blue-100 transition">
-                    <i class="fas fa-envelope text-3xl text-blue-600 mb-2"></i>
+                    <i data-lucide="mail" class="w-8 h-8 text-blue-600 mb-2"></i>
                     <span class="text-sm font-medium text-gray-700">Email</span>
                 </a>
                 <a href="https://www.facebook.com/sharer/sharer.php?u={{ referral_link }}" target="_blank"
                     class="flex flex-col items-center p-4 bg-indigo-50 rounded-xl hover:bg-indigo-100 transition">
-                    <i class="fab fa-facebook text-3xl text-indigo-600 mb-2"></i>
+                    <i data-lucide="facebook" class="w-8 h-8 text-indigo-600 mb-2"></i>
                     <span class="text-sm font-medium text-gray-700">Facebook</span>
                 </a>
                 <a href="https://twitter.com/intent/tweet?url={{ referral_link }}&text=Just%20got%20my%20hail%20damage%20fixed!%20Highly%20recommend:" target="_blank"
                     class="flex flex-col items-center p-4 bg-sky-50 rounded-xl hover:bg-sky-100 transition">
-                    <i class="fab fa-twitter text-3xl text-sky-500 mb-2"></i>
+                    <i data-lucide="twitter" class="w-8 h-8 text-sky-500 mb-2"></i>
                     <span class="text-sm font-medium text-gray-700">Twitter</span>
                 </a>
             </div>
@@ -62,7 +62,7 @@
                 <div class="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
                     <div class="flex items-center space-x-3">
                         <div class="w-12 h-12 bg-emerald-100 rounded-lg flex items-center justify-center">
-                            <i class="fas fa-file-image text-emerald-600"></i>
+                            <i data-lucide="image" class="w-5 h-5 text-emerald-600"></i>
                         </div>
                         <div>
                             <p class="font-medium text-gray-800">{{ flyer.flyer_name or 'Referral Flyer' }}</p>
@@ -70,7 +70,7 @@
                         </div>
                     </div>
                     <button onclick="shareFlyer('{{ flyer.flyer_url }}')" class="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition text-sm">
-                        <i class="fas fa-share mr-1"></i>Share
+                        <i data-lucide="share" class="w-4 h-4 inline mr-1"></i>Share
                     </button>
                 </div>
                 {% endfor %}
@@ -109,7 +109,7 @@
         <!-- Earnings Summary -->
         <div class="mt-6 p-4 bg-emerald-50 rounded-xl text-center">
             <p class="text-sm text-emerald-700">
-                <i class="fas fa-wallet mr-1"></i>
+                <i data-lucide="wallet" class="w-4 h-4 inline mr-1"></i>
                 Your current balance: <strong>${{ "%.2f"|format(earnings.balance_due or 0) }}</strong>
             </p>
         </div>

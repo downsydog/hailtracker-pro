@@ -2,7 +2,7 @@
 {% block title %}Book Appointment{% endblock %}
 {% block content %}
 <div class="p-6 lg:p-8">
-    <a href="{{ url_for('customer_portal.appointments') }}" class="text-gray-600 hover:text-gray-800 mb-4 inline-block"><i class="fas fa-arrow-left mr-2"></i>Back</a>
+    <a href="{{ url_for('customer_portal.appointments') }}" class="text-gray-600 hover:text-gray-800 mb-4 inline-flex items-center"><i data-lucide="arrow-left" class="w-4 h-4 mr-2"></i>Back</a>
     <h1 class="text-2xl font-bold text-gray-800 mb-6">Book an Appointment</h1>
 
     <div class="card p-6 max-w-2xl">
@@ -51,8 +51,8 @@
                 </select>
             </div>
 
-            <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-lg font-medium">
-                <i class="fas fa-calendar-check mr-2"></i>Book Appointment
+            <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-lg font-medium flex items-center justify-center">
+                <i data-lucide="calendar-check" class="w-5 h-5 mr-2"></i>Book Appointment
             </button>
         </form>
     </div>

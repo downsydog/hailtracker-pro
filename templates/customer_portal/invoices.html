@@ -6,7 +6,7 @@
 
     {% if unpaid_invoices %}
     <div class="card p-6 mb-6 border-l-4 border-yellow-500">
-        <h2 class="text-lg font-bold text-gray-800 mb-4"><i class="fas fa-exclamation-circle mr-2 text-yellow-500"></i>Outstanding Balance</h2>
+        <h2 class="text-lg font-bold text-gray-800 mb-4 flex items-center"><i data-lucide="alert-circle" class="w-5 h-5 mr-2 text-yellow-500"></i>Outstanding Balance</h2>
         <div class="space-y-3">
             {% for inv in unpaid_invoices %}
             <div class="flex items-center justify-between p-4 bg-yellow-50 rounded-lg">
@@ -22,7 +22,7 @@
     {% endif %}
 
     <div class="card p-6">
-        <h2 class="text-lg font-bold text-gray-800 mb-4"><i class="fas fa-file-invoice mr-2 text-gray-600"></i>All Invoices</h2>
+        <h2 class="text-lg font-bold text-gray-800 mb-4 flex items-center"><i data-lucide="file-text" class="w-5 h-5 mr-2 text-gray-600"></i>All Invoices</h2>
         {% if invoices %}
         <div class="overflow-x-auto">
             <table class="w-full">

@@ -7,13 +7,13 @@
             <h1 class="text-2xl font-bold text-gray-800">Appointments</h1>
             <p class="text-gray-500">Manage your service appointments</p>
         </div>
-        <a href="{{ url_for('customer_portal.book_appointment') }}" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg transition">
-            <i class="fas fa-plus mr-2"></i>Book New
+        <a href="{{ url_for('customer_portal.book_appointment') }}" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg transition inline-flex items-center">
+            <i data-lucide="plus" class="w-4 h-4 mr-2"></i>Book New
         </a>
     </div>
 
     <div class="card p-6 mb-6">
-        <h2 class="text-lg font-bold text-gray-800 mb-4"><i class="fas fa-calendar-check mr-2 text-emerald-600"></i>Upcoming</h2>
+        <h2 class="text-lg font-bold text-gray-800 mb-4 flex items-center"><i data-lucide="calendar-check" class="w-5 h-5 mr-2 text-emerald-600"></i>Upcoming</h2>
         {% if upcoming_appointments %}
         <div class="space-y-3">
             {% for appt in upcoming_appointments %}
@@ -29,8 +29,8 @@
                     </div>
                 </div>
                 <form action="{{ url_for('customer_portal.cancel_appointment', appointment_id=appt.id) }}" method="POST">
-                    <button type="submit" class="text-red-600 hover:text-red-700 text-sm" onclick="return confirm('Cancel this appointment?')">
-                        <i class="fas fa-times mr-1"></i>Cancel
+                    <button type="submit" class="text-red-600 hover:text-red-700 text-sm inline-flex items-center" onclick="return confirm('Cancel this appointment?')">
+                        <i data-lucide="x" class="w-4 h-4 mr-1"></i>Cancel
                     </button>
                 </form>
             </div>
@@ -38,14 +38,14 @@
         </div>
         {% else %}
         <div class="text-center py-8 text-gray-500">
-            <i class="fas fa-calendar text-4xl text-gray-300 mb-3"></i>
+            <i data-lucide="calendar" class="w-10 h-10 text-gray-300 mx-auto mb-3"></i>
             <p>No upcoming appointments</p>
         </div>
         {% endif %}
     </div>
 
     <div class="card p-6">
-        <h2 class="text-lg font-bold text-gray-800 mb-4"><i class="fas fa-history mr-2 text-gray-600"></i>Past Appointments</h2>
+        <h2 class="text-lg font-bold text-gray-800 mb-4 flex items-center"><i data-lucide="history" class="w-5 h-5 mr-2 text-gray-600"></i>Past Appointments</h2>
         {% if past_appointments %}
         <div class="space-y-2">
             {% for appt in past_appointments[:5] %}

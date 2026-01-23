@@ -12,7 +12,7 @@
                 <p class="text-sm opacity-80 mt-1">{{ loyalty.tier or 'BRONZE' }} Member</p>
             </div>
             <div class="w-20 h-20 bg-white/20 rounded-full flex items-center justify-center">
-                <i class="fas fa-star text-4xl text-yellow-300"></i>
+                <i data-lucide="star" class="w-10 h-10 text-yellow-300"></i>
             </div>
         </div>
     </div>
@@ -23,7 +23,7 @@
             <ul class="space-y-3">
                 {% for benefit in loyalty.tier_benefits or ['1 point per $1 spent', 'Birthday discount'] %}
                 <li class="flex items-center text-gray-700">
-                    <i class="fas fa-check-circle text-emerald-500 mr-3"></i>{{ benefit }}
+                    <i data-lucide="check-circle" class="w-5 h-5 text-emerald-500 mr-3"></i>{{ benefit }}
                 </li>
                 {% endfor %}
             </ul>

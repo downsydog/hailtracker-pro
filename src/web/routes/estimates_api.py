@@ -244,7 +244,7 @@ def list_estimates():
             SUM(CASE WHEN status IN ('APPROVED', 'CONVERTED') THEN 1 ELSE 0 END) as success_count,
             SUM(CASE WHEN status NOT IN ('DRAFT') THEN 1 ELSE 0 END) as sent_count
         FROM estimates
-        WHERE deleted_at IS NULL
+        WHERE 1=1
     ''')
     stats_row = cursor.fetchone()
 
@@ -415,7 +415,7 @@ def update_estimate(estimate_id):
 
     # Check estimate exists and is editable
     cursor.execute('''
-        SELECT * FROM estimates WHERE id = ? AND deleted_at IS NULL
+        SELECT * FROM estimates WHERE id = ?
     ''', (estimate_id,))
 
     estimate = cursor.fetchone()
@@ -489,7 +489,7 @@ def delete_estimate(estimate_id):
     cursor = conn.cursor()
 
     cursor.execute('''
-        SELECT * FROM estimates WHERE id = ? AND deleted_at IS NULL
+        SELECT * FROM estimates WHERE id = ?
     ''', (estimate_id,))
 
     if not cursor.fetchone():
@@ -497,7 +497,7 @@ def delete_estimate(estimate_id):
         return jsonify({'error': 'Estimate not found'}), 404
 
     cursor.execute('''
-        UPDATE estimates SET deleted_at = ? WHERE id = ?
+        UPDATE estimates SET status = 'CANCELLED', updated_at = ? WHERE id = ?
     ''', (datetime.now().isoformat(), estimate_id))
 
     conn.commit()
@@ -519,7 +519,7 @@ def add_line_item(estimate_id):
 
     # Check estimate exists and is editable
     cursor.execute('''
-        SELECT * FROM estimates WHERE id = ? AND deleted_at IS NULL
+        SELECT * FROM estimates WHERE id = ?
     ''', (estimate_id,))
 
     estimate = cursor.fetchone()
@@ -758,7 +758,7 @@ def approve_estimate(estimate_id):
     cursor = conn.cursor()
 
     cursor.execute('''
-        SELECT * FROM estimates WHERE id = ? AND deleted_at IS NULL
+        SELECT * FROM estimates WHERE id = ?
     ''', (estimate_id,))
 
     estimate = cursor.fetchone()
@@ -797,7 +797,7 @@ def decline_estimate(estimate_id):
     cursor = conn.cursor()
 
     cursor.execute('''
-        SELECT * FROM estimates WHERE id = ? AND deleted_at IS NULL
+        SELECT * FROM estimates WHERE id = ?
     ''', (estimate_id,))
 
     estimate = cursor.fetchone()

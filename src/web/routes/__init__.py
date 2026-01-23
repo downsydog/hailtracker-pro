@@ -8,5 +8,6 @@ from .home import home_bp
 from .elite_sales import elite_sales_bp
 from .mobile import mobile_bp
 from .customer_portal import customer_portal_bp
+from .customer_intake import customer_intake_bp
 
-__all__ = ['crm_bp', 'auth_bp', 'home_bp', 'elite_sales_bp', 'mobile_bp', 'customer_portal_bp']
+__all__ = ['crm_bp', 'auth_bp', 'home_bp', 'elite_sales_bp', 'mobile_bp', 'customer_portal_bp', 'customer_intake_bp']

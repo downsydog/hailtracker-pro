@@ -12,6 +12,11 @@ import sys
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
+
+# Add project root to path FIRST before any src imports
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
 from flask import Flask, render_template, jsonify, request, send_file
 from flask_login import LoginManager, login_required, current_user
 import sqlite3
@@ -19,10 +24,6 @@ import sqlite3
 # Auth imports
 from src.auth.auth_manager import AuthManager
 from src.auth.user_model import User
-
-# Add project root to path
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.radar.coverage import (
     find_covering_radars, find_nearest_radar,
@@ -74,7 +75,8 @@ def create_app(config=None):
     app.config.update(
         DATABASE_PATH=str(PROJECT_ROOT / 'database' / 'hailtracker_pro.db'),
         SECRET_KEY=os.environ.get('SECRET_KEY', 'hailtracker-dev-key'),
-        DEBUG=os.environ.get('DEBUG', 'false').lower() == 'true'
+        DEBUG=os.environ.get('DEBUG', 'false').lower() == 'true',
+        TEMPLATES_AUTO_RELOAD=True  # Always reload templates on change
     )
 
     if config:
@@ -108,6 +110,37 @@ def create_app(config=None):
     app.auth_manager = auth_manager
 
     logger.info("Flask-Login initialized")
+
+    # ====================
+    # Bridge Flask-Login to g.current_user
+    # ====================
+    # The custom decorators in src/core/auth/decorators.py check g.current_user
+    # but Flask-Login sets current_user. This bridges the two systems.
+
+    @app.before_request
+    def bridge_flask_login_to_g():
+        """Bridge Flask-Login's current_user to g.current_user for custom decorators"""
+        from flask import g
+        from flask_login import current_user
+
+        # Initialize context variables
+        g.current_user = None
+        g.organization_id = 1  # Default org for demo
+        g.account_id = 1
+
+        if current_user.is_authenticated:
+            # Convert User object to dict format expected by decorators
+            g.current_user = {
+                'id': current_user.id,
+                'email': current_user.email,
+                'username': current_user.username,
+                'full_name': current_user.full_name,
+                'role': current_user.role,
+                'company_id': current_user.company_id,
+                'organization_id': 1,  # Default for demo
+                'permissions': auth_manager.get_user_permissions(current_user.id)
+            }
+            g.organization_id = 1  # Default org for demo
 
     # Initialize components
     pdr_scorer = PDROpportunityScorer(app.config['DATABASE_PATH'])
@@ -2146,6 +2179,157 @@ def create_app(config=None):
     from src.web.routes.customer_portal import customer_portal_bp
     app.register_blueprint(customer_portal_bp)
     logger.info("Customer Portal routes registered")
+
+    # ====================
+    # Customer Intake Routes (Public tablet form)
+    # ====================
+
+    from src.web.routes.customer_intake import customer_intake_bp
+    app.register_blueprint(customer_intake_bp)
+    logger.info("Customer Intake routes registered")
+
+    # ====================
+    # Kiosk Routes (Tablet walk-in intake)
+    # ====================
+
+    from src.web.routes.kiosk import kiosk_bp
+    app.register_blueprint(kiosk_bp)
+    logger.info("Kiosk routes registered")
+
+    # ====================
+    # Scheduling API Routes
+    # ====================
+
+    from src.web.routes.scheduling import scheduling_bp
+    app.register_blueprint(scheduling_bp)
+    logger.info("Scheduling API routes registered")
+
+    # ====================
+    # Self-Scheduling Routes (Public)
+    # ====================
+
+    from src.web.routes.self_schedule import self_schedule_bp
+    app.register_blueprint(self_schedule_bp)
+    logger.info("Self-scheduling routes registered")
+
+    # ====================
+    # Tech App API Routes
+    # ====================
+
+    from src.web.routes.tech_api import tech_api_bp
+    app.register_blueprint(tech_api_bp)
+    logger.info("Tech API routes registered at /api/tech")
+
+    # ====================
+    # Leads API Routes
+    # ====================
+
+    from src.web.routes.leads_api import leads_api_bp
+    app.register_blueprint(leads_api_bp)
+    logger.info("Leads API routes registered at /api/leads")
+
+    # ====================
+    # Jobs API Routes
+    # ====================
+
+    from src.web.routes.jobs_api import jobs_api_bp
+    app.register_blueprint(jobs_api_bp)
+    logger.info("Jobs API routes registered at /api/jobs")
+
+    # ====================
+    # Customers API Routes
+    # ====================
+
+    from src.web.routes.customers_api import customers_api_bp
+    app.register_blueprint(customers_api_bp)
+    logger.info("Customers API routes registered at /api/customers")
+
+    # ====================
+    # Vehicles API Routes
+    # ====================
+
+    from src.web.routes.vehicles_api import vehicles_api_bp
+    app.register_blueprint(vehicles_api_bp)
+    logger.info("Vehicles API routes registered at /api/vehicles")
+
+    # ====================
+    # Estimates API Routes
+    # ====================
+
+    from src.web.routes.estimates_api import estimates_api_bp
+    app.register_blueprint(estimates_api_bp)
+    logger.info("Estimates API routes registered at /api/estimates")
+
+    # ====================
+    # Admin API Routes
+    # ====================
+
+    from src.web.routes.admin_api import admin_api_bp
+    app.register_blueprint(admin_api_bp)
+    logger.info("Admin API routes registered at /api/admin")
+
+    # ====================
+    # Reports API Routes
+    # ====================
+
+    from src.web.routes.reports_api import reports_api_bp
+    app.register_blueprint(reports_api_bp)
+    logger.info("Reports API routes registered at /api/reports")
+
+    # ====================
+    # Notifications API Routes
+    # ====================
+
+    from src.web.routes.notifications_api import notifications_api_bp
+    app.register_blueprint(notifications_api_bp)
+    logger.info("Notifications API routes registered at /api/notifications")
+
+    # ====================
+    # Search API Routes
+    # ====================
+
+    from src.web.routes.search_api import search_api_bp
+    app.register_blueprint(search_api_bp)
+    logger.info("Search API routes registered at /api/search")
+
+    # ====================
+    # Hail Events API Routes
+    # ====================
+
+    from src.web.routes.hail_events_api import hail_events_api_bp
+    app.register_blueprint(hail_events_api_bp)
+    logger.info("Hail Events API routes registered at /api/hail-events")
+
+    # ====================
+    # Invoices API Routes
+    # ====================
+
+    from src.web.routes.invoices_api import invoices_api_bp
+    app.register_blueprint(invoices_api_bp)
+    logger.info("Invoices API routes registered at /api/invoices")
+
+    # ====================
+    # Claims API Routes
+    # ====================
+
+    from src.web.routes.claims_api import claims_api_bp
+    app.register_blueprint(claims_api_bp)
+    logger.info("Claims API routes registered at /api/claims")
+
+    # ====================
+    # Unified App Routes (Main Application)
+    # ====================
+
+    from src.web.routes.app_main import app_bp
+    from src.core.auth.middleware import TenantMiddleware
+    from src.core.auth.auth_manager import AuthManager as TenantAuthManager
+
+    # Setup tenant auth middleware for unified app routes
+    tenant_auth_manager = TenantAuthManager()
+    TenantMiddleware(app, tenant_auth_manager)
+
+    app.register_blueprint(app_bp)
+    logger.info("Unified App routes registered at /app")
 
     return app
 

@@ -25,8 +25,10 @@ leads_api_bp = Blueprint('leads_api', __name__, url_prefix='/api/leads')
 
 
 def get_db():
-    """Get database connection using app config"""
-    db_path = current_app.config.get('DATABASE_PATH', 'data/hailtracker_crm.db')
+    """Get database connection using CRM database"""
+    import os
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    db_path = os.path.join(project_root, 'data', 'hailtracker_crm.db')
     return Database(db_path)
 
 
@@ -59,41 +61,41 @@ def list_leads():
     sort_dir = request.args.get('dir', 'desc')
 
     # Build query
-    where_clauses = ['deleted_at IS NULL']
+    where_clauses = ['l.deleted_at IS NULL']
     params = []
 
     # Only own leads for sales role
     user_role = g.current_user.get('role')
     if user_role == 'sales':
-        where_clauses.append('assigned_to = ?')
+        where_clauses.append('l.assigned_to = ?')
         params.append(str(g.current_user['id']))
 
     if status:
         if status == 'active':
-            where_clauses.append("status NOT IN ('CONVERTED', 'LOST')")
+            where_clauses.append("l.status NOT IN ('CONVERTED', 'LOST')")
         else:
-            where_clauses.append('status = ?')
+            where_clauses.append('l.status = ?')
             params.append(status.upper())
 
     if temperature:
-        where_clauses.append('temperature = ?')
+        where_clauses.append('l.temperature = ?')
         params.append(temperature.upper())
 
     if source:
-        where_clauses.append('source = ?')
+        where_clauses.append('l.source = ?')
         params.append(source)
 
     if assigned_to:
-        where_clauses.append('assigned_to = ?')
+        where_clauses.append('l.assigned_to = ?')
         params.append(assigned_to)
 
     if search:
         where_clauses.append("""(
-            first_name LIKE ? OR
-            last_name LIKE ? OR
-            email LIKE ? OR
-            phone LIKE ? OR
-            company_name LIKE ?
+            l.first_name LIKE ? OR
+            l.last_name LIKE ? OR
+            l.email LIKE ? OR
+            l.phone LIKE ? OR
+            l.company_name LIKE ?
         )""")
         search_term = f'%{search}%'
         params.extend([search_term] * 5)
@@ -107,17 +109,21 @@ def list_leads():
     sort_dir = 'DESC' if sort_dir.lower() == 'desc' else 'ASC'
 
     # Count total
-    count_result = db.execute(f"SELECT COUNT(*) as count FROM leads WHERE {where_sql}", tuple(params))
+    count_result = db.execute(f"SELECT COUNT(*) as count FROM leads l WHERE {where_sql}", tuple(params))
     total = count_result[0]['count'] if count_result else 0
 
-    # Get leads
+    # Get leads with coordinates from associated hail events
     query = f"""
         SELECT
             l.*,
-            COALESCE(l.first_name || ' ' || l.last_name, l.company_name) as display_name
+            COALESCE(l.first_name || ' ' || l.last_name, l.company_name) as display_name,
+            h.center_lat as latitude,
+            h.center_lon as longitude,
+            h.event_name as hail_event_name
         FROM leads l
+        LEFT JOIN hail_events h ON h.id = l.hail_event_id
         WHERE {where_sql}
-        ORDER BY {sort_by} {sort_dir}
+        ORDER BY l.{sort_by} {sort_dir}
         LIMIT ? OFFSET ?
     """
     params.extend([per_page, offset])

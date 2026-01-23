@@ -28,8 +28,10 @@ def admin_required(f):
 
 
 def get_db():
-    """Get database connection."""
-    db_path = current_app.config.get('DATABASE_PATH', 'data/hailtracker.db')
+    """Get database connection using CRM database."""
+    import os
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    db_path = os.path.join(project_root, 'data', 'hailtracker_crm.db')
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     return conn
@@ -177,7 +179,7 @@ def list_users():
     cursor = conn.cursor()
 
     # Build query
-    where_clauses = ['deleted_at IS NULL']
+    where_clauses = ['1=1']
     params = []
 
     # Role filter
@@ -186,16 +188,18 @@ def list_users():
         where_clauses.append('role = ?')
         params.append(role)
 
-    # Status filter
+    # Status filter (map to 'active' boolean)
     status = request.args.get('status')
     if status:
-        where_clauses.append('status = ?')
-        params.append(status)
+        if status == 'active':
+            where_clauses.append('active = 1')
+        elif status == 'inactive':
+            where_clauses.append('active = 0')
 
     # Search filter
     search = request.args.get('search', '').strip()
     if search:
-        where_clauses.append('(email LIKE ? OR first_name LIKE ? OR last_name LIKE ?)')
+        where_clauses.append('(email LIKE ? OR full_name LIKE ? OR username LIKE ?)')
         search_param = f'%{search}%'
         params.extend([search_param, search_param, search_param])
 
@@ -204,8 +208,9 @@ def list_users():
     # Get users
     cursor.execute(f'''
         SELECT
-            id, email, first_name, last_name, phone, role, status,
-            avatar_url, last_login_at, created_at
+            id, email, username, full_name, phone, role,
+            CASE WHEN active = 1 THEN 'active' ELSE 'inactive' END as status,
+            last_login, created_at
         FROM users
         WHERE {where_sql}
         ORDER BY created_at DESC
@@ -217,11 +222,11 @@ def list_users():
     cursor.execute('''
         SELECT
             COUNT(*) as total,
-            SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active,
-            SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+            SUM(CASE WHEN active = 1 THEN 1 ELSE 0 END) as active,
+            SUM(CASE WHEN active = 0 THEN 1 ELSE 0 END) as pending,
             SUM(CASE WHEN role = 'admin' THEN 1 ELSE 0 END) as admins
         FROM users
-        WHERE deleted_at IS NULL
+        WHERE 1=1
     ''')
     stats = dict(cursor.fetchone())
 

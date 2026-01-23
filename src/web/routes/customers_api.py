@@ -23,8 +23,10 @@ customers_api_bp = Blueprint('customers_api', __name__, url_prefix='/api/custome
 
 
 def get_db():
-    """Get database connection using app config"""
-    db_path = current_app.config.get('DATABASE_PATH', 'data/hailtracker_crm.db')
+    """Get database connection using CRM database"""
+    import os
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    db_path = os.path.join(project_root, 'data', 'hailtracker_crm.db')
     return Database(db_path)
 
 
@@ -263,13 +265,12 @@ def create_customer():
         'company_name': data.get('company_name'),
         'email': data.get('email'),
         'phone': data.get('phone'),
-        'address': data.get('address'),
+        'street_address': data.get('address') or data.get('street_address'),
         'city': data.get('city'),
         'state': data.get('state'),
         'zip_code': data.get('zip_code'),
         'source': data.get('source', 'DIRECT'),
         'notes': data.get('notes'),
-        'lead_id': data.get('lead_id'),
         'organization_id': g.organization_id,
         'created_at': datetime.now().isoformat()
     }

@@ -188,7 +188,7 @@ def get_user_notifications(user_id):
 @login_required
 def list_notifications():
     """List user's notifications with filtering and pagination."""
-    user_id = session.get('user_id', 1)
+    user_id = g.current_user.get('id', 1)
 
     # Query params
     page = int(request.args.get('page', 1))
@@ -234,7 +234,7 @@ def list_notifications():
 @login_required
 def unread_count():
     """Get count of unread notifications."""
-    user_id = session.get('user_id', 1)
+    user_id = g.current_user.get('id', 1)
     notifications = get_user_notifications(user_id)
     count = sum(1 for n in notifications if not n['is_read'])
 
@@ -245,7 +245,7 @@ def unread_count():
 @login_required
 def recent_notifications():
     """Get most recent notifications for dropdown."""
-    user_id = session.get('user_id', 1)
+    user_id = g.current_user.get('id', 1)
     limit = int(request.args.get('limit', 5))
 
     notifications = get_user_notifications(user_id)[:limit]
@@ -266,7 +266,7 @@ def recent_notifications():
 @login_required
 def mark_read(notification_id):
     """Mark a single notification as read."""
-    user_id = session.get('user_id', 1)
+    user_id = g.current_user.get('id', 1)
     notifications = get_user_notifications(user_id)
 
     for n in notifications:
@@ -282,7 +282,7 @@ def mark_read(notification_id):
 @login_required
 def mark_all_read():
     """Mark all notifications as read."""
-    user_id = session.get('user_id', 1)
+    user_id = g.current_user.get('id', 1)
     notifications = get_user_notifications(user_id)
 
     count = 0
@@ -300,7 +300,7 @@ def mark_all_read():
 @login_required
 def delete_notification(notification_id):
     """Delete a single notification."""
-    user_id = session.get('user_id', 1)
+    user_id = g.current_user.get('id', 1)
     notifications = get_user_notifications(user_id)
 
     for i, n in enumerate(notifications):
@@ -315,7 +315,7 @@ def delete_notification(notification_id):
 @login_required
 def clear_read():
     """Clear all read notifications."""
-    user_id = session.get('user_id', 1)
+    user_id = g.current_user.get('id', 1)
     notifications = get_user_notifications(user_id)
 
     # Keep only unread

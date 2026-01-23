@@ -77,24 +77,24 @@ export const mockCompetitorActivity = [
   {
     id: 1,
     salesperson_id: 1,
-    company_name: 'ABC Roofing',
+    competitor_name: 'ABC Roofing',
     activity_type: 'CANVASSING',
-    latitude: 32.77,
-    longitude: -96.79,
+    location_lat: 32.77,
+    location_lon: -96.79,
     address: '100 Elm St, Dallas, TX',
     notes: 'Team of 3 canvassing',
-    created_at: '2024-01-20T11:00:00Z',
+    spotted_at: '2024-01-20T11:00:00Z',
   },
   {
     id: 2,
     salesperson_id: 1,
-    company_name: 'XYZ Restoration',
+    competitor_name: 'XYZ Restoration',
     activity_type: 'TRUCK_PARKED',
-    latitude: 32.78,
-    longitude: -96.8,
+    location_lat: 32.78,
+    location_lon: -96.8,
     address: '200 Cedar Ln, Dallas, TX',
     notes: 'Truck with signage',
-    created_at: '2024-01-21T15:00:00Z',
+    spotted_at: '2024-01-21T15:00:00Z',
   },
 ]
 
@@ -107,7 +107,7 @@ export const mockDNKList = [
     reason: 'NO_SOLICITING',
     notes: 'Large sign on door',
     reported_by: 1,
-    created_at: '2024-01-19T10:00:00Z',
+    added_at: '2024-01-19T10:00:00Z',
   },
   {
     id: 2,
@@ -117,7 +117,7 @@ export const mockDNKList = [
     reason: 'REQUESTED',
     notes: 'Homeowner asked not to return',
     reported_by: 1,
-    created_at: '2024-01-20T14:00:00Z',
+    added_at: '2024-01-20T14:00:00Z',
   },
 ]
 

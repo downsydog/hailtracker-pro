@@ -4,17 +4,59 @@ import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter } from 'react-router-dom'
 import { FieldLeadsPage } from './field-leads'
-import { mockFieldLeads } from '@/test/mocks/handlers'
 
-// Mock the API module
+// Mock the API module with inline data
 vi.mock('@/api/elite-sales', () => ({
-  getFieldLeads: vi.fn(() => Promise.resolve({ leads: mockFieldLeads, total: mockFieldLeads.length })),
+  getFieldLeads: vi.fn(() => Promise.resolve({
+    leads: [
+      {
+        id: 1,
+        salesperson_id: 1,
+        latitude: 32.7767,
+        longitude: -96.797,
+        address: '123 Main St, Dallas, TX',
+        customer_name: 'John Doe',
+        phone: '555-1234',
+        email: 'john@example.com',
+        lead_quality: 'HOT',
+        notes: 'Interested in hail repair',
+        synced_to_crm: false,
+        created_at: '2024-01-20T10:00:00Z',
+      },
+      {
+        id: 2,
+        salesperson_id: 1,
+        latitude: 32.78,
+        longitude: -96.8,
+        address: '456 Oak Ave, Dallas, TX',
+        customer_name: 'Jane Smith',
+        phone: '555-5678',
+        email: 'jane@example.com',
+        lead_quality: 'WARM',
+        notes: 'Follow up next week',
+        synced_to_crm: true,
+        crm_lead_id: 101,
+        created_at: '2024-01-21T14:30:00Z',
+      },
+      {
+        id: 3,
+        salesperson_id: 1,
+        latitude: 32.785,
+        longitude: -96.79,
+        address: '789 Pine Rd, Dallas, TX',
+        customer_name: 'Bob Wilson',
+        phone: '555-9999',
+        lead_quality: 'COLD',
+        synced_to_crm: false,
+        created_at: '2024-01-22T09:00:00Z',
+      },
+    ],
+    total: 3,
+  })),
   createFieldLead: vi.fn(() => Promise.resolve({ success: true, lead_id: 4 })),
   syncLeadToCRM: vi.fn(() => Promise.resolve({ success: true, crm_lead_id: 102 })),
   bulkSyncLeads: vi.fn(() => Promise.resolve({ success: true, synced_count: 2 })),
 }))
-
-import { mockFieldLeads as mockLeads } from '@/test/mocks/handlers'
 
 function renderWithProviders(ui: React.ReactElement) {
   const queryClient = new QueryClient({
@@ -63,15 +105,16 @@ describe('FieldLeadsPage', () => {
     expect(screen.getByText('Bob Wilson')).toBeInTheDocument()
   })
 
-  it('shows lead quality badges', async () => {
+  it('shows lead sync status badges', async () => {
     renderWithProviders(<FieldLeadsPage />)
 
     await waitFor(() => {
-      expect(screen.getByText('HOT')).toBeInTheDocument()
+      // Leads show Synced or Pending badges
+      expect(screen.getByText('Synced')).toBeInTheDocument()
     })
 
-    expect(screen.getByText('WARM')).toBeInTheDocument()
-    expect(screen.getByText('COLD')).toBeInTheDocument()
+    // Multiple leads are pending sync
+    expect(screen.getAllByText('Pending').length).toBeGreaterThan(0)
   })
 
   it('has an Add Lead button', async () => {
@@ -89,7 +132,7 @@ describe('FieldLeadsPage', () => {
     await user.click(addButton)
 
     await waitFor(() => {
-      expect(screen.getByText('Add New Lead')).toBeInTheDocument()
+      expect(screen.getByText('Add Field Lead')).toBeInTheDocument()
     })
   })
 

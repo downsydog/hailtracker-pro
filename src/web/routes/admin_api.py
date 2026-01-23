@@ -28,10 +28,13 @@ def admin_required(f):
 
 
 def get_db():
-    """Get database connection using CRM database."""
+    """Get database connection using app config or CRM database."""
     import os
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-    db_path = os.path.join(project_root, 'data', 'hailtracker_crm.db')
+    # Use app config database path if set (for testing), otherwise default to CRM database
+    db_path = current_app.config.get('DATABASE_PATH')
+    if not db_path:
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        db_path = os.path.join(project_root, 'data', 'hailtracker_crm.db')
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     return conn

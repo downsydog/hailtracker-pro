@@ -214,7 +214,7 @@ def get_customer(customer_id):
     jobs = db.execute("""
         SELECT j.*,
                v.year || ' ' || v.make || ' ' || v.model as vehicle,
-               t.first_name || ' ' || t.last_name as tech_name
+               t.full_name as tech_name
         FROM jobs j
         LEFT JOIN vehicles v ON v.id = j.vehicle_id
         LEFT JOIN users t ON t.id = j.assigned_tech_id

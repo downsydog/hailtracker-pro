@@ -2357,6 +2357,11 @@ def create_app(config=None):
     app.register_blueprint(fleet_locations_api_bp)
     logger.info("Fleet Locations API routes registered at /api/fleet-locations")
 
+    # Portal API Routes (customer portal frontend)
+    from src.web.routes.portal_api import portal_api_bp
+    app.register_blueprint(portal_api_bp)
+    logger.info("Portal API routes registered at /api/portal")
+
     # ====================
     # Unified App Routes (Main Application)
     # ====================

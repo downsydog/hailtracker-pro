@@ -5,6 +5,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useMutation } from "@tanstack/react-query";
+import { useAuth } from "@/contexts/auth-context";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -45,9 +46,10 @@ export function SalesRoutesPage() {
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const markersRef = useRef<L.Marker[]>([]);
+  const { user } = useAuth();
 
-  // For now, use a hardcoded salesperson ID
-  const salespersonId = 1;
+  // Get the current user's ID for the salesperson ID
+  const salespersonId = user?.id || 0;
 
   const [route, setRoute] = useState<CanvassingRoute | null>(null);
   const [currentStopIndex, setCurrentStopIndex] = useState(0);

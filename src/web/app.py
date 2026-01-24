@@ -2317,6 +2317,47 @@ def create_app(config=None):
     logger.info("Claims API routes registered at /api/claims")
 
     # ====================
+    # Parts API Routes
+    # ====================
+
+    from src.web.routes.parts_api import parts_api_bp
+    app.register_blueprint(parts_api_bp)
+    logger.info("Parts API routes registered at /api/parts")
+
+    # ====================
+    # R&I API Routes
+    # ====================
+
+    from src.web.routes.ri_api import ri_api_bp
+    app.register_blueprint(ri_api_bp)
+    logger.info("R&I API routes registered at /api/ri")
+
+    # Storm Cell Tracking API Routes
+    from src.web.routes.storm_tracking_api import storm_tracking_api_bp
+    app.register_blueprint(storm_tracking_api_bp)
+    logger.info("Storm Cell Tracking API routes registered at /api/storm-cells")
+
+    # Storm Monitor API Routes
+    from src.web.routes.storm_monitor_api import storm_monitor_api_bp
+    app.register_blueprint(storm_monitor_api_bp)
+    logger.info("Storm Monitor API routes registered at /api/storm-monitor")
+
+    # ML Models API Routes
+    from src.web.routes.ml_api import ml_api_bp
+    app.register_blueprint(ml_api_bp)
+    logger.info("ML API routes registered at /api/ml")
+
+    # Job-Storm Linking Routes (from hail_events_api)
+    from src.web.routes.hail_events_api import jobs_storm_bp
+    app.register_blueprint(jobs_storm_bp)
+    logger.info("Jobs-Storm linking routes registered at /api/jobs")
+
+    # Fleet Locations API Routes (business prospects)
+    from src.web.routes.fleet_locations_api import fleet_locations_api_bp
+    app.register_blueprint(fleet_locations_api_bp)
+    logger.info("Fleet Locations API routes registered at /api/fleet-locations")
+
+    # ====================
     # Unified App Routes (Main Application)
     # ====================
 

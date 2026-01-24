@@ -21,12 +21,15 @@ export interface HailEvent {
   state?: string
   latitude?: number
   longitude?: number
+  center_lat?: number
+  center_lon?: number
   severity: 'MINOR' | 'MODERATE' | 'SEVERE' | 'CATASTROPHIC'
   status: 'ACTIVE' | 'CLOSED'
   hail_size_inches?: number
   max_hail_size?: number
   affected_zip_codes?: string[]
   affected_area_sq_miles?: number
+  swath_area_sqmi?: number
   estimated_radius_miles?: number
   insurance_storm_code?: string
   noaa_event_id?: string
@@ -34,6 +37,7 @@ export interface HailEvent {
   estimated_vehicles_affected?: number
   potential_revenue?: number
   swath_geojson?: string
+  swath_polygon?: string
   severity_info?: SeverityInfo
   stats?: StormStats
   jobs_created?: number
@@ -275,6 +279,88 @@ export interface StormAlert {
   timestamp?: string
 }
 
+// Calendar Types
+export interface CalendarDayEvent {
+  id: number
+  event_name: string
+  hail_size: number
+  severity: string
+  lat: number
+  lon: number
+  area_sqmi?: number
+  vehicles?: number
+  source?: string
+}
+
+export interface CalendarDay {
+  count: number
+  max_hail_size: number
+  max_severity: string
+  total_vehicles: number
+  events: CalendarDayEvent[]
+}
+
+export interface CalendarMonthStats {
+  total_events: number
+  storm_days: number
+  max_hail_size: number
+  total_vehicles: number
+  severe_days: number
+  moderate_days: number
+  minor_days: number
+}
+
+export interface CalendarMonthData {
+  year: number
+  month: number
+  days: Record<string, CalendarDay>
+  month_stats: CalendarMonthStats
+}
+
+export interface CalendarMonthSummary {
+  storm_days: number
+  total_events: number
+  max_hail_size: number
+  total_vehicles: number
+  severe_count: number
+  moderate_count: number
+  minor_count: number
+}
+
+export interface CalendarYearData {
+  year: number
+  months: Record<number, CalendarMonthSummary>
+  year_stats: {
+    total_events: number
+    total_storm_days: number
+    max_hail_size: number
+    total_vehicles: number
+    peak_month: number | null
+  }
+}
+
+export interface LocationCheckResult {
+  was_hit: boolean
+  location: { lat: number; lon: number }
+  summary: {
+    total_events: number
+    max_hail_size: number
+    years_checked: number
+    radius_miles: number
+    most_recent: string | null
+    by_year: Record<string, number>
+  }
+  events: Array<{
+    id: number
+    event_name: string
+    event_date: string
+    hail_size_inches: number
+    distance_miles: number
+    data_source: string
+    confidence: number
+  }>
+}
+
 // =============================================================================
 // HAIL EVENTS API
 // =============================================================================
@@ -451,6 +537,35 @@ export const hailEventsApi = {
       '/api/hail-events/classify-severity',
       { hail_size_inches: hailSizeInches }
     ),
+
+  // Calendar
+  getCalendar: (params: { year?: number; month?: number; state?: string }) =>
+    api.get<CalendarMonthData>('/api/hail-events/calendar', { params }),
+
+  getCalendarYear: (params: { year?: number; state?: string }) =>
+    api.get<CalendarYearData>('/api/hail-events/calendar/year', { params }),
+
+  // Address lookup
+  checkLocation: (params: { lat: number; lon: number; years?: number; radius_miles?: number }) =>
+    api.get<LocationCheckResult>('/api/hail-events/check-location', { params }),
+
+  // Generate PDF impact report
+  generateImpactReport: async (params: {
+    lat: number
+    lon: number
+    years?: number
+    radius_miles?: number
+    address?: string
+    company_name?: string
+    company_phone?: string
+    company_email?: string
+    company_website?: string
+  }): Promise<Blob> => {
+    const response = await api.post('/api/hail-events/impact-report', params, {
+      responseType: 'blob',
+    })
+    return response.data
+  },
 }
 
 // =============================================================================
@@ -545,6 +660,165 @@ export const stormMonitorApi = {
 
   getAvailableRadars: () =>
     api.get<{ radars: RadarSite[]; count: number }>('/api/storm-monitor/radars'),
+
+  // Radar history for replay
+  getRadarHistory: (params: {
+    radar_id?: string
+    start_time?: string
+    end_time?: string
+    product?: string
+  }) =>
+    api.get<{
+      radar_id: string
+      product: string
+      start_time: string
+      end_time: string
+      frame_count: number
+      frame_interval_minutes: number
+      frames: Array<{
+        timestamp: string
+        radar_id: string
+        product: string
+        tile_url: string
+        image_url: string
+        index: number
+      }>
+    }>('/api/storm-monitor/radar/history', { params }),
+
+  // Get radar loop URL
+  getRadarLoop: (params: { region?: string; duration?: number }) =>
+    api.get<{
+      region: string
+      duration_hours: number
+      loop_url: string
+      frames_url: string
+    }>('/api/storm-monitor/radar/loop', { params }),
+}
+
+// =============================================================================
+// TERRITORY ALERTS API
+// =============================================================================
+
+export interface Territory {
+  id: number
+  user_id: number
+  name: string
+  center_lat: number
+  center_lon: number
+  radius_miles: number
+  polygon_geojson?: string
+  alert_on_hail: boolean
+  alert_on_severe: boolean
+  min_hail_size: number
+  email_alerts: boolean
+  sms_alerts: boolean
+  push_alerts: boolean
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface TerritoryAlert {
+  id: number
+  territory_id: number
+  hail_event_id: number
+  alert_type: string
+  alert_message: string
+  is_read: boolean
+  sent_at: string
+  read_at?: string
+  territory_name?: string
+  event_name?: string
+  event_date?: string
+  max_hail_size?: number
+  center_lat?: number
+  center_lon?: number
+  city?: string
+  state?: string
+}
+
+export const territoryAlertsApi = {
+  // List territories
+  listTerritories: () =>
+    api.get<{ territories: Territory[]; count: number }>('/api/territory-alerts/territories'),
+
+  // Create territory
+  createTerritory: (data: {
+    name: string
+    center_lat: number
+    center_lon: number
+    radius_miles?: number
+    alert_on_hail?: boolean
+    alert_on_severe?: boolean
+    min_hail_size?: number
+    email_alerts?: boolean
+    sms_alerts?: boolean
+    push_alerts?: boolean
+  }) =>
+    api.post<{ success: boolean; territory_id: number; message: string }>(
+      '/api/territory-alerts/territories',
+      data
+    ),
+
+  // Get territory
+  getTerritory: (id: number) =>
+    api.get<{ territory: Territory }>(`/api/territory-alerts/territories/${id}`),
+
+  // Update territory
+  updateTerritory: (id: number, data: Partial<Territory>) =>
+    api.put<{ success: boolean; message: string }>(
+      `/api/territory-alerts/territories/${id}`,
+      data
+    ),
+
+  // Delete territory
+  deleteTerritory: (id: number) =>
+    api.delete<{ success: boolean; message: string }>(
+      `/api/territory-alerts/territories/${id}`
+    ),
+
+  // List alerts
+  listAlerts: (params?: { days?: number; unread_only?: boolean }) =>
+    api.get<{ alerts: TerritoryAlert[]; count: number }>(
+      '/api/territory-alerts/alerts',
+      { params }
+    ),
+
+  // Mark alert as read
+  markAlertRead: (id: number) =>
+    api.post<{ success: boolean }>(`/api/territory-alerts/alerts/${id}/read`, {}),
+
+  // Mark all alerts as read
+  markAllAlertsRead: () =>
+    api.post<{ success: boolean; message: string }>(
+      '/api/territory-alerts/alerts/mark-all-read',
+      {}
+    ),
+
+  // Check storms against territories
+  checkStorms: (hours_back?: number) =>
+    api.post<{
+      success: boolean
+      alerts_created: number
+      matching_storms: Array<{
+        territory_id: number
+        territory_name: string
+        event_id: number
+        event_name: string
+        hail_size: number
+        distance_miles: number
+      }>
+      territories_checked: number
+      events_checked: number
+    }>('/api/territory-alerts/check-storms', { hours_back }),
+
+  // Get stats
+  getStats: () =>
+    api.get<{
+      territories_count: number
+      unread_alerts: number
+      alerts_this_week: number
+    }>('/api/territory-alerts/stats'),
 
   getAvailableRegions: () =>
     api.get<{ regions: string[] }>('/api/storm-monitor/regions'),

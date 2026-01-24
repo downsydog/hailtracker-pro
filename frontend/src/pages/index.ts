@@ -31,6 +31,7 @@ export { EstimateFormPage } from "./estimates/estimate-form"
 
 // Schedule
 export { SchedulePage } from "./schedule"
+export { SchedulingTokensPage } from "./schedule/scheduling-tokens"
 
 // Tech Dashboard
 export { TechDashboardPage } from "./tech"
@@ -58,6 +59,9 @@ export { WeatherPage } from "./weather"
 // Hail Map
 export { HailMapPage } from "./hail-map"
 
+// Hail Lookup
+export { HailLookupPage } from "./hail-lookup"
+
 // Reports
 export { ReportsPage } from "./reports"
 
@@ -83,3 +87,23 @@ export { HoursPage } from "./hours"
 // Admin
 export { SettingsPage } from "./admin/settings"
 export { UsersPage } from "./admin/users"
+
+// Parts
+export { PartsPage } from "./parts"
+export { PartOrdersPage } from "./parts/orders"
+
+// R&I (Remove & Install)
+export { RIOperationsPage } from "./ri"
+export { RITimesPage } from "./ri/times"
+
+// CRM
+export { CRMDashboardPage } from "./crm/dashboard"
+export { CRMDealsPage } from "./crm/deals"
+export { CRMTasksPage } from "./crm/tasks"
+export { CRMPipelinePage } from "./crm/pipeline"
+
+// Portal (additional pages)
+export { PortalReferralsPage } from "./portal/referrals"
+export { PortalFlyersPage } from "./portal/flyers"
+export { PortalLoyaltyPage } from "./portal/loyalty"
+export { PortalReviewsPage } from "./portal/reviews"

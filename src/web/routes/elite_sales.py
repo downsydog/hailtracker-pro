@@ -180,6 +180,54 @@ def optimize_route():
     })
 
 
+@elite_sales_bp.route('/routes/storm', methods=['POST'])
+@login_required
+def generate_storm_route():
+    """Generate canvassing route for homes within a hail storm swath"""
+
+    data = request.get_json()
+
+    if not data or 'salesperson_id' not in data:
+        return jsonify({'error': 'salesperson_id required'}), 400
+    if 'hail_event_id' not in data:
+        return jsonify({'error': 'hail_event_id required'}), 400
+
+    # Get storm data
+    from src.crm.managers.hail_event_manager import HailEventManager
+    from src.db.database import Database
+    import os
+
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    db_path = os.path.join(project_root, 'data', 'hailtracker_crm.db')
+    db = Database(db_path)
+    hail_mgr = HailEventManager(db)
+
+    storm = hail_mgr.get_storm_event(data['hail_event_id'])
+    if not storm:
+        return jsonify({'error': 'Storm not found'}), 404
+
+    # For now, generate a standard route but include the storm info
+    # In a full implementation, this would query addresses within the swath polygon
+    route = elite_mgr.optimize_daily_route(
+        salesperson_id=data['salesperson_id'],
+        grid_cell_id=data.get('grid_cell_id', 1),
+        start_time=datetime.now(),
+        target_homes=data.get('target_homes', 50)
+    )
+
+    return jsonify({
+        'success': True,
+        'route': route,
+        'storm': {
+            'id': storm['id'],
+            'event_name': storm.get('event_name'),
+            'event_date': storm.get('event_date'),
+            'max_hail_size': storm.get('max_hail_size') or storm.get('hail_size_inches'),
+            'swath_polygon': storm.get('swath_polygon')
+        }
+    })
+
+
 @elite_sales_bp.route('/routes/property/<path:address>', methods=['GET'])
 @login_required
 def get_property_data(address):

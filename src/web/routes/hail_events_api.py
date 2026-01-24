@@ -829,6 +829,166 @@ def _point_in_polygon(lat: float, lon: float, polygon: dict) -> bool:
     return inside
 
 
+@hail_events_api_bp.route('/impact-report', methods=['POST'])
+@login_required
+def generate_impact_report():
+    """
+    Generate a PDF hail impact report for a location.
+
+    JSON body:
+        lat: Latitude (required)
+        lon: Longitude (required)
+        years: Years to look back (default: 5)
+        radius_miles: Search radius (default: 5)
+        address: Optional street address for display
+        company_name: Optional company name (default: from settings)
+        company_phone: Optional contact phone
+        company_email: Optional contact email
+        company_website: Optional website
+
+    Returns:
+        PDF file download
+    """
+    from flask import Response, send_file
+    import io
+
+    data = request.get_json() or {}
+
+    lat = data.get('lat')
+    lon = data.get('lon')
+
+    if lat is None or lon is None:
+        return jsonify({'error': 'lat and lon are required'}), 400
+
+    years = data.get('years', 5)
+    radius_miles = data.get('radius_miles', 5)
+    address = data.get('address')
+
+    # Get company branding from request or use defaults
+    company_name = data.get('company_name', 'HailTracker Pro')
+    company_phone = data.get('company_phone', '')
+    company_email = data.get('company_email', '')
+    company_website = data.get('company_website', '')
+
+    try:
+        # First, get the location check data using the existing function
+        # We'll call the logic directly rather than making another HTTP request
+        import math
+        import json as json_lib
+        from datetime import date, timedelta
+
+        cutoff_date = date.today() - timedelta(days=years * 365)
+
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        db_path = os.path.join(project_root, 'data', 'hailtracker_crm.db')
+        db = Database(db_path)
+
+        lat_delta = radius_miles / 69.0
+        lon_delta = radius_miles / (69.0 * math.cos(math.radians(lat)))
+
+        events = db.execute("""
+            SELECT
+                id, event_name, event_date, center_lat, center_lon,
+                max_hail_size, swath_polygon, swath_area_sqmi,
+                estimated_vehicles, data_source, confidence_score
+            FROM hail_events
+            WHERE event_date >= ?
+            AND center_lat BETWEEN ? AND ?
+            AND center_lon BETWEEN ? AND ?
+            ORDER BY event_date DESC
+            LIMIT 100
+        """, (
+            cutoff_date.isoformat(),
+            lat - lat_delta, lat + lat_delta,
+            lon - lon_delta, lon + lon_delta
+        ))
+
+        matching_events = []
+        for event in events:
+            swath_json = event.get('swath_polygon')
+            if swath_json:
+                try:
+                    swath = json_lib.loads(swath_json)
+                    if _point_in_polygon(lat, lon, swath):
+                        matching_events.append({
+                            'id': event['id'],
+                            'event_name': event['event_name'],
+                            'event_date': event['event_date'],
+                            'hail_size_inches': event['max_hail_size'] or 0,
+                            'distance_miles': _haversine_distance(
+                                lat, lon,
+                                event['center_lat'], event['center_lon']
+                            ),
+                            'data_source': event['data_source'],
+                            'confidence': event['confidence_score']
+                        })
+                except json_lib.JSONDecodeError:
+                    pass
+            elif event.get('center_lat') and event.get('center_lon'):
+                dist = _haversine_distance(lat, lon, event['center_lat'], event['center_lon'])
+                if dist <= radius_miles:
+                    matching_events.append({
+                        'id': event['id'],
+                        'event_name': event['event_name'],
+                        'event_date': event['event_date'],
+                        'hail_size_inches': event['max_hail_size'] or 0,
+                        'distance_miles': round(dist, 2),
+                        'data_source': event['data_source'],
+                        'confidence': event['confidence_score']
+                    })
+
+        # Build summary
+        summary = {
+            'total_events': len(matching_events),
+            'max_hail_size': max((e['hail_size_inches'] or 0) for e in matching_events) if matching_events else 0,
+            'years_checked': years,
+            'radius_miles': radius_miles,
+            'most_recent': matching_events[0]['event_date'] if matching_events else None,
+            'by_year': {}
+        }
+
+        for event in matching_events:
+            year = event['event_date'][:4] if event['event_date'] else 'Unknown'
+            summary['by_year'][year] = summary['by_year'].get(year, 0) + 1
+
+        # Generate PDF
+        from src.reports.hail_impact_report import generate_hail_impact_report
+
+        pdf_bytes = generate_hail_impact_report(
+            location={'lat': lat, 'lon': lon},
+            events=matching_events,
+            summary=summary,
+            address=address,
+            radius_miles=radius_miles,
+            years_checked=years,
+            company_name=company_name,
+            company_phone=company_phone,
+            company_email=company_email,
+            company_website=company_website
+        )
+
+        # Create filename
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"hail_impact_report_{timestamp}.pdf"
+
+        return Response(
+            pdf_bytes,
+            mimetype='application/pdf',
+            headers={
+                'Content-Disposition': f'attachment; filename="{filename}"',
+                'Content-Type': 'application/pdf'
+            }
+        )
+
+    except ImportError as e:
+        return jsonify({
+            'error': 'PDF generation requires reportlab. Install with: pip install reportlab',
+            'details': str(e)
+        }), 501
+    except Exception as e:
+        return jsonify({'error': f'Failed to generate report: {str(e)}'}), 500
+
+
 @hail_events_api_bp.route('/geocode-check', methods=['POST'])
 @login_required
 def geocode_and_check():
@@ -859,3 +1019,248 @@ def geocode_and_check():
         },
         'tip': 'You can get coordinates from Google Maps by right-clicking on a location'
     }), 501
+
+
+# =============================================================================
+# STORM CALENDAR
+# =============================================================================
+
+@hail_events_api_bp.route('/calendar', methods=['GET'])
+@login_required
+def get_storm_calendar():
+    """
+    Get storm calendar data for a specific month.
+
+    Query params:
+        year: Year (default: current year)
+        month: Month 1-12 (default: current month)
+        state: Filter by state (optional)
+
+    Returns:
+        days: Dict mapping date strings to storm info
+        month_stats: Summary statistics for the month
+    """
+    from calendar import monthrange
+
+    now = datetime.now()
+    year = request.args.get('year', now.year, type=int)
+    month = request.args.get('month', now.month, type=int)
+    state = request.args.get('state')
+
+    # Validate month
+    if month < 1 or month > 12:
+        return jsonify({'error': 'month must be 1-12'}), 400
+
+    # Get first and last day of month
+    first_day = date(year, month, 1)
+    last_day = date(year, month, monthrange(year, month)[1])
+
+    # Query database
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    db_path = os.path.join(project_root, 'data', 'hailtracker_crm.db')
+    db = Database(db_path)
+
+    # Build query
+    query = """
+        SELECT
+            event_date,
+            id,
+            event_name,
+            max_hail_size,
+            center_lat,
+            center_lon,
+            swath_area_sqmi,
+            estimated_vehicles,
+            data_source
+        FROM hail_events
+        WHERE event_date BETWEEN ? AND ?
+    """
+    params = [first_day.isoformat(), last_day.isoformat()]
+
+    if state:
+        # Extract state from event_name if it contains state info
+        query += " AND event_name LIKE ?"
+        params.append(f'%{state}%')
+
+    query += " ORDER BY event_date, max_hail_size DESC"
+
+    events = db.execute(query, params)
+
+    # Group by date
+    days = {}
+    for event in events:
+        event_date = event['event_date']
+        if event_date not in days:
+            days[event_date] = {
+                'count': 0,
+                'max_hail_size': 0,
+                'max_severity': 'MINOR',
+                'total_vehicles': 0,
+                'events': []
+            }
+
+        day = days[event_date]
+        day['count'] += 1
+
+        hail_size = event['max_hail_size'] or 0
+        if hail_size > day['max_hail_size']:
+            day['max_hail_size'] = hail_size
+
+        # Determine severity
+        if hail_size >= 2.0:
+            severity = 'SEVERE'
+        elif hail_size >= 1.0:
+            severity = 'MODERATE'
+        else:
+            severity = 'MINOR'
+
+        # Track max severity
+        severity_order = {'MINOR': 1, 'MODERATE': 2, 'SEVERE': 3, 'CATASTROPHIC': 4}
+        if severity_order.get(severity, 0) > severity_order.get(day['max_severity'], 0):
+            day['max_severity'] = severity
+
+        day['total_vehicles'] += event['estimated_vehicles'] or 0
+
+        day['events'].append({
+            'id': event['id'],
+            'event_name': event['event_name'],
+            'hail_size': hail_size,
+            'severity': severity,
+            'lat': event['center_lat'],
+            'lon': event['center_lon'],
+            'area_sqmi': event['swath_area_sqmi'],
+            'vehicles': event['estimated_vehicles'],
+            'source': event['data_source']
+        })
+
+    # Calculate month stats
+    total_events = sum(d['count'] for d in days.values())
+    storm_days = len(days)
+    max_hail = max((d['max_hail_size'] for d in days.values()), default=0)
+    total_vehicles = sum(d['total_vehicles'] for d in days.values())
+
+    return jsonify({
+        'year': year,
+        'month': month,
+        'days': days,
+        'month_stats': {
+            'total_events': total_events,
+            'storm_days': storm_days,
+            'max_hail_size': max_hail,
+            'total_vehicles': total_vehicles,
+            'severe_days': sum(1 for d in days.values() if d['max_severity'] == 'SEVERE'),
+            'moderate_days': sum(1 for d in days.values() if d['max_severity'] == 'MODERATE'),
+            'minor_days': sum(1 for d in days.values() if d['max_severity'] == 'MINOR')
+        }
+    })
+
+
+@hail_events_api_bp.route('/calendar/year', methods=['GET'])
+@login_required
+def get_storm_calendar_year():
+    """
+    Get storm calendar overview for an entire year.
+
+    Query params:
+        year: Year (default: current year)
+        state: Filter by state (optional)
+
+    Returns:
+        months: Dict mapping month numbers to summary stats
+        year_stats: Summary statistics for the year
+    """
+    now = datetime.now()
+    year = request.args.get('year', now.year, type=int)
+    state = request.args.get('state')
+
+    # Query database
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    db_path = os.path.join(project_root, 'data', 'hailtracker_crm.db')
+    db = Database(db_path)
+
+    # Query for entire year
+    start_date = f"{year}-01-01"
+    end_date = f"{year}-12-31"
+
+    query = """
+        SELECT
+            event_date,
+            max_hail_size,
+            estimated_vehicles
+        FROM hail_events
+        WHERE event_date BETWEEN ? AND ?
+    """
+    params = [start_date, end_date]
+
+    if state:
+        query += " AND event_name LIKE ?"
+        params.append(f'%{state}%')
+
+    events = db.execute(query, params)
+
+    # Group by month
+    months = {i: {
+        'storm_days': set(),
+        'total_events': 0,
+        'max_hail_size': 0,
+        'total_vehicles': 0,
+        'severe_count': 0,
+        'moderate_count': 0,
+        'minor_count': 0
+    } for i in range(1, 13)}
+
+    for event in events:
+        event_date = event['event_date']
+        try:
+            month = int(event_date[5:7])
+        except:
+            continue
+
+        m = months[month]
+        m['storm_days'].add(event_date)
+        m['total_events'] += 1
+
+        hail_size = event['max_hail_size'] or 0
+        if hail_size > m['max_hail_size']:
+            m['max_hail_size'] = hail_size
+
+        m['total_vehicles'] += event['estimated_vehicles'] or 0
+
+        # Count by severity
+        if hail_size >= 2.0:
+            m['severe_count'] += 1
+        elif hail_size >= 1.0:
+            m['moderate_count'] += 1
+        else:
+            m['minor_count'] += 1
+
+    # Convert sets to counts
+    result_months = {}
+    for month_num, data in months.items():
+        result_months[month_num] = {
+            'storm_days': len(data['storm_days']),
+            'total_events': data['total_events'],
+            'max_hail_size': data['max_hail_size'],
+            'total_vehicles': data['total_vehicles'],
+            'severe_count': data['severe_count'],
+            'moderate_count': data['moderate_count'],
+            'minor_count': data['minor_count']
+        }
+
+    # Calculate year stats
+    total_events = sum(m['total_events'] for m in result_months.values())
+    total_storm_days = sum(m['storm_days'] for m in result_months.values())
+    max_hail = max((m['max_hail_size'] for m in result_months.values()), default=0)
+    total_vehicles = sum(m['total_vehicles'] for m in result_months.values())
+
+    return jsonify({
+        'year': year,
+        'months': result_months,
+        'year_stats': {
+            'total_events': total_events,
+            'total_storm_days': total_storm_days,
+            'max_hail_size': max_hail,
+            'total_vehicles': total_vehicles,
+            'peak_month': max(result_months.items(), key=lambda x: x[1]['total_events'])[0] if total_events > 0 else None
+        }
+    })

@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { AuthProvider } from "./contexts/auth-context"
+import { PortalProvider } from "./contexts/portal-context"
 import { AppLayout } from "./layouts/app-layout"
 import { AuthLayout } from "./layouts/auth-layout"
 import {
@@ -22,6 +23,7 @@ import {
   EstimateDetailPage,
   EstimateFormPage,
   SchedulePage,
+  SchedulingTokensPage,
   NotificationsPage,
   ReportsPage,
   SettingsPage,
@@ -36,6 +38,7 @@ import {
   DNKPage,
   WeatherPage,
   HailMapPage,
+  HailLookupPage,
   InvoicesPage,
   InvoiceDetailPage,
   InvoiceFormPage,
@@ -46,7 +49,50 @@ import {
   FleetMapPage,
   EstimatorDashboardPage,
   HoursPage,
+  PartsPage,
+  PartOrdersPage,
+  RIOperationsPage,
+  RITimesPage,
 } from "./pages"
+import {
+  PortalLayout,
+  PortalLoginPage,
+  PortalDashboardPage,
+  PortalJobsPage,
+  PortalJobDetailPage,
+  PortalMessagesPage,
+  PortalAppointmentsPage,
+  PortalDocumentsPage,
+  PortalPhotosPage,
+  PortalPaymentsPage,
+  PortalInsurancePage,
+  PortalSettingsPage,
+  PortalReferralsPage,
+  PortalFlyersPage,
+  PortalLoyaltyPage,
+  PortalReviewsPage,
+} from "./pages/portal"
+import {
+  CRMDashboardPage,
+  CRMDealsPage,
+  CRMTasksPage,
+  CRMPipelinePage,
+} from "./pages/crm"
+import {
+  KioskLayout,
+  KioskWelcomePage,
+  KioskCheckInPage,
+  KioskConfirmationPage,
+  KioskQueuePage,
+} from "./pages/kiosk"
+import {
+  DealershipLayout,
+  DealershipDashboardPage,
+  DealershipVehiclesPage,
+  DealershipUploadPage,
+  DealershipLocationsPage,
+  DealershipApiPage,
+} from "./pages/dealership"
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -104,6 +150,7 @@ function App() {
 
               {/* Schedule */}
               <Route path="/schedule" element={<SchedulePage />} />
+              <Route path="/schedule/tokens" element={<SchedulingTokensPage />} />
 
               {/* Tech Dashboard */}
               <Route path="/tech" element={<TechDashboardPage />} />
@@ -130,6 +177,9 @@ function App() {
 
               {/* Hail Map */}
               <Route path="/hail-map" element={<HailMapPage />} />
+
+              {/* Hail Lookup */}
+              <Route path="/hail-lookup" element={<HailLookupPage />} />
 
               {/* Fleet Map */}
               <Route path="/fleet" element={<FleetMapPage />} />
@@ -158,6 +208,69 @@ function App() {
               {/* Admin */}
               <Route path="/admin/settings" element={<SettingsPage />} />
               <Route path="/admin/users" element={<UsersPage />} />
+
+              {/* CRM */}
+              <Route path="/crm" element={<CRMDashboardPage />} />
+              <Route path="/crm/deals" element={<CRMDealsPage />} />
+              <Route path="/crm/deals/:id" element={<CRMDealsPage />} />
+              <Route path="/crm/tasks" element={<CRMTasksPage />} />
+              <Route path="/crm/pipeline" element={<CRMPipelinePage />} />
+
+              {/* Parts */}
+              <Route path="/parts" element={<PartsPage />} />
+              <Route path="/parts/:id" element={<PartsPage />} />
+              <Route path="/parts/orders" element={<PartOrdersPage />} />
+              <Route path="/parts/orders/:id" element={<PartOrdersPage />} />
+
+              {/* R&I Operations */}
+              <Route path="/ri" element={<RIOperationsPage />} />
+              <Route path="/ri/times" element={<RITimesPage />} />
+            </Route>
+
+            {/* Customer Portal - separate auth context */}
+            <Route path="/portal/login" element={
+              <PortalProvider>
+                <PortalLoginPage />
+              </PortalProvider>
+            } />
+            <Route path="/portal" element={
+              <PortalProvider>
+                <PortalLayout />
+              </PortalProvider>
+            }>
+              <Route index element={<PortalDashboardPage />} />
+              <Route path="jobs" element={<PortalJobsPage />} />
+              <Route path="jobs/:id" element={<PortalJobDetailPage />} />
+              <Route path="jobs/:id/photos" element={<PortalPhotosPage />} />
+              <Route path="jobs/:id/insurance" element={<PortalInsurancePage />} />
+              <Route path="messages" element={<PortalMessagesPage />} />
+              <Route path="appointments" element={<PortalAppointmentsPage />} />
+              <Route path="documents" element={<PortalDocumentsPage />} />
+              <Route path="photos" element={<PortalPhotosPage />} />
+              <Route path="payments" element={<PortalPaymentsPage />} />
+              <Route path="insurance" element={<PortalInsurancePage />} />
+              <Route path="settings" element={<PortalSettingsPage />} />
+              <Route path="referrals" element={<PortalReferralsPage />} />
+              <Route path="flyers" element={<PortalFlyersPage />} />
+              <Route path="loyalty" element={<PortalLoyaltyPage />} />
+              <Route path="reviews" element={<PortalReviewsPage />} />
+            </Route>
+
+            {/* Kiosk System - standalone check-in */}
+            <Route path="/kiosk" element={<KioskLayout />}>
+              <Route index element={<KioskWelcomePage />} />
+              <Route path="check-in" element={<KioskCheckInPage />} />
+              <Route path="confirmation" element={<KioskConfirmationPage />} />
+            </Route>
+            <Route path="/kiosk/queue" element={<KioskQueuePage />} />
+
+            {/* Dealership Portal */}
+            <Route path="/dealership" element={<DealershipLayout />}>
+              <Route index element={<DealershipDashboardPage />} />
+              <Route path="vehicles" element={<DealershipVehiclesPage />} />
+              <Route path="upload" element={<DealershipUploadPage />} />
+              <Route path="locations" element={<DealershipLocationsPage />} />
+              <Route path="api" element={<DealershipApiPage />} />
             </Route>
           </Routes>
         </BrowserRouter>

@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useRef } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,13 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Navigation,
   MapPin,
   RefreshCw,
@@ -29,10 +36,13 @@ import {
   Car,
   Home,
   Settings,
+  CloudLightning,
+  Zap,
 } from "lucide-react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { optimizeRoute, type CanvassingRoute } from "@/api/elite-sales";
+import { optimizeRoute, generateStormRoute, type CanvassingRoute } from "@/api/elite-sales";
+import { hailEventsApi, HailEvent } from "@/api/weather";
 
 // Fix Leaflet default marker icon
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -46,6 +56,7 @@ export function SalesRoutesPage() {
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const markersRef = useRef<L.Marker[]>([]);
+  const swathLayerRef = useRef<L.GeoJSON | null>(null);
   const { user } = useAuth();
 
   // Get the current user's ID for the salesperson ID
@@ -56,6 +67,22 @@ export function SalesRoutesPage() {
   const [isRouteActive, setIsRouteActive] = useState(false);
   const [targetHomes, setTargetHomes] = useState(50);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [selectedStormId, setSelectedStormId] = useState<string>("");
+  const [activeStorm, setActiveStorm] = useState<{
+    id: number;
+    event_name: string;
+    event_date: string;
+    max_hail_size: number;
+    swath_polygon?: any;
+  } | null>(null);
+
+  // Fetch recent hail events for storm selection
+  const { data: eventsData } = useQuery({
+    queryKey: ["hail-events-routes"],
+    queryFn: () => hailEventsApi.list({ days: 30 }),
+  });
+
+  const recentStorms: HailEvent[] = eventsData?.data?.events || [];
 
   // Generate route mutation
   const generateRouteMutation = useMutation({
@@ -69,6 +96,27 @@ export function SalesRoutesPage() {
         setRoute(data.route);
         setCurrentStopIndex(0);
         setIsRouteActive(true);
+        setActiveStorm(null);
+      }
+    },
+  });
+
+  // Generate storm-based route mutation
+  const generateStormRouteMutation = useMutation({
+    mutationFn: () =>
+      generateStormRoute({
+        salesperson_id: salespersonId,
+        hail_event_id: parseInt(selectedStormId),
+        target_homes: targetHomes,
+      }),
+    onSuccess: (data) => {
+      if (data.route) {
+        setRoute(data.route);
+        setCurrentStopIndex(0);
+        setIsRouteActive(true);
+        if (data.storm) {
+          setActiveStorm(data.storm);
+        }
       }
     },
   });
@@ -147,6 +195,49 @@ export function SalesRoutesPage() {
     }
   }, [route, currentStopIndex]);
 
+  // Render storm swath overlay
+  useEffect(() => {
+    if (!mapRef.current) return;
+
+    // Remove existing swath layer
+    if (swathLayerRef.current) {
+      mapRef.current.removeLayer(swathLayerRef.current);
+      swathLayerRef.current = null;
+    }
+
+    if (!activeStorm?.swath_polygon) return;
+
+    try {
+      const swathGeojson = typeof activeStorm.swath_polygon === 'string'
+        ? JSON.parse(activeStorm.swath_polygon)
+        : activeStorm.swath_polygon;
+
+      if (swathGeojson && (swathGeojson.type === 'Polygon' || swathGeojson.type === 'Feature')) {
+        const feature = swathGeojson.type === 'Feature'
+          ? swathGeojson
+          : { type: 'Feature', geometry: swathGeojson, properties: {} };
+
+        swathLayerRef.current = L.geoJSON(feature as any, {
+          style: {
+            color: "#ef4444",
+            fillColor: "rgba(239, 68, 68, 0.2)",
+            fillOpacity: 0.3,
+            weight: 2,
+            dashArray: "5, 5",
+          },
+        }).addTo(mapRef.current);
+
+        // Fit bounds to show swath
+        const bounds = swathLayerRef.current.getBounds();
+        if (bounds.isValid()) {
+          mapRef.current.fitBounds(bounds, { padding: [50, 50] });
+        }
+      }
+    } catch (e) {
+      console.error("Failed to render storm swath:", e);
+    }
+  }, [activeStorm]);
+
   const currentStop = route?.stops[currentStopIndex];
 
   const handleNavigate = () => {
@@ -184,14 +275,14 @@ export function SalesRoutesPage() {
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
           <h1 className="text-2xl font-bold">Canvassing Route</h1>
           <p className="text-muted-foreground">
             Optimized door-to-door route for today
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
             <DialogTrigger asChild>
               <Button variant="outline" size="icon">
@@ -223,16 +314,71 @@ export function SalesRoutesPage() {
           <Button
             onClick={() => generateRouteMutation.mutate()}
             disabled={generateRouteMutation.isPending}
+            variant="outline"
           >
             {generateRouteMutation.isPending ? (
               <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
             ) : (
               <RefreshCw className="h-4 w-4 mr-2" />
             )}
-            {route ? "New Route" : "Generate Route"}
+            Standard Route
           </Button>
         </div>
       </div>
+
+      {/* Storm Route Generator */}
+      <Card className="border-orange-500/30 bg-orange-500/5">
+        <CardContent className="p-4">
+          <div className="flex items-center gap-4 flex-wrap">
+            <div className="flex items-center gap-2">
+              <CloudLightning className="h-5 w-5 text-orange-500" />
+              <span className="font-medium">Storm Route</span>
+            </div>
+            <div className="flex-1 min-w-[200px]">
+              <Select value={selectedStormId} onValueChange={setSelectedStormId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a recent storm..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {recentStorms.map((storm) => (
+                    <SelectItem key={storm.id} value={String(storm.id)}>
+                      <div className="flex items-center gap-2">
+                        <Zap className="h-3 w-3 text-yellow-500" />
+                        <span>{storm.event_name || storm.city || `Storm #${storm.id}`}</span>
+                        <span className="text-muted-foreground text-xs">
+                          {storm.event_date} - {storm.max_hail_size || storm.hail_size_inches}"
+                        </span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button
+              onClick={() => generateStormRouteMutation.mutate()}
+              disabled={!selectedStormId || generateStormRouteMutation.isPending}
+              className="bg-orange-500 hover:bg-orange-600"
+            >
+              {generateStormRouteMutation.isPending ? (
+                <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <CloudLightning className="h-4 w-4 mr-2" />
+              )}
+              Generate Storm Route
+            </Button>
+          </div>
+          {activeStorm && (
+            <div className="mt-3 p-2 bg-orange-500/10 rounded-lg flex items-center gap-2">
+              <Badge variant="outline" className="border-orange-500 text-orange-500">
+                Active Storm
+              </Badge>
+              <span className="text-sm">
+                {activeStorm.event_name} - {activeStorm.max_hail_size}" hail on {activeStorm.event_date}
+              </span>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Route Stats */}
       {route && (

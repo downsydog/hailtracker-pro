@@ -1,5 +1,6 @@
 import { Link, useLocation } from "react-router-dom"
 import { cn } from "@/lib/utils"
+import { useAuth } from "@/contexts/auth-context"
 import {
   LayoutDashboard,
   Briefcase,
@@ -19,6 +20,7 @@ import {
   DollarSign,
   Shield,
   Map,
+  Search,
   ClipboardList,
   Clock,
   Route,
@@ -27,6 +29,14 @@ import {
   MessageSquare,
   Ban,
   Eye,
+  Building2,
+  Upload,
+  MapPin,
+  Key,
+  ExternalLink,
+  Monitor,
+  User,
+  ChevronRight,
 } from "lucide-react"
 
 interface NavItem {
@@ -34,13 +44,17 @@ interface NavItem {
   href: string
   icon: LucideIcon
   badge?: number
+  external?: boolean
 }
 
 interface NavSection {
   title?: string
   items: NavItem[]
+  roles?: string[] // If specified, only show to these roles
+  permissions?: string[] // If specified, only show to users with any of these permissions
 }
 
+// Main navigation sections
 const navigation: NavSection[] = [
   {
     items: [
@@ -56,14 +70,15 @@ const navigation: NavSection[] = [
     ],
   },
   {
-    title: "Maps",
+    title: "Maps & Weather",
     items: [
       { label: "Hail Map", href: "/hail-map", icon: CloudSun },
+      { label: "Hail Lookup", href: "/hail-lookup", icon: Search },
       { label: "Fleet Map", href: "/fleet", icon: Map },
     ],
   },
   {
-    title: "Dashboards",
+    title: "Role Dashboards",
     items: [
       { label: "Tech", href: "/tech", icon: Wrench },
       { label: "Sales", href: "/sales", icon: TrendingUp },
@@ -81,6 +96,19 @@ const navigation: NavSection[] = [
       { label: "Scripts", href: "/sales/scripts", icon: MessageSquare },
       { label: "DNK List", href: "/sales/dnk", icon: Ban },
     ],
+    roles: ["admin", "manager", "sales"],
+  },
+  {
+    title: "Dealership Portal",
+    items: [
+      { label: "Overview", href: "/dealership", icon: Building2 },
+      { label: "Vehicles", href: "/dealership/vehicles", icon: Car },
+      { label: "Batch Upload", href: "/dealership/upload", icon: Upload },
+      { label: "Locations", href: "/dealership/locations", icon: MapPin },
+      { label: "API Settings", href: "/dealership/api", icon: Key },
+    ],
+    roles: ["admin", "manager", "dealership"],
+    permissions: ["dealership_access"],
   },
   {
     title: "Reports & Admin",
@@ -90,7 +118,15 @@ const navigation: NavSection[] = [
       { label: "Users", href: "/admin/users", icon: UserCog },
       { label: "Settings", href: "/admin/settings", icon: Settings },
     ],
+    roles: ["admin", "manager"],
   },
+]
+
+// Portal quick-switch links
+const portalLinks: NavItem[] = [
+  { label: "Customer Portal", href: "/portal", icon: User, external: true },
+  { label: "Kiosk Mode", href: "/kiosk", icon: Monitor, external: true },
+  { label: "Dealership", href: "/dealership", icon: Building2 },
 ]
 
 interface SidebarContentProps {
@@ -99,6 +135,32 @@ interface SidebarContentProps {
 
 export function SidebarContent({ onItemClick }: SidebarContentProps) {
   const location = useLocation()
+  const { user } = useAuth()
+
+  // Check if user has access to a section based on roles/permissions
+  const hasAccess = (section: NavSection): boolean => {
+    // If no role/permission restrictions, show to everyone
+    if (!section.roles && !section.permissions) {
+      return true
+    }
+
+    // For demo mode (no user), show everything
+    if (!user) {
+      return true
+    }
+
+    // Check role match
+    if (section.roles && section.roles.includes(user.role)) {
+      return true
+    }
+
+    // Check permission match
+    if (section.permissions && user.permissions) {
+      return section.permissions.some((p) => user.permissions.includes(p))
+    }
+
+    return false
+  }
 
   return (
     <>
@@ -112,7 +174,7 @@ export function SidebarContent({ onItemClick }: SidebarContentProps) {
       </div>
 
       <nav className="flex-1 overflow-y-auto py-4">
-        {navigation.map((section, sectionIndex) => (
+        {navigation.filter(hasAccess).map((section, sectionIndex) => (
           <div key={sectionIndex} className="px-3 mb-6">
             {section.title && (
               <h3 className="px-3 mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
@@ -149,7 +211,59 @@ export function SidebarContent({ onItemClick }: SidebarContentProps) {
             </div>
           </div>
         ))}
+
+        {/* Portal Quick Switch */}
+        <div className="px-3 mb-6 border-t pt-4">
+          <h3 className="px-3 mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+            Quick Switch
+          </h3>
+          <div className="space-y-1">
+            {portalLinks.map((item) => (
+              <Link
+                key={item.href}
+                to={item.href}
+                onClick={onItemClick}
+                target={item.external ? "_blank" : undefined}
+                rel={item.external ? "noopener noreferrer" : undefined}
+                className={cn(
+                  "flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-md transition-colors",
+                  "text-muted-foreground hover:bg-muted hover:text-foreground"
+                )}
+              >
+                <item.icon className="h-5 w-5" />
+                {item.label}
+                {item.external && (
+                  <ExternalLink className="h-3 w-3 ml-auto opacity-50" />
+                )}
+                {!item.external && (
+                  <ChevronRight className="h-4 w-4 ml-auto opacity-50" />
+                )}
+              </Link>
+            ))}
+          </div>
+        </div>
       </nav>
+
+      {/* User Info at bottom */}
+      {user && (
+        <div className="border-t p-4">
+          <Link
+            to="/profile"
+            onClick={onItemClick}
+            className="flex items-center gap-3 px-2 py-2 rounded-md hover:bg-muted transition-colors"
+          >
+            <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
+              <span className="text-sm font-medium text-primary">
+                {user.name?.charAt(0)?.toUpperCase() || user.username?.charAt(0)?.toUpperCase()}
+              </span>
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium truncate">{user.name || user.username}</p>
+              <p className="text-xs text-muted-foreground capitalize">{user.role}</p>
+            </div>
+          </Link>
+        </div>
+      )}
     </>
   )
 }

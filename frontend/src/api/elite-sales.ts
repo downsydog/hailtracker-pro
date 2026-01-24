@@ -211,6 +211,26 @@ export const optimizeRoute = (data: {
 }) =>
   apiPost<{ success: boolean; route: CanvassingRoute }>('/api/elite/routes/optimize', data);
 
+// Storm-based route generation
+export const generateStormRoute = (data: {
+  salesperson_id: number;
+  hail_event_id: number;
+  target_homes?: number;
+  start_lat?: number;
+  start_lon?: number;
+}) =>
+  apiPost<{
+    success: boolean;
+    route: CanvassingRoute;
+    storm: {
+      id: number;
+      event_name: string;
+      event_date: string;
+      max_hail_size: number;
+      swath_polygon?: any;
+    };
+  }>('/api/elite/routes/storm', data);
+
 export const getPropertyData = (address: string) =>
   apiGet<{ address: string; property_data: PropertyData }>(
     `/api/elite/routes/property/${encodeURIComponent(address)}`

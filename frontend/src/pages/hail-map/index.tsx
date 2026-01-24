@@ -3,11 +3,21 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
 import L from "leaflet"
 import "leaflet/dist/leaflet.css"
-import "leaflet.markercluster"
 import "leaflet.markercluster/dist/MarkerCluster.css"
 import "leaflet.markercluster/dist/MarkerCluster.Default.css"
 
+// Import markercluster - must be after L is defined
+import "leaflet.markercluster"
+
+// Ensure markerClusterGroup is available
+declare module "leaflet" {
+  function markerClusterGroup(options?: any): any
+}
+
 import { PageHeader } from "@/components/app/page-header"
+import { StormCalendar } from "@/components/app/storm-calendar"
+import { RadarReplay } from "@/components/app/radar-replay"
+import { TerritoryAlerts } from "@/components/app/territory-alerts"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -23,6 +33,7 @@ import {
   StormCell,
   SwathFeature,
   RadarSite,
+  CalendarDayEvent,
 } from "@/api/weather"
 import {
   RefreshCw,
@@ -39,6 +50,9 @@ import {
   Zap,
   Activity,
   AlertTriangle,
+  Calendar,
+  Play,
+  Bell,
 } from "lucide-react"
 
 // Fix Leaflet default marker icon issue
@@ -57,11 +71,24 @@ interface LayerState {
   forecasts: boolean
 }
 
-const SEVERITY_COLORS: Record<string, { border: string; fill: string }> = {
-  CATASTROPHIC: { border: "#9333ea", fill: "rgba(147, 51, 234, 0.3)" },
-  SEVERE: { border: "#ef4444", fill: "rgba(239, 68, 68, 0.3)" },
-  MODERATE: { border: "#f59e0b", fill: "rgba(251, 191, 36, 0.3)" },
-  MINOR: { border: "#22c55e", fill: "rgba(34, 197, 94, 0.3)" },
+// 10-level hail size color scale (1/2" to 3"+ in 1/4" increments)
+const HAIL_SIZE_COLORS: { min: number; max: number; label: string; border: string; fill: string }[] = [
+  { min: 0, max: 0.5, label: '<0.5"', border: "#a3e635", fill: "rgba(163, 230, 53, 0.35)" },      // Lime
+  { min: 0.5, max: 0.75, label: '0.5"', border: "#84cc16", fill: "rgba(132, 204, 22, 0.35)" },   // Lime-600
+  { min: 0.75, max: 1.0, label: '0.75"', border: "#22c55e", fill: "rgba(34, 197, 94, 0.35)" },   // Green
+  { min: 1.0, max: 1.25, label: '1.0"', border: "#facc15", fill: "rgba(250, 204, 21, 0.35)" },   // Yellow
+  { min: 1.25, max: 1.5, label: '1.25"', border: "#fbbf24", fill: "rgba(251, 191, 36, 0.35)" },  // Amber
+  { min: 1.5, max: 1.75, label: '1.5"', border: "#f59e0b", fill: "rgba(245, 158, 11, 0.35)" },   // Amber-500
+  { min: 1.75, max: 2.0, label: '1.75"', border: "#f97316", fill: "rgba(249, 115, 22, 0.35)" },  // Orange
+  { min: 2.0, max: 2.5, label: '2.0"', border: "#ef4444", fill: "rgba(239, 68, 68, 0.35)" },     // Red
+  { min: 2.5, max: 3.0, label: '2.5"', border: "#dc2626", fill: "rgba(220, 38, 38, 0.35)" },     // Red-600
+  { min: 3.0, max: 99, label: '3.0"+', border: "#9333ea", fill: "rgba(147, 51, 234, 0.35)" },    // Purple (catastrophic)
+]
+
+function getHailSizeColor(hailSizeInches: number | undefined | null): { border: string; fill: string } {
+  const size = hailSizeInches ?? 0
+  const level = HAIL_SIZE_COLORS.find(l => size >= l.min && size < l.max)
+  return level ?? HAIL_SIZE_COLORS[HAIL_SIZE_COLORS.length - 1]
 }
 
 export function HailMapPage() {
@@ -94,6 +121,9 @@ export function HailMapPage() {
   const [selectedCell, setSelectedCell] = useState<StormCell | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [cellDrawerOpen, setCellDrawerOpen] = useState(false)
+  const [calendarOpen, setCalendarOpen] = useState(true)
+  const [radarReplayOpen, setRadarReplayOpen] = useState(false)
+  const [territoryAlertsOpen, setTerritoryAlertsOpen] = useState(false)
 
   // Fetch hail events using typed API
   const { data: eventsData, isLoading: eventsLoading, refetch: refetchEvents } = useQuery({
@@ -190,22 +220,42 @@ export function HailMapPage() {
   useEffect(() => {
     if (!mapRef.current || mapInstanceRef.current) return
 
-    const map = L.map(mapRef.current, {
-      center: [39.8283, -98.5795],
-      zoom: 5,
-      zoomControl: true,
+    try {
+      console.log("Initializing Leaflet map...")
+      console.log("Map container:", mapRef.current)
+      console.log("Container dimensions:", mapRef.current.offsetWidth, "x", mapRef.current.offsetHeight)
+
+      const map = L.map(mapRef.current, {
+        center: [39.8283, -98.5795],
+        zoom: 5,
+        zoomControl: true,
+      })
+
+    console.log("Map created, adding tile layer...")
+
+    // OpenStreetMap tile layer (reliable fallback)
+    const tileLayer = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      maxZoom: 19,
     })
 
-    // Dark tile layer - CartoDB dark
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-      attribution: "&copy; OpenStreetMap, &copy; CARTO",
-      maxZoom: 19,
-    }).addTo(map)
+    tileLayer.on('tileerror', (error) => {
+      console.error("Tile load error:", error)
+    })
 
-    // Force map to recalculate size after render
+    tileLayer.on('tileload', () => {
+      console.log("Tile loaded successfully")
+    })
+
+    tileLayer.addTo(map)
+
+    // Force map to recalculate size after render (multiple times to ensure proper sizing)
     setTimeout(() => {
+      console.log("Invalidating size (100ms)...")
       map.invalidateSize()
     }, 100)
+    setTimeout(() => map.invalidateSize(), 300)
+    setTimeout(() => map.invalidateSize(), 500)
 
     // Initialize layer groups
     swathLayerRef.current = L.layerGroup().addTo(map)
@@ -219,7 +269,7 @@ export function HailMapPage() {
       maxClusterRadius: 50,
       spiderfyOnMaxZoom: true,
       showCoverageOnHover: false,
-      iconCreateFunction: (cluster) => {
+      iconCreateFunction: (cluster: any) => {
         const markers = cluster.getAllChildMarkers()
         const hotCount = markers.filter((m: any) => m.options.leadTemp === "hot").length
         const warmCount = markers.filter((m: any) => m.options.leadTemp === "warm").length
@@ -292,10 +342,16 @@ export function HailMapPage() {
     map.on("moveend", updateStats)
 
     mapInstanceRef.current = map
+    } catch (error) {
+      console.error("Error initializing map:", error)
+      return
+    }
 
     return () => {
-      map.remove()
-      mapInstanceRef.current = null
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove()
+        mapInstanceRef.current = null
+      }
     }
   }, [updateStats])
 
@@ -312,14 +368,16 @@ export function HailMapPage() {
       swaths.forEach((swath) => {
         if (!swath.geometry || swath.geometry.type !== 'Polygon') return
 
+        // Use hail size for color (10-level scale)
+        const hailSize = swath.properties.max_hail_size
+        const colors = getHailSizeColor(hailSize)
         const severity = swath.properties.severity || 'MODERATE'
-        const colors = SEVERITY_COLORS[severity] || SEVERITY_COLORS.MODERATE
 
         const polygon = L.geoJSON(swath as any, {
           style: {
             color: colors.border,
             fillColor: colors.fill,
-            fillOpacity: 0.4,
+            fillOpacity: 0.5,
             weight: 2,
           },
         })
@@ -331,7 +389,7 @@ export function HailMapPage() {
             </div>
             <div style="padding: 12px 16px;">
               <p><strong>Cell ID:</strong> ${swath.properties.cell_id || 'N/A'}</p>
-              <p><strong>Max Hail:</strong> ${swath.properties.max_hail_size || 'Unknown'}"</p>
+              <p><strong>Max Hail:</strong> <span style="color: ${colors.border}; font-weight: bold;">${hailSize || 'Unknown'}"</span></p>
               <p><strong>Severity:</strong> ${severity}</p>
               <p><strong>Area:</strong> ${swath.properties.area_sq_miles?.toFixed(1) || 'N/A'} sq mi</p>
             </div>
@@ -342,43 +400,95 @@ export function HailMapPage() {
       })
     }
 
-    // Fall back to circular representations for events without swaths
+    // Render events - use swath_polygon if available, otherwise fall back to circle
     events.forEach((event) => {
-      if (!event.latitude || !event.longitude) return
-
-      // Skip if we already have a swath for this event
+      // Skip if we already have a swath for this event from the separate swaths API
       if (swaths.some(s => s.properties.event_id === event.id)) return
 
+      // Use hail size for 10-level color scale
+      const hailSize = event.max_hail_size || event.hail_size_inches
+      const colors = getHailSizeColor(hailSize)
       const severity = event.severity || 'MODERATE'
-      const colors = SEVERITY_COLORS[severity] || SEVERITY_COLORS.MODERATE
 
-      const radiusMiles = Math.sqrt((event.affected_area_sq_miles || 10) / Math.PI)
-      const radiusMeters = radiusMiles * 1609.34
+      // Try to parse swath_polygon GeoJSON if available
+      let swathGeojson: { type: string; coordinates: number[][][] } | null = null
+      try {
+        if (event.swath_polygon) {
+          swathGeojson = typeof event.swath_polygon === 'string'
+            ? JSON.parse(event.swath_polygon)
+            : event.swath_polygon
+        }
+      } catch (e) {
+        // Parsing failed, will fall back to circle
+      }
 
-      const circle = L.circle([event.latitude, event.longitude], {
-        radius: radiusMeters,
-        color: colors.border,
-        fillColor: colors.fill,
-        fillOpacity: 0.4,
-        weight: 2,
-      })
+      if (swathGeojson && swathGeojson.type === 'Polygon' && swathGeojson.coordinates) {
+        // Render actual polygon swath
+        const polygon = L.geoJSON({
+          type: 'Feature',
+          geometry: swathGeojson,
+          properties: {}
+        } as any, {
+          style: {
+            color: colors.border,
+            fillColor: colors.fill,
+            fillOpacity: 0.5,
+            weight: 2,
+          },
+        })
 
-      circle.bindPopup(`
-        <div style="min-width: 200px;">
-          <div style="padding: 12px 16px; border-bottom: 1px solid #e5e7eb;">
-            <strong>${event.event_name || event.city || "Unknown Location"}</strong>
+        polygon.bindPopup(`
+          <div style="min-width: 200px;">
+            <div style="padding: 12px 16px; border-bottom: 1px solid #e5e7eb; background: ${colors.fill};">
+              <strong>${event.event_name || event.city || "Unknown Location"}</strong>
+            </div>
+            <div style="padding: 12px 16px;">
+              <p><strong>Date:</strong> ${event.event_date || "N/A"}</p>
+              <p><strong>Max Hail:</strong> <span style="color: ${colors.border}; font-weight: bold;">${hailSize || 'N/A'}"</span></p>
+              <p><strong>Severity:</strong> ${severity}</p>
+              ${event.swath_area_sqmi ? `<p><strong>Area:</strong> ${event.swath_area_sqmi.toFixed(1)} sq mi</p>` : ""}
+              ${event.estimated_vehicles_affected ? `<p><strong>Est. Vehicles:</strong> ${event.estimated_vehicles_affected.toLocaleString()}</p>` : ""}
+              ${event.jobs_created ? `<p><strong>Jobs Created:</strong> ${event.jobs_created}</p>` : ""}
+            </div>
           </div>
-          <div style="padding: 12px 16px;">
-            <p><strong>Date:</strong> ${event.event_date || "N/A"}</p>
-            <p><strong>Max Hail:</strong> ${event.max_hail_size || event.hail_size_inches || 'N/A'}" diameter</p>
-            <p><strong>Severity:</strong> ${severity}</p>
-            ${event.estimated_vehicles_affected ? `<p><strong>Est. Vehicles:</strong> ${event.estimated_vehicles_affected.toLocaleString()}</p>` : ""}
-            ${event.jobs_created ? `<p><strong>Jobs Created:</strong> ${event.jobs_created}</p>` : ""}
-          </div>
-        </div>
-      `)
+        `)
 
-      swathLayerRef.current?.addLayer(circle)
+        swathLayerRef.current?.addLayer(polygon)
+      } else {
+        // Fall back to circle representation
+        const lat = event.center_lat ?? event.latitude
+        const lon = event.center_lon ?? event.longitude
+        if (lat == null || lon == null) return
+
+        const areaSquareMiles = event.swath_area_sqmi || event.affected_area_sq_miles || 10
+        const radiusMiles = Math.sqrt(areaSquareMiles / Math.PI)
+        const radiusMeters = radiusMiles * 1609.34
+
+        const circle = L.circle([lat, lon], {
+          radius: radiusMeters,
+          color: colors.border,
+          fillColor: colors.fill,
+          fillOpacity: 0.5,
+          weight: 2,
+        })
+
+        circle.bindPopup(`
+          <div style="min-width: 200px;">
+            <div style="padding: 12px 16px; border-bottom: 1px solid #e5e7eb; background: ${colors.fill};">
+              <strong>${event.event_name || event.city || "Unknown Location"}</strong>
+            </div>
+            <div style="padding: 12px 16px;">
+              <p><strong>Date:</strong> ${event.event_date || "N/A"}</p>
+              <p><strong>Max Hail:</strong> <span style="color: ${colors.border}; font-weight: bold;">${hailSize || 'N/A'}"</span></p>
+              <p><strong>Severity:</strong> ${severity}</p>
+              ${event.estimated_vehicles_affected ? `<p><strong>Est. Vehicles:</strong> ${event.estimated_vehicles_affected.toLocaleString()}</p>` : ""}
+              ${event.jobs_created ? `<p><strong>Jobs Created:</strong> ${event.jobs_created}</p>` : ""}
+            </div>
+          </div>
+        `)
+
+        swathLayerRef.current?.addLayer(circle)
+      }
     })
 
     updateStats()
@@ -625,6 +735,13 @@ export function HailMapPage() {
     return <Badge className={`${variants[s] || variants.NEW} hover:${variants[s] || variants.NEW}`}>{s}</Badge>
   }
 
+  // Handle calendar event selection - zoom map to event location
+  const handleCalendarEventSelect = useCallback((event: CalendarDayEvent) => {
+    if (mapInstanceRef.current && event.lat && event.lon) {
+      mapInstanceRef.current.setView([event.lat, event.lon], 10, { animate: true })
+    }
+  }, [])
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -643,14 +760,72 @@ export function HailMapPage() {
             <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
             Live
           </Badge>
+          <Button
+            variant={territoryAlertsOpen ? "default" : "outline"}
+            size="sm"
+            onClick={() => {
+              setTerritoryAlertsOpen(!territoryAlertsOpen)
+              if (!territoryAlertsOpen) {
+                setRadarReplayOpen(false)
+                setCalendarOpen(false)
+              }
+            }}
+            className="gap-2"
+          >
+            <Bell className="h-4 w-4" />
+            Alerts
+          </Button>
+          <Button
+            variant={radarReplayOpen ? "default" : "outline"}
+            size="sm"
+            onClick={() => {
+              setRadarReplayOpen(!radarReplayOpen)
+              if (!radarReplayOpen) {
+                setTerritoryAlertsOpen(false)
+                setCalendarOpen(false)
+              }
+            }}
+            className="gap-2"
+          >
+            <Play className="h-4 w-4" />
+            Radar
+          </Button>
+          <Button
+            variant={calendarOpen ? "default" : "outline"}
+            size="sm"
+            onClick={() => {
+              setCalendarOpen(!calendarOpen)
+              if (!calendarOpen) {
+                setRadarReplayOpen(false)
+                setTerritoryAlertsOpen(false)
+              }
+            }}
+            className="gap-2"
+          >
+            <Calendar className="h-4 w-4" />
+            Calendar
+          </Button>
           <Button variant="outline" size="icon" onClick={handleRefresh}>
             <RefreshCw className="h-4 w-4" />
           </Button>
         </div>
       </div>
 
-      <div className="relative bg-card rounded-xl border overflow-hidden" style={{ height: "calc(100vh - 220px)", minHeight: "500px" }}>
-        <div ref={mapRef} style={{ width: "100%", height: "100%", position: "absolute", top: 0, left: 0 }} />
+      <div className="flex gap-4">
+        {/* Map Container */}
+        <div className={`relative bg-card rounded-xl border overflow-hidden transition-all ${calendarOpen ? 'flex-1' : 'w-full'}`} style={{ height: "calc(100vh - 220px)", minHeight: "500px" }}>
+        <div
+          ref={mapRef}
+          style={{
+            width: "100%",
+            height: "100%",
+            position: "absolute",
+            top: 0,
+            left: 0,
+            zIndex: 1,
+            background: "#f0f0f0"
+          }}
+        />
 
         {/* Layer Controls */}
         <div className="absolute top-4 right-4 z-[1000] bg-card rounded-lg shadow-lg border p-3 min-w-[180px]">
@@ -710,6 +885,26 @@ export function HailMapPage() {
               Radar Coverage ({radars.length})
             </label>
           </div>
+
+          {/* Hail Size Legend */}
+          {layers.swaths && (
+            <div className="mt-3 pt-3 border-t">
+              <div className="text-xs font-semibold text-muted-foreground uppercase mb-2">
+                Hail Size
+              </div>
+              <div className="grid grid-cols-2 gap-1 text-xs">
+                {HAIL_SIZE_COLORS.map((level) => (
+                  <div key={level.label} className="flex items-center gap-1">
+                    <div
+                      className="w-3 h-3 rounded-sm border"
+                      style={{ backgroundColor: level.fill, borderColor: level.border }}
+                    />
+                    <span className="text-muted-foreground">{level.label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Active Cells Alert */}
@@ -753,6 +948,31 @@ export function HailMapPage() {
             </div>
           </div>
         </div>
+        </div>
+
+        {/* Territory Alerts Panel */}
+        {territoryAlertsOpen && (
+          <div className="w-96 flex-shrink-0" style={{ height: "calc(100vh - 220px)", minHeight: "500px" }}>
+            <TerritoryAlerts className="h-full overflow-auto" />
+          </div>
+        )}
+
+        {/* Radar Replay Panel */}
+        {radarReplayOpen && !territoryAlertsOpen && (
+          <div className="w-96 flex-shrink-0" style={{ height: "calc(100vh - 220px)", minHeight: "500px" }}>
+            <RadarReplay className="h-full overflow-auto" />
+          </div>
+        )}
+
+        {/* Storm Calendar Panel */}
+        {calendarOpen && !radarReplayOpen && !territoryAlertsOpen && (
+          <div className="w-96 flex-shrink-0" style={{ height: "calc(100vh - 220px)", minHeight: "500px" }}>
+            <StormCalendar
+              onSelectEvent={handleCalendarEventSelect}
+              className="h-full overflow-auto"
+            />
+          </div>
+        )}
       </div>
 
       {/* Lead Detail Drawer */}
@@ -1004,12 +1224,23 @@ export function HailMapPage() {
         </SheetContent>
       </Sheet>
 
-      {/* Add CSS for pulse animation */}
+      {/* Add CSS for pulse animation and Leaflet fixes */}
       <style>{`
         @keyframes pulse {
           0% { box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.7); }
           70% { box-shadow: 0 0 0 15px rgba(249, 115, 22, 0); }
           100% { box-shadow: 0 0 0 0 rgba(249, 115, 22, 0); }
+        }
+        /* Leaflet tile layer fix */
+        .leaflet-tile-pane {
+          z-index: 1 !important;
+        }
+        .leaflet-tile {
+          visibility: visible !important;
+          opacity: 1 !important;
+        }
+        .leaflet-container {
+          background: #1a1a2e !important;
         }
       `}</style>
     </div>

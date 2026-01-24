@@ -2362,6 +2362,11 @@ def create_app(config=None):
     app.register_blueprint(portal_api_bp)
     logger.info("Portal API routes registered at /api/portal")
 
+    # Territory Alerts API Routes
+    from src.web.routes.territory_alerts_api import territory_alerts_api_bp
+    app.register_blueprint(territory_alerts_api_bp)
+    logger.info("Territory Alerts API routes registered at /api/territory-alerts")
+
     # ====================
     # Unified App Routes (Main Application)
     # ====================

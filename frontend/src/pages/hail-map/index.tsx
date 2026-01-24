@@ -1,20 +1,45 @@
 import { useEffect, useRef, useState, useCallback } from "react"
-
-import { PageHeader } from "@/components/app/page-header"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { Skeleton } from "@/components/ui/skeleton"
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { apiGet, apiPost } from "@/api/client"
-import { Lead } from "@/types"
-import { RefreshCw, Layers, MapPin, CloudLightning, Flame, Phone, Mail, Navigation, UserPlus, Edit, Radio } from "lucide-react"
 import { useNavigate } from "react-router-dom"
 import L from "leaflet"
 import "leaflet/dist/leaflet.css"
 import "leaflet.markercluster"
 import "leaflet.markercluster/dist/MarkerCluster.css"
 import "leaflet.markercluster/dist/MarkerCluster.Default.css"
+
+import { PageHeader } from "@/components/app/page-header"
+import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { Card, CardContent } from "@/components/ui/card"
+import { Lead } from "@/types"
+import { leadsApi } from "@/api/leads"
+import {
+  hailEventsApi,
+  stormCellsApi,
+  stormMonitorApi,
+  HailEvent,
+  StormCell,
+  SwathFeature,
+  RadarSite,
+} from "@/api/weather"
+import {
+  RefreshCw,
+  Layers,
+  MapPin,
+  CloudLightning,
+  Flame,
+  Phone,
+  Mail,
+  Navigation,
+  UserPlus,
+  Edit,
+  Radio,
+  Zap,
+  Activity,
+  AlertTriangle,
+} from "lucide-react"
 
 // Fix Leaflet default marker icon issue
 delete (L.Icon.Default.prototype as any)._getIconUrl
@@ -24,56 +49,20 @@ L.Icon.Default.mergeOptions({
   shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
 })
 
-interface HailEvent {
-  id: number
-  event_name: string
-  event_date: string
-  latitude: number
-  longitude: number
-  city?: string
-  state?: string
-  max_hail_size?: number
-  severity?: string
-  affected_area_sq_miles?: number
-  property_count?: number
-}
-
 interface LayerState {
   swaths: boolean
   leads: boolean
-  territories: boolean
+  activeCells: boolean
   radar: boolean
+  forecasts: boolean
 }
 
-const SAMPLE_TERRITORIES = [
-  {
-    name: "Dallas Metro",
-    rep: "John Smith",
-    lead_count: 45,
-    bounds: [[33.1, -97.1], [33.1, -96.5], [32.6, -96.5], [32.6, -97.1]] as L.LatLngExpression[],
-  },
-  {
-    name: "Denver Area",
-    rep: "Jane Doe",
-    lead_count: 32,
-    bounds: [[40.0, -105.2], [40.0, -104.6], [39.5, -104.6], [39.5, -105.2]] as L.LatLngExpression[],
-  },
-  {
-    name: "Oklahoma City",
-    rep: "Mike Johnson",
-    lead_count: 28,
-    bounds: [[35.7, -97.8], [35.7, -97.2], [35.2, -97.2], [35.2, -97.8]] as L.LatLngExpression[],
-  },
-]
-
-// Sample radar sites (NEXRAD locations)
-const RADAR_SITES = [
-  { id: "KFWS", name: "Fort Worth", lat: 32.5731, lon: -97.3033, range: 230 },
-  { id: "KAMA", name: "Amarillo", lat: 35.2333, lon: -101.7092, range: 230 },
-  { id: "KOUN", name: "Norman", lat: 35.2456, lon: -97.4619, range: 230 },
-  { id: "KFTG", name: "Denver", lat: 39.7867, lon: -104.5458, range: 230 },
-  { id: "KTLX", name: "Oklahoma City", lat: 35.3331, lon: -97.2778, range: 230 },
-]
+const SEVERITY_COLORS: Record<string, { border: string; fill: string }> = {
+  CATASTROPHIC: { border: "#9333ea", fill: "rgba(147, 51, 234, 0.3)" },
+  SEVERE: { border: "#ef4444", fill: "rgba(239, 68, 68, 0.3)" },
+  MODERATE: { border: "#f59e0b", fill: "rgba(251, 191, 36, 0.3)" },
+  MINOR: { border: "#22c55e", fill: "rgba(34, 197, 94, 0.3)" },
+}
 
 export function HailMapPage() {
   const navigate = useNavigate()
@@ -82,40 +71,64 @@ export function HailMapPage() {
   const mapInstanceRef = useRef<L.Map | null>(null)
   const swathLayerRef = useRef<L.LayerGroup | null>(null)
   const leadsClusterRef = useRef<L.MarkerClusterGroup | null>(null)
-  const territoryLayerRef = useRef<L.LayerGroup | null>(null)
+  const activeCellsLayerRef = useRef<L.LayerGroup | null>(null)
   const radarLayerRef = useRef<L.LayerGroup | null>(null)
+  const forecastLayerRef = useRef<L.LayerGroup | null>(null)
 
   const [layers, setLayers] = useState<LayerState>({
     swaths: true,
     leads: true,
-    territories: true,
+    activeCells: true,
     radar: false,
+    forecasts: false,
   })
 
   const [stats, setStats] = useState({
     activeStorms: 0,
+    activeCells: 0,
     leadsInView: 0,
     hotLeads: 0,
   })
 
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null)
+  const [selectedCell, setSelectedCell] = useState<StormCell | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [cellDrawerOpen, setCellDrawerOpen] = useState(false)
 
-  // Fetch hail events
+  // Fetch hail events using typed API
   const { data: eventsData, isLoading: eventsLoading, refetch: refetchEvents } = useQuery({
-    queryKey: ["hail-events"],
-    queryFn: () => apiGet<{ events: HailEvent[], stats: any }>("/api/hail-events?days=3650"),
+    queryKey: ["hail-events-map"],
+    queryFn: () => hailEventsApi.list({ days: 90 }),
+  })
+
+  // Fetch real GeoJSON swaths
+  const { data: swathsData, refetch: refetchSwaths } = useQuery({
+    queryKey: ["storm-swaths"],
+    queryFn: () => stormCellsApi.getAllSwaths(),
+  })
+
+  // Fetch active storm cells
+  const { data: cellsData, refetch: refetchCells } = useQuery({
+    queryKey: ["active-cells-map"],
+    queryFn: () => stormCellsApi.getActiveCells(),
+    refetchInterval: 30000, // Refresh every 30s
+  })
+
+  // Fetch radar sites from backend
+  const { data: radarsData } = useQuery({
+    queryKey: ["radar-sites"],
+    queryFn: () => stormMonitorApi.getAvailableRadars(),
   })
 
   // Fetch leads with location
   const { data: leadsData, isLoading: leadsLoading, refetch: refetchLeads } = useQuery({
     queryKey: ["leads-map"],
-    queryFn: () => apiGet<{ leads: Lead[] }>("/api/leads?per_page=500"),
+    queryFn: () => leadsApi.list({ per_page: 500 }),
   })
 
   // Convert lead to customer mutation
   const convertMutation = useMutation({
-    mutationFn: (leadId: number) => apiPost(`/api/leads/${leadId}/convert`, {}),
+    mutationFn: (leadId: number) => leadsApi.convert(leadId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["leads-map"] })
       setDrawerOpen(false)
@@ -123,7 +136,10 @@ export function HailMapPage() {
     },
   })
 
-  const events = eventsData?.events || []
+  const events: HailEvent[] = eventsData?.data?.events || []
+  const swaths: SwathFeature[] = swathsData?.data?.features || (swathsData as any)?.features || []
+  const activeCells: StormCell[] = cellsData?.data?.active_cells || []
+  const radars: RadarSite[] = radarsData?.data?.radars || []
   const allLeads = leadsData?.leads || []
   const leads = allLeads.filter((l: any) => l.latitude && l.longitude)
 
@@ -152,15 +168,22 @@ export function HailMapPage() {
 
     setStats({
       activeStorms: recentEvents.length,
+      activeCells: activeCells.length,
       leadsInView: leadsInView.length,
       hotLeads,
     })
-  }, [events, leads])
+  }, [events, leads, activeCells])
 
   // Handle lead click - open drawer
   const handleLeadClick = useCallback((lead: Lead) => {
     setSelectedLead(lead)
     setDrawerOpen(true)
+  }, [])
+
+  // Handle cell click - open cell drawer
+  const handleCellClick = useCallback((cell: StormCell) => {
+    setSelectedCell(cell)
+    setCellDrawerOpen(true)
   }, [])
 
   // Initialize map
@@ -186,8 +209,9 @@ export function HailMapPage() {
 
     // Initialize layer groups
     swathLayerRef.current = L.layerGroup().addTo(map)
-    territoryLayerRef.current = L.layerGroup().addTo(map)
+    activeCellsLayerRef.current = L.layerGroup().addTo(map)
     radarLayerRef.current = L.layerGroup()
+    forecastLayerRef.current = L.layerGroup()
 
     // Initialize marker cluster group with custom styling
     leadsClusterRef.current = L.markerClusterGroup({
@@ -226,8 +250,12 @@ export function HailMapPage() {
         <div style="background: rgba(255,255,255,0.95); padding: 12px 16px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); font-size: 12px; backdrop-filter: blur(4px);">
           <h4 style="margin: 0 0 8px 0; font-weight: 600; color: #374151;">Legend</h4>
           <div style="display: flex; align-items: center; gap: 8px; margin: 4px 0;">
+            <div style="width: 16px; height: 16px; border-radius: 4px; background: rgba(147, 51, 234, 0.4); border: 2px solid #9333ea;"></div>
+            <span>Catastrophic (3"+)</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px; margin: 4px 0;">
             <div style="width: 16px; height: 16px; border-radius: 4px; background: rgba(239, 68, 68, 0.4); border: 2px solid #ef4444;"></div>
-            <span>Severe Hail (2"+)</span>
+            <span>Severe (2-3")</span>
           </div>
           <div style="display: flex; align-items: center; gap: 8px; margin: 4px 0;">
             <div style="width: 16px; height: 16px; border-radius: 4px; background: rgba(251, 191, 36, 0.4); border: 2px solid #f59e0b;"></div>
@@ -236,6 +264,11 @@ export function HailMapPage() {
           <div style="display: flex; align-items: center; gap: 8px; margin: 4px 0;">
             <div style="width: 16px; height: 16px; border-radius: 4px; background: rgba(34, 197, 94, 0.4); border: 2px solid #22c55e;"></div>
             <span>Minor (&lt;1")</span>
+          </div>
+          <hr style="margin: 8px 0; border: none; border-top: 1px solid #e5e7eb;" />
+          <div style="display: flex; align-items: center; gap: 8px; margin: 4px 0;">
+            <div style="width: 16px; height: 16px; border-radius: 50%; background: #f97316; border: 2px solid white;"></div>
+            <span>Active Storm Cell</span>
           </div>
           <hr style="margin: 8px 0; border: none; border-top: 1px solid #e5e7eb;" />
           <div style="display: flex; align-items: center; gap: 8px; margin: 4px 0;">
@@ -266,7 +299,7 @@ export function HailMapPage() {
     }
   }, [updateStats])
 
-  // Render hail swaths
+  // Render hail swaths from real GeoJSON data
   useEffect(() => {
     if (!swathLayerRef.current) return
 
@@ -274,29 +307,58 @@ export function HailMapPage() {
 
     if (!layers.swaths) return
 
+    // First try to use real GeoJSON swaths
+    if (swaths.length > 0) {
+      swaths.forEach((swath) => {
+        if (!swath.geometry || swath.geometry.type !== 'Polygon') return
+
+        const severity = swath.properties.severity || 'MODERATE'
+        const colors = SEVERITY_COLORS[severity] || SEVERITY_COLORS.MODERATE
+
+        const polygon = L.geoJSON(swath as any, {
+          style: {
+            color: colors.border,
+            fillColor: colors.fill,
+            fillOpacity: 0.4,
+            weight: 2,
+          },
+        })
+
+        polygon.bindPopup(`
+          <div style="min-width: 200px;">
+            <div style="padding: 12px 16px; border-bottom: 1px solid #e5e7eb; background: ${colors.fill};">
+              <strong>${swath.properties.event_name || 'Storm Swath'}</strong>
+            </div>
+            <div style="padding: 12px 16px;">
+              <p><strong>Cell ID:</strong> ${swath.properties.cell_id || 'N/A'}</p>
+              <p><strong>Max Hail:</strong> ${swath.properties.max_hail_size || 'Unknown'}"</p>
+              <p><strong>Severity:</strong> ${severity}</p>
+              <p><strong>Area:</strong> ${swath.properties.area_sq_miles?.toFixed(1) || 'N/A'} sq mi</p>
+            </div>
+          </div>
+        `)
+
+        swathLayerRef.current?.addLayer(polygon)
+      })
+    }
+
+    // Fall back to circular representations for events without swaths
     events.forEach((event) => {
       if (!event.latitude || !event.longitude) return
 
-      const maxHail = event.max_hail_size || 1
-      let color: string, fillColor: string
-      if (maxHail >= 2) {
-        color = "#ef4444"
-        fillColor = "rgba(239, 68, 68, 0.3)"
-      } else if (maxHail >= 1) {
-        color = "#f59e0b"
-        fillColor = "rgba(251, 191, 36, 0.3)"
-      } else {
-        color = "#22c55e"
-        fillColor = "rgba(34, 197, 94, 0.3)"
-      }
+      // Skip if we already have a swath for this event
+      if (swaths.some(s => s.properties.event_id === event.id)) return
+
+      const severity = event.severity || 'MODERATE'
+      const colors = SEVERITY_COLORS[severity] || SEVERITY_COLORS.MODERATE
 
       const radiusMiles = Math.sqrt((event.affected_area_sq_miles || 10) / Math.PI)
       const radiusMeters = radiusMiles * 1609.34
 
       const circle = L.circle([event.latitude, event.longitude], {
         radius: radiusMeters,
-        color,
-        fillColor,
+        color: colors.border,
+        fillColor: colors.fill,
         fillOpacity: 0.4,
         weight: 2,
       })
@@ -308,9 +370,10 @@ export function HailMapPage() {
           </div>
           <div style="padding: 12px 16px;">
             <p><strong>Date:</strong> ${event.event_date || "N/A"}</p>
-            <p><strong>Max Hail:</strong> ${maxHail}" diameter</p>
-            <p><strong>Severity:</strong> ${event.severity || "Moderate"}</p>
-            ${event.property_count ? `<p><strong>Properties:</strong> ${event.property_count.toLocaleString()}</p>` : ""}
+            <p><strong>Max Hail:</strong> ${event.max_hail_size || event.hail_size_inches || 'N/A'}" diameter</p>
+            <p><strong>Severity:</strong> ${severity}</p>
+            ${event.estimated_vehicles_affected ? `<p><strong>Est. Vehicles:</strong> ${event.estimated_vehicles_affected.toLocaleString()}</p>` : ""}
+            ${event.jobs_created ? `<p><strong>Jobs Created:</strong> ${event.jobs_created}</p>` : ""}
           </div>
         </div>
       `)
@@ -319,7 +382,123 @@ export function HailMapPage() {
     })
 
     updateStats()
-  }, [events, layers.swaths, updateStats])
+  }, [events, swaths, layers.swaths, updateStats])
+
+  // Render active storm cells
+  useEffect(() => {
+    if (!activeCellsLayerRef.current) return
+
+    activeCellsLayerRef.current.clearLayers()
+
+    if (!layers.activeCells) return
+
+    activeCells.forEach((cell) => {
+      if (!cell.lat || !cell.lon) return
+
+      // Cell marker - pulsing orange circle
+      const icon = L.divIcon({
+        html: `
+          <div style="position: relative;">
+            <div style="width: 24px; height: 24px; border-radius: 50%; background: #f97316; border: 3px solid white; box-shadow: 0 0 10px rgba(249, 115, 22, 0.5); animation: pulse 2s infinite;"></div>
+            <div style="position: absolute; top: -8px; left: 50%; transform: translateX(-50%); background: #1f2937; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; white-space: nowrap;">
+              ${cell.max_hail_size ? `${cell.max_hail_size}"` : 'Active'}
+            </div>
+          </div>
+        `,
+        className: "",
+        iconSize: [24, 24],
+        iconAnchor: [12, 12],
+      })
+
+      const marker = L.marker([cell.lat, cell.lon], { icon })
+
+      marker.on("click", () => handleCellClick(cell))
+
+      marker.bindPopup(`
+        <div style="min-width: 180px;">
+          <div style="padding: 12px 16px; border-bottom: 1px solid #e5e7eb; background: rgba(249, 115, 22, 0.1);">
+            <strong>Active Cell #${cell.id}</strong>
+          </div>
+          <div style="padding: 12px 16px;">
+            <p><strong>Max Reflectivity:</strong> ${cell.max_reflectivity?.toFixed(1) || 'N/A'} dBZ</p>
+            <p><strong>MESH:</strong> ${cell.mesh ? `${cell.mesh.toFixed(1)}"` : 'N/A'}</p>
+            <p><strong>VIL:</strong> ${cell.vil?.toFixed(1) || 'N/A'} kg/m²</p>
+            <p><strong>Movement:</strong> ${cell.motion_speed?.toFixed(0) || 'N/A'} mph @ ${cell.motion_direction?.toFixed(0) || 'N/A'}°</p>
+            <p><strong>Stage:</strong> ${cell.lifecycle_stage || 'Unknown'}</p>
+          </div>
+        </div>
+      `)
+
+      activeCellsLayerRef.current?.addLayer(marker)
+
+      // Draw motion vector if available
+      if (cell.motion_speed && cell.motion_direction && layers.forecasts) {
+        const forecastMinutes = 30
+        const distanceMiles = (cell.motion_speed * forecastMinutes) / 60
+        const distanceMeters = distanceMiles * 1609.34
+
+        // Calculate forecast position
+        const bearing = cell.motion_direction * (Math.PI / 180)
+        const lat1 = cell.lat * (Math.PI / 180)
+        const lon1 = cell.lon * (Math.PI / 180)
+        const R = 6371000 // Earth radius in meters
+
+        const lat2 = Math.asin(
+          Math.sin(lat1) * Math.cos(distanceMeters / R) +
+          Math.cos(lat1) * Math.sin(distanceMeters / R) * Math.cos(bearing)
+        )
+        const lon2 = lon1 + Math.atan2(
+          Math.sin(bearing) * Math.sin(distanceMeters / R) * Math.cos(lat1),
+          Math.cos(distanceMeters / R) - Math.sin(lat1) * Math.sin(lat2)
+        )
+
+        const forecastLat = lat2 * (180 / Math.PI)
+        const forecastLon = lon2 * (180 / Math.PI)
+
+        // Draw motion vector line
+        const line = L.polyline(
+          [[cell.lat, cell.lon], [forecastLat, forecastLon]],
+          {
+            color: "#f97316",
+            weight: 2,
+            dashArray: "5, 5",
+            opacity: 0.7,
+          }
+        )
+
+        // Forecast position circle
+        const forecastCircle = L.circle([forecastLat, forecastLon], {
+          radius: 3000,
+          color: "#f97316",
+          fillColor: "rgba(249, 115, 22, 0.2)",
+          fillOpacity: 0.3,
+          weight: 1,
+          dashArray: "3, 3",
+        })
+
+        forecastCircle.bindPopup(`
+          <div style="text-align: center;">
+            <strong>30-min Forecast</strong><br/>
+            Cell #${cell.id}
+          </div>
+        `)
+
+        forecastLayerRef.current?.addLayer(line)
+        forecastLayerRef.current?.addLayer(forecastCircle)
+      }
+    })
+  }, [activeCells, layers.activeCells, layers.forecasts, handleCellClick])
+
+  // Render forecasts layer
+  useEffect(() => {
+    if (!forecastLayerRef.current || !mapInstanceRef.current) return
+
+    if (layers.forecasts) {
+      forecastLayerRef.current.addTo(mapInstanceRef.current)
+    } else {
+      forecastLayerRef.current.remove()
+    }
+  }, [layers.forecasts])
 
   // Render leads with clustering
   useEffect(() => {
@@ -357,49 +536,21 @@ export function HailMapPage() {
     updateStats()
   }, [leads, layers.leads, updateStats, handleLeadClick])
 
-  // Render territories
-  useEffect(() => {
-    if (!territoryLayerRef.current) return
-
-    territoryLayerRef.current.clearLayers()
-
-    if (!layers.territories) return
-
-    SAMPLE_TERRITORIES.forEach((territory) => {
-      const polygon = L.polygon(territory.bounds, {
-        color: "#3b82f6",
-        fillColor: "rgba(59, 130, 246, 0.1)",
-        fillOpacity: 0.2,
-        weight: 2,
-        dashArray: "5, 5",
-      })
-
-      polygon.bindPopup(`
-        <div style="min-width: 150px;">
-          <div style="padding: 12px 16px; border-bottom: 1px solid #e5e7eb;">
-            <strong>${territory.name}</strong>
-          </div>
-          <div style="padding: 12px 16px;">
-            <p><strong>Rep:</strong> ${territory.rep}</p>
-            <p><strong>Leads:</strong> ${territory.lead_count}</p>
-          </div>
-        </div>
-      `)
-
-      territoryLayerRef.current?.addLayer(polygon)
-    })
-  }, [layers.territories])
-
-  // Render radar coverage
+  // Render radar coverage from real API
   useEffect(() => {
     if (!radarLayerRef.current || !mapInstanceRef.current) return
 
     radarLayerRef.current.clearLayers()
 
-    if (layers.radar) {
-      RADAR_SITES.forEach((site) => {
+    if (layers.radar && radars.length > 0) {
+      radars.forEach((site) => {
+        if (site.lat == null || site.lon == null) return
+
+        const range = 230 // Default NEXRAD range in km
+        const rangeMeters = range * 1000
+
         const circle = L.circle([site.lat, site.lon], {
-          radius: site.range * 1609.34, // Convert miles to meters
+          radius: rangeMeters,
           color: "#60a5fa",
           fillColor: "rgba(96, 165, 250, 0.15)",
           fillOpacity: 0.2,
@@ -409,9 +560,9 @@ export function HailMapPage() {
 
         circle.bindPopup(`
           <div style="min-width: 120px; text-align: center;">
-            <strong>${site.id}</strong><br/>
+            <strong>${site.site_code}</strong><br/>
             ${site.name}<br/>
-            <small>${site.range} mi range</small>
+            <small>${site.state}</small>
           </div>
         `)
 
@@ -433,10 +584,12 @@ export function HailMapPage() {
     } else {
       radarLayerRef.current.remove()
     }
-  }, [layers.radar])
+  }, [layers.radar, radars])
 
   const handleRefresh = () => {
     refetchEvents()
+    refetchSwaths()
+    refetchCells()
     refetchLeads()
   }
 
@@ -477,9 +630,15 @@ export function HailMapPage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <PageHeader
           title="Hail Map"
-          description="Hail swaths, territories, and leads visualization"
+          description="Real-time storm tracking, hail swaths, and lead visualization"
         />
         <div className="flex items-center gap-2">
+          {activeCells.length > 0 && (
+            <Badge variant="outline" className="flex items-center gap-2 text-orange-600 bg-orange-50">
+              <Zap className="w-3 h-3" />
+              {activeCells.length} Active Cells
+            </Badge>
+          )}
           <Badge variant="outline" className="flex items-center gap-2 text-green-600 bg-green-50">
             <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
             Live
@@ -494,7 +653,7 @@ export function HailMapPage() {
         <div ref={mapRef} style={{ width: "100%", height: "100%", position: "absolute", top: 0, left: 0 }} />
 
         {/* Layer Controls */}
-        <div className="absolute top-4 right-4 z-[1000] bg-card rounded-lg shadow-lg border p-3 min-w-[160px]">
+        <div className="absolute top-4 right-4 z-[1000] bg-card rounded-lg shadow-lg border p-3 min-w-[180px]">
           <div className="flex items-center gap-2 mb-3 text-xs font-semibold text-muted-foreground uppercase">
             <Layers className="h-4 w-4" />
             Layers
@@ -507,16 +666,28 @@ export function HailMapPage() {
                 onChange={() => toggleLayer("swaths")}
                 className="rounded"
               />
+              <CloudLightning className="h-3 w-3 text-yellow-500" />
               Hail Swaths
             </label>
             <label className="flex items-center gap-2 cursor-pointer text-sm">
               <input
                 type="checkbox"
-                checked={layers.territories}
-                onChange={() => toggleLayer("territories")}
+                checked={layers.activeCells}
+                onChange={() => toggleLayer("activeCells")}
                 className="rounded"
               />
-              Territories
+              <Zap className="h-3 w-3 text-orange-500" />
+              Active Cells
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer text-sm">
+              <input
+                type="checkbox"
+                checked={layers.forecasts}
+                onChange={() => toggleLayer("forecasts")}
+                className="rounded"
+              />
+              <Activity className="h-3 w-3 text-purple-500" />
+              Cell Forecasts
             </label>
             <label className="flex items-center gap-2 cursor-pointer text-sm">
               <input
@@ -525,6 +696,7 @@ export function HailMapPage() {
                 onChange={() => toggleLayer("leads")}
                 className="rounded"
               />
+              <MapPin className="h-3 w-3 text-blue-500" />
               Leads
             </label>
             <label className="flex items-center gap-2 cursor-pointer text-sm">
@@ -534,28 +706,43 @@ export function HailMapPage() {
                 onChange={() => toggleLayer("radar")}
                 className="rounded"
               />
-              <Radio className="h-3 w-3" />
-              Radar Coverage
+              <Radio className="h-3 w-3 text-blue-500" />
+              Radar Coverage ({radars.length})
             </label>
           </div>
         </div>
 
+        {/* Active Cells Alert */}
+        {activeCells.length > 0 && (
+          <div className="absolute top-4 left-4 z-[1000] bg-orange-500 text-white rounded-lg shadow-lg px-4 py-2 flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4" />
+            <span className="font-medium">{activeCells.length} Active Storm Cells Tracking</span>
+          </div>
+        )}
+
         {/* Stats Bar */}
-        <div className="absolute bottom-4 left-4 right-4 sm:left-auto sm:right-4 sm:w-80 bg-card rounded-lg shadow-lg border p-4 z-[1000]">
-          <div className="grid grid-cols-3 gap-4 text-center">
+        <div className="absolute bottom-4 left-4 right-4 sm:left-auto sm:right-4 sm:w-96 bg-card rounded-lg shadow-lg border p-4 z-[1000]">
+          <div className="grid grid-cols-4 gap-4 text-center">
             <div>
               <p className="text-2xl font-bold text-red-600 flex items-center justify-center gap-1">
                 <CloudLightning className="h-5 w-5" />
                 {stats.activeStorms}
               </p>
-              <p className="text-xs text-muted-foreground">Active (7d)</p>
+              <p className="text-xs text-muted-foreground">Storms (7d)</p>
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-orange-600 flex items-center justify-center gap-1">
+                <Zap className="h-5 w-5" />
+                {stats.activeCells}
+              </p>
+              <p className="text-xs text-muted-foreground">Active Cells</p>
             </div>
             <div>
               <p className="text-2xl font-bold text-blue-600 flex items-center justify-center gap-1">
                 <MapPin className="h-5 w-5" />
                 {stats.leadsInView}
               </p>
-              <p className="text-xs text-muted-foreground">Leads in View</p>
+              <p className="text-xs text-muted-foreground">Leads</p>
             </div>
             <div>
               <p className="text-2xl font-bold text-orange-600 flex items-center justify-center gap-1">
@@ -644,20 +831,6 @@ export function HailMapPage() {
                   </div>
                 )}
 
-                {/* Created Date */}
-                <div>
-                  <h4 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide mb-1">Created</h4>
-                  <p className="text-sm">
-                    {selectedLead.created_at
-                      ? new Date(selectedLead.created_at).toLocaleDateString("en-US", {
-                          year: "numeric",
-                          month: "long",
-                          day: "numeric",
-                        })
-                      : "Unknown"}
-                  </p>
-                </div>
-
                 {/* Action Buttons */}
                 <div className="space-y-3 pt-4 border-t">
                   <div className="grid grid-cols-2 gap-3">
@@ -715,6 +888,130 @@ export function HailMapPage() {
           )}
         </SheetContent>
       </Sheet>
+
+      {/* Storm Cell Detail Drawer */}
+      <Sheet open={cellDrawerOpen} onOpenChange={setCellDrawerOpen}>
+        <SheetContent className="w-[400px] sm:w-[450px] overflow-y-auto">
+          {selectedCell && (
+            <>
+              <SheetHeader className="pb-4 border-b">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <SheetTitle className="text-xl flex items-center gap-2">
+                      <Zap className="h-5 w-5 text-orange-500" />
+                      Storm Cell #{selectedCell.id}
+                    </SheetTitle>
+                    <p className="text-sm text-muted-foreground">
+                      {selectedCell.lifecycle_stage || 'Active'} Stage
+                    </p>
+                  </div>
+                  <Badge className="bg-orange-100 text-orange-700">
+                    {selectedCell.max_hail_size ? `${selectedCell.max_hail_size}" Hail` : 'Tracking'}
+                  </Badge>
+                </div>
+              </SheetHeader>
+
+              <div className="space-y-6 py-6">
+                {/* Radar Metrics */}
+                <div className="space-y-3">
+                  <h4 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">Radar Metrics</h4>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Card>
+                      <CardContent className="p-3 text-center">
+                        <div className="text-2xl font-bold text-red-600">
+                          {selectedCell.max_reflectivity?.toFixed(0) || '--'}
+                        </div>
+                        <div className="text-xs text-muted-foreground">Max dBZ</div>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardContent className="p-3 text-center">
+                        <div className="text-2xl font-bold text-purple-600">
+                          {selectedCell.mesh?.toFixed(1) || '--'}"
+                        </div>
+                        <div className="text-xs text-muted-foreground">MESH</div>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardContent className="p-3 text-center">
+                        <div className="text-2xl font-bold text-blue-600">
+                          {selectedCell.vil?.toFixed(0) || '--'}
+                        </div>
+                        <div className="text-xs text-muted-foreground">VIL kg/m²</div>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardContent className="p-3 text-center">
+                        <div className="text-2xl font-bold text-green-600">
+                          {selectedCell.echo_tops?.toFixed(0) || '--'}
+                        </div>
+                        <div className="text-xs text-muted-foreground">Echo Tops kft</div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                </div>
+
+                {/* Motion */}
+                <div className="space-y-3">
+                  <h4 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">Cell Motion</h4>
+                  <div className="p-4 bg-muted rounded-lg">
+                    <div className="flex justify-between mb-2">
+                      <span>Speed</span>
+                      <span className="font-medium">{selectedCell.motion_speed?.toFixed(0) || '--'} mph</span>
+                    </div>
+                    <div className="flex justify-between mb-2">
+                      <span>Direction</span>
+                      <span className="font-medium">{selectedCell.motion_direction?.toFixed(0) || '--'}°</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Track Duration</span>
+                      <span className="font-medium">{selectedCell.track_duration_minutes?.toFixed(0) || '--'} min</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Location */}
+                <div className="space-y-3">
+                  <h4 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">Location</h4>
+                  <div className="p-4 bg-muted rounded-lg">
+                    <div className="flex justify-between mb-2">
+                      <span>Latitude</span>
+                      <span className="font-mono">{selectedCell.lat?.toFixed(4)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Longitude</span>
+                      <span className="font-mono">{selectedCell.lon?.toFixed(4)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Actions */}
+                <div className="space-y-3 pt-4 border-t">
+                  <Button className="w-full" variant="outline" asChild>
+                    <a
+                      href={`https://www.google.com/maps?q=${selectedCell.lat},${selectedCell.lon}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      <MapPin className="h-4 w-4 mr-2" />
+                      View on Google Maps
+                    </a>
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
+
+      {/* Add CSS for pulse animation */}
+      <style>{`
+        @keyframes pulse {
+          0% { box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.7); }
+          70% { box-shadow: 0 0 0 15px rgba(249, 115, 22, 0); }
+          100% { box-shadow: 0 0 0 0 rgba(249, 115, 22, 0); }
+        }
+      `}</style>
     </div>
   )
 }

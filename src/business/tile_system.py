@@ -99,7 +99,6 @@ class SwathTileSystem:
 
         # Generate grid of tiles covering the bounding box
         tiles = []
-        tile_id = 0
 
         lat = min_lat
         while lat < max_lat + self.tile_size_lat:
@@ -120,8 +119,12 @@ class SwathTileSystem:
                     center_lat = (tile_min_lat + tile_max_lat) / 2
                     center_lon = (tile_min_lon + tile_max_lon) / 2
 
+                    # Use geographically unique tile ID based on center coordinates
+                    # This ensures consistent caching across different swath queries
+                    geo_tile_id = f"tile_{center_lat:.4f}_{center_lon:.4f}"
+
                     tiles.append(Tile(
-                        tile_id=f"tile_{tile_id}",
+                        tile_id=geo_tile_id,
                         center_lat=center_lat,
                         center_lon=center_lon,
                         min_lat=tile_min_lat,
@@ -130,7 +133,6 @@ class SwathTileSystem:
                         max_lon=tile_max_lon,
                         search_radius_miles=self.tile_size_miles * 0.75,  # Overlap slightly
                     ))
-                    tile_id += 1
 
                 lon += self.tile_size_lon
             lat += self.tile_size_lat

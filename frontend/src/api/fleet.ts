@@ -516,12 +516,15 @@ export const fleetLocationsApi = {
     }>('/api/fleet-locations/businesses/hail-affected', { params }),
 
   // Smart swath-based discovery - finds businesses INSIDE hail swath polygons
-  // Uses multiple data sources: OSM, Yellow Pages, BBB
+  // Uses multiple data sources: OSM, Foursquare, Yelp, HERE, TomTom, Google, Yellow Pages, BBB
   // Deduplicates, geocodes, and filters to swath polygons
   smartScrapeSwaths: (params: {
     event_ids: number[]
     buffer_miles?: number
     force_refresh?: boolean
+    // New sources parameter - recommended: ['osm', 'foursquare', 'yelp']
+    sources?: ('osm' | 'foursquare' | 'yelp' | 'here' | 'tomtom' | 'google' | 'yellowpages' | 'bbb')[]
+    // Legacy parameters (still supported)
     include_osm?: boolean
     include_yellowpages?: boolean
     include_bbb?: boolean
@@ -535,6 +538,11 @@ export const fleetLocationsApi = {
         from_cache: number
         newly_scraped: number
         osm_found: number
+        foursquare_found: number
+        yelp_found: number
+        here_found: number
+        tomtom_found: number
+        google_found: number
         yellowpages_found: number
         bbb_found: number
         geocoded: number
@@ -545,7 +553,30 @@ export const fleetLocationsApi = {
         total_vehicles: number
         events_processed: number
       }
+      api_status: {
+        foursquare: { configured: boolean; free_tier: string }
+        yelp: { configured: boolean; free_tier: string }
+        here: { configured: boolean; free_tier: string }
+        tomtom: { configured: boolean; free_tier: string }
+        google: { configured: boolean; free_tier: string }
+        osm: { configured: boolean; free_tier: string }
+      }
     }>('/api/fleet-locations/smart-scrape-swaths', params),
+
+  // Get API configuration status for all discovery sources
+  getApiStatus: () =>
+    apiGet<{
+      apis: {
+        foursquare: { configured: boolean; free_tier: string }
+        yelp: { configured: boolean; free_tier: string }
+        here: { configured: boolean; free_tier: string }
+        tomtom: { configured: boolean; free_tier: string }
+        google: { configured: boolean; free_tier: string }
+        osm: { configured: boolean; free_tier: string }
+      }
+      recommended: string[]
+      setup_instructions: Record<string, string>
+    }>('/api/fleet-locations/api-status'),
 
   // Mark a swath-discovered business as added to CRM
   markBusinessAddedToCRM: (businessId: number) =>
@@ -563,6 +594,7 @@ export const fleetLocationsApi = {
 
   // Tile-based discovery - complete coverage of irregular swath shapes
   // Uses small geographic tiles to ensure no businesses are missed
+  // NOTE: This is SLOW (1373 tiles = 45+ min). Use fastDiscover instead!
   tileDiscover: (params: {
     event_ids: number[]
     tile_size_miles?: number  // 0.25, 0.5 (default), or 1.0
@@ -595,6 +627,41 @@ export const fleetLocationsApi = {
         }
       }
     }>('/api/fleet-locations/tile-discover', params),
+
+  // HYBRID discovery - OSM + YellowPages + BBB + Manta
+  // 1 OSM query for all swaths + city-based queries = ~60 seconds
+  fastDiscover: (params: {
+    event_ids: number[]
+    force_refresh?: boolean
+    include_osm?: boolean      // default: true - OpenStreetMap (returns coords)
+    include_yp?: boolean       // default: true - Yellow Pages (by city)
+    include_bbb?: boolean      // default: true - BBB (by city)
+    include_manta?: boolean    // default: true - Manta (by city)
+  }) =>
+    apiPost<{
+      success: boolean
+      businesses: AffectedBusiness[]
+      stats: {
+        swaths_total: number
+        swaths_from_cache: number
+        osm_queries: number
+        osm_found: number
+        yp_found: number
+        bbb_found: number
+        manta_found: number
+        total_elements: number
+        total_found: number
+        duplicates_removed: number
+        total_vehicles: number
+        by_category: Record<string, number>
+        by_source: Record<string, number>
+      }
+      timing: {
+        total_seconds: number
+        osm_seconds: number
+        city_seconds: number
+      }
+    }>('/api/fleet-locations/fast-discover', params),
 }
 
 // ===== HAIL EVENTS DATE-BASED OVERLAY =====

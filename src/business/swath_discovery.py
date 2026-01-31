@@ -3,6 +3,11 @@ Smart Swath-Based Business Discovery
 =====================================
 Finds fleet businesses within hail swath polygons using multiple data sources:
 - OSM Overpass API (comprehensive, returns coordinates)
+- Foursquare Places API (100k/month free)
+- Yelp Fusion API (5k/day free)
+- HERE Places API (250k/month free)
+- TomTom Search API (2.5k/day free)
+- Google Places API ($200/month credit)
 - Yellow Pages (service businesses, requires geocoding)
 - BBB (accredited businesses, requires geocoding)
 
@@ -19,6 +24,11 @@ PDR Fleet Categories:
 - Medical: hospitals, clinics, veterinary
 - Government: police, fire, schools, post offices
 - Commercial: hotels, storage, rental companies
+
+Recommended API Usage:
+- Primary: OSM (unlimited), Foursquare, Yelp
+- Secondary: HERE, TomTom
+- Expensive: Google (use sparingly)
 """
 import json
 import math
@@ -35,6 +45,11 @@ from difflib import SequenceMatcher
 from src.radar.geo_utils import GeoUtils
 from src.fleet.scrapers.yellowpages import YellowPagesScraper
 from src.fleet.scrapers.bbb import BBBScraper
+from src.fleet.scrapers.foursquare_api import FoursquareAPI
+from src.fleet.apis.yelp_api import YelpAPI
+from src.fleet.apis.here_api import HereAPI
+from src.fleet.apis.tomtom_api import TomTomAPI
+from src.fleet.apis.google_places_api import GooglePlacesAPI
 
 logger = logging.getLogger('SwathDiscovery')
 
@@ -155,6 +170,13 @@ class SwathDiscoveryService:
         # Initialize scrapers
         self.yp_scraper = YellowPagesScraper(db_path)
         self.bbb_scraper = BBBScraper(db_path)
+
+        # Initialize API clients
+        self.foursquare = FoursquareAPI()
+        self.yelp = YelpAPI()
+        self.here = HereAPI()
+        self.tomtom = TomTomAPI()
+        self.google = GooglePlacesAPI()
 
         self._init_cache_table()
 
@@ -1128,6 +1150,7 @@ out center meta;'''
     def discover_for_events(self, event_ids: List[int],
                             buffer_miles: float = 1.0,
                             force_refresh: bool = False,
+                            sources: List[str] = None,
                             include_osm: bool = True,
                             include_yellowpages: bool = True,
                             include_bbb: bool = True) -> Dict:
@@ -1138,15 +1161,43 @@ out center meta;'''
             event_ids: List of hail event IDs to search
             buffer_miles: Extra buffer around swaths
             force_refresh: If True, ignore cache and re-scrape
-            include_osm: Search OpenStreetMap (has coordinates)
-            include_yellowpages: Search Yellow Pages (needs geocoding)
-            include_bbb: Search BBB (needs geocoding)
+            sources: List of source names to use. Options:
+                     ['osm', 'foursquare', 'yelp', 'here', 'tomtom', 'google', 'yellowpages', 'bbb']
+                     Default: ['osm', 'foursquare', 'yelp']
+            include_osm: (legacy) Search OpenStreetMap
+            include_yellowpages: (legacy) Search Yellow Pages
+            include_bbb: (legacy) Search BBB
 
         Returns:
             Dict with businesses, stats, and metadata
+
+        Recommended sources: ['osm', 'foursquare', 'yelp']
+        - OSM: Free unlimited, good base coverage
+        - Foursquare: 100k/month, excellent data
+        - Yelp: 150k/month, best for service companies
+
+        Additional sources: ['here', 'tomtom', 'google']
+        - HERE: 250k/month, good backup
+        - TomTom: 75k/month, decent coverage
+        - Google: $200 credit, most complete but costs money
         """
+        # Handle sources parameter (new style) or legacy bool params
+        if sources is None:
+            sources = []
+            if include_osm:
+                sources.append('osm')
+            if include_yellowpages:
+                sources.append('yellowpages')
+            if include_bbb:
+                sources.append('bbb')
+            # Default to also include foursquare and yelp if available
+            if self.foursquare.is_configured():
+                sources.append('foursquare')
+            if self.yelp.is_configured():
+                sources.append('yelp')
+
         logger.info(f"Starting multi-source discovery for {len(event_ids)} events")
-        logger.info(f"Sources: OSM={include_osm}, YP={include_yellowpages}, BBB={include_bbb}")
+        logger.info(f"Sources: {sources}")
 
         all_businesses = []
         stats = {
@@ -1155,6 +1206,11 @@ out center meta;'''
             'from_cache': 0,
             'newly_scraped': 0,
             'osm_found': 0,
+            'foursquare_found': 0,
+            'yelp_found': 0,
+            'here_found': 0,
+            'tomtom_found': 0,
+            'google_found': 0,
             'yellowpages_found': 0,
             'bbb_found': 0,
             'geocoded': 0,
@@ -1192,35 +1248,104 @@ out center meta;'''
                     continue
 
                 center_lat, center_lon, max_radius = search_area
-                search_radius = max_radius + buffer_miles
+                search_radius_miles = max_radius + buffer_miles
+                search_radius_meters = int(search_radius_miles * 1609.34)
 
                 # Extract city/state for YP/BBB
                 city, state = self._extract_city_state(swath.get('event_name', ''))
                 city_key = f"{city}_{state}".lower()
 
-                logger.info(f"Event {swath['event_id']}: {city}, {state} - {search_radius:.1f} mi radius")
+                logger.info(f"Event {swath['event_id']}: {city}, {state} - {search_radius_miles:.1f} mi radius")
 
                 # Collect all businesses from all sources for this swath
                 swath_businesses_raw = []
 
                 # 1. Search OSM (returns coordinates)
-                if include_osm:
+                if 'osm' in sources:
                     osm_results = self.search_osm_comprehensive(
-                        center_lat, center_lon, search_radius
+                        center_lat, center_lon, search_radius_miles
                     )
                     stats['osm_found'] += len(osm_results)
                     swath_businesses_raw.extend(osm_results)
                     logger.info(f"  OSM: {len(osm_results)} businesses")
 
-                # 2. Search Yellow Pages (for service businesses)
-                if include_yellowpages and city and state and city_key not in scraped_cities:
+                # 2. Search Foursquare
+                if 'foursquare' in sources and self.foursquare.is_configured():
+                    try:
+                        fs_results = self.foursquare.search_all_fleet_categories(
+                            center_lat, center_lon, search_radius_meters
+                        )
+                        # Normalize field names
+                        for biz in fs_results:
+                            if 'latitude' not in biz and 'lat' in biz:
+                                biz['latitude'] = biz.get('lat')
+                            if 'longitude' not in biz and 'lon' in biz:
+                                biz['longitude'] = biz.get('lon')
+                            if 'longitude' not in biz and 'longitude' in biz:
+                                pass  # already correct
+                        stats['foursquare_found'] += len(fs_results)
+                        swath_businesses_raw.extend(fs_results)
+                        logger.info(f"  Foursquare: {len(fs_results)} businesses")
+                    except Exception as e:
+                        logger.warning(f"  Foursquare error: {e}")
+
+                # 3. Search Yelp
+                if 'yelp' in sources and self.yelp.is_configured():
+                    try:
+                        yelp_results = self.yelp.search_all_categories(
+                            center_lat, center_lon, search_radius_meters
+                        )
+                        stats['yelp_found'] += len(yelp_results)
+                        swath_businesses_raw.extend(yelp_results)
+                        logger.info(f"  Yelp: {len(yelp_results)} businesses")
+                    except Exception as e:
+                        logger.warning(f"  Yelp error: {e}")
+
+                # 4. Search HERE
+                if 'here' in sources and self.here.is_configured():
+                    try:
+                        here_results = self.here.search_all_categories(
+                            center_lat, center_lon, search_radius_meters
+                        )
+                        stats['here_found'] += len(here_results)
+                        swath_businesses_raw.extend(here_results)
+                        logger.info(f"  HERE: {len(here_results)} businesses")
+                    except Exception as e:
+                        logger.warning(f"  HERE error: {e}")
+
+                # 5. Search TomTom
+                if 'tomtom' in sources and self.tomtom.is_configured():
+                    try:
+                        tt_results = self.tomtom.search_all_categories(
+                            center_lat, center_lon, search_radius_meters
+                        )
+                        stats['tomtom_found'] += len(tt_results)
+                        swath_businesses_raw.extend(tt_results)
+                        logger.info(f"  TomTom: {len(tt_results)} businesses")
+                    except Exception as e:
+                        logger.warning(f"  TomTom error: {e}")
+
+                # 6. Search Google (use sparingly - costs money)
+                if 'google' in sources and self.google.is_configured():
+                    try:
+                        google_results = self.google.search_all_categories(
+                            center_lat, center_lon, search_radius_meters
+                        )
+                        stats['google_found'] += len(google_results)
+                        swath_businesses_raw.extend(google_results)
+                        logger.info(f"  Google: {len(google_results)} businesses")
+                    except Exception as e:
+                        logger.warning(f"  Google error: {e}")
+
+                # 7. Search Yellow Pages (for service businesses)
+                if 'yellowpages' in sources and city and state and city_key not in scraped_cities:
                     yp_results = self.search_yellowpages(city, state, max_per_term=1)
                     stats['yellowpages_found'] += len(yp_results)
                     swath_businesses_raw.extend(yp_results)
                     logger.info(f"  Yellow Pages: {len(yp_results)} businesses")
 
-                # 3. Search BBB (for accredited businesses)
-                if include_bbb and city and state and city_key not in scraped_cities:
+                # 8. Search BBB (for accredited businesses)
+                if 'bbb' in sources and city and state and city_key not in scraped_cities:
                     bbb_results = self.search_bbb(city, state, max_per_category=1)
                     stats['bbb_found'] += len(bbb_results)
                     swath_businesses_raw.extend(bbb_results)
@@ -1230,13 +1355,13 @@ out center meta;'''
                 if city and state:
                     scraped_cities.add(city_key)
 
-                # 4. Deduplicate across sources
+                # 9. Deduplicate across sources
                 pre_dedup = len(swath_businesses_raw)
                 swath_businesses_deduped = self._deduplicate_businesses(swath_businesses_raw)
                 stats['duplicates_removed'] += (pre_dedup - len(swath_businesses_deduped))
                 logger.info(f"  After dedup: {len(swath_businesses_deduped)} (removed {pre_dedup - len(swath_businesses_deduped)})")
 
-                # 5. Geocode businesses without coordinates
+                # 10. Geocode businesses without coordinates
                 businesses_needing_geocode = [b for b in swath_businesses_deduped if not b.get('latitude')]
                 if businesses_needing_geocode:
                     logger.info(f"  Geocoding {len(businesses_needing_geocode)} businesses...")
@@ -1245,12 +1370,12 @@ out center meta;'''
                         (center_lat, center_lon)
                     )
                     geocoded_count = sum(1 for b in swath_businesses_geocoded
-                                        if b.get('latitude') and b.get('source') != 'osm')
+                                        if b.get('latitude') and b.get('source') not in ['osm', 'foursquare', 'yelp', 'here', 'tomtom', 'google'])
                     stats['geocoded'] += geocoded_count
                 else:
                     swath_businesses_geocoded = swath_businesses_deduped
 
-                # 6. Filter to swath polygon (point-in-polygon)
+                # 11. Filter to swath polygon (point-in-polygon)
                 swath_businesses_final = []
                 seen_names = set(b['name'].lower() for b in all_businesses)
 
@@ -1289,7 +1414,7 @@ out center meta;'''
                 stats['events_processed'] += 1
 
                 # Rate limit between events
-                time.sleep(2)
+                time.sleep(1)
 
         # Calculate final stats
         stats['total_found'] = len(all_businesses)
@@ -1316,13 +1441,41 @@ out center meta;'''
         all_businesses.sort(key=lambda x: (x.get('tier', 3), -x.get('estimated_vehicles', 0)))
 
         logger.info(f"Discovery complete: {len(all_businesses)} total businesses")
-        logger.info(f"Sources: OSM={stats.get('osm_found',0)}, YP={stats.get('yellowpages_found',0)}, BBB={stats.get('bbb_found',0)}")
         logger.info(f"Final by source: {stats['by_source']}")
 
         return {
             'success': True,
             'businesses': all_businesses,
             'stats': stats,
+        }
+
+    def get_api_status(self) -> Dict:
+        """Get the configuration status of all APIs."""
+        return {
+            'foursquare': {
+                'configured': self.foursquare.is_configured(),
+                'free_tier': '100,000 calls/month',
+            },
+            'yelp': {
+                'configured': self.yelp.is_configured(),
+                'free_tier': '5,000 calls/day',
+            },
+            'here': {
+                'configured': self.here.is_configured(),
+                'free_tier': '250,000 calls/month',
+            },
+            'tomtom': {
+                'configured': self.tomtom.is_configured(),
+                'free_tier': '2,500 calls/day',
+            },
+            'google': {
+                'configured': self.google.is_configured(),
+                'free_tier': '$200/month credit',
+            },
+            'osm': {
+                'configured': True,  # Always available
+                'free_tier': 'Unlimited',
+            },
         }
 
     def add_to_crm(self, business_id: int) -> bool:

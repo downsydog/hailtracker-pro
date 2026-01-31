@@ -25,6 +25,8 @@ from flask import Blueprint, request, jsonify, g
 from src.core.auth.decorators import login_required, require_any_permission
 import os
 import logging
+import sqlite3
+import json
 
 logger = logging.getLogger('FleetLocationsAPI')
 
@@ -1307,8 +1309,13 @@ def smart_scrape_swaths():
     """
     Discover businesses within hail swath polygons using multiple data sources.
 
-    Data Sources:
-    - OSM/Overpass: 80+ categories, returns coordinates directly
+    Data Sources (FREE APIs):
+    - OSM/Overpass: 80+ categories, unlimited, returns coordinates directly
+    - Foursquare: 100k/month free, excellent business data
+    - Yelp: 5k/day free, best for service businesses
+    - HERE: 250k/month free, good backup source
+    - TomTom: 2.5k/day free, decent coverage
+    - Google Places: $200/month credit, most complete but costs money
     - Yellow Pages: Service businesses (landscaping, HVAC, plumbing, etc.)
     - BBB: Accredited businesses (higher quality leads)
 
@@ -1316,7 +1323,7 @@ def smart_scrape_swaths():
     - Comprehensive business category search
     - Full contact info (phone, website, email, address)
     - Deduplication across sources
-    - Geocoding for YP/BBB results
+    - Geocoding for non-API results
     - Point-in-polygon filtering
     - Database caching
 
@@ -1325,10 +1332,22 @@ def smart_scrape_swaths():
         "event_ids": [80812, 80801, ...],  // Hail event IDs to search
         "buffer_miles": 1,                  // Extra buffer around swaths (default: 1)
         "force_refresh": false,             // If true, ignore cache and re-scrape
-        "include_osm": true,                // Search OSM/Overpass (default: true)
-        "include_yellowpages": true,        // Search Yellow Pages (default: true)
-        "include_bbb": true                 // Search BBB (default: true)
+        "sources": ["osm", "foursquare", "yelp"],  // API sources to use (new style)
+        // Legacy parameters (still supported):
+        "include_osm": true,
+        "include_yellowpages": true,
+        "include_bbb": true
     }
+
+    Available sources:
+    - "osm": OpenStreetMap (unlimited) - RECOMMENDED
+    - "foursquare": Foursquare Places (100k/mo) - RECOMMENDED
+    - "yelp": Yelp Fusion (5k/day) - RECOMMENDED
+    - "here": HERE Places (250k/mo) - OPTIONAL
+    - "tomtom": TomTom Search (2.5k/day) - OPTIONAL
+    - "google": Google Places ($200 credit) - USE SPARINGLY
+    - "yellowpages": Yellow Pages scraper - OPTIONAL
+    - "bbb": BBB scraper - OPTIONAL
 
     Returns:
     {
@@ -1337,14 +1356,24 @@ def smart_scrape_swaths():
         "stats": {
             "total_found": 150,
             "osm_found": 85,
-            "yellowpages_found": 120,
-            "bbb_found": 45,
+            "foursquare_found": 65,
+            "yelp_found": 45,
+            "here_found": 0,
+            "tomtom_found": 0,
+            "google_found": 0,
+            "yellowpages_found": 0,
+            "bbb_found": 0,
             "duplicates_removed": 75,
             "geocoded": 25,
             "final_in_swath": 150,
             "by_category": {"car_dealership": 8, "landscaping": 12, ...},
-            "by_source": {"osm": 100, "yellowpages": 35, "bbb": 15},
+            "by_source": {"osm": 100, "foursquare": 35, "yelp": 15},
             "total_vehicles": 4500
+        },
+        "api_status": {
+            "foursquare": {"configured": true, "free_tier": "100,000 calls/month"},
+            "yelp": {"configured": true, "free_tier": "5,000 calls/day"},
+            ...
         }
     }
     """
@@ -1356,6 +1385,11 @@ def smart_scrape_swaths():
     event_ids = data.get('event_ids', [])
     buffer_miles = data.get('buffer_miles', 1.0)
     force_refresh = data.get('force_refresh', False)
+
+    # New sources parameter (preferred)
+    sources = data.get('sources')
+
+    # Legacy parameters (for backward compatibility)
     include_osm = data.get('include_osm', True)
     include_yellowpages = data.get('include_yellowpages', True)
     include_bbb = data.get('include_bbb', True)
@@ -1365,12 +1399,16 @@ def smart_scrape_swaths():
 
     try:
         logger.info(f"Smart swath discovery for {len(event_ids)} events")
-        logger.info(f"Sources: OSM={include_osm}, YP={include_yellowpages}, BBB={include_bbb}")
+        if sources:
+            logger.info(f"Sources: {sources}")
+        else:
+            logger.info(f"Legacy sources: OSM={include_osm}, YP={include_yellowpages}, BBB={include_bbb}")
 
         result = service.discover_for_events(
             event_ids=event_ids,
             buffer_miles=buffer_miles,
             force_refresh=force_refresh,
+            sources=sources,  # New parameter
             include_osm=include_osm,
             include_yellowpages=include_yellowpages,
             include_bbb=include_bbb
@@ -1403,10 +1441,14 @@ def smart_scrape_swaths():
                 'event_id': biz.get('event_id'),
             })
 
+        # Get API status for frontend display
+        api_status = service.get_api_status()
+
         return jsonify({
             'success': True,
             'businesses': businesses,
             'stats': result.get('stats', {}),
+            'api_status': api_status,
         })
 
     except Exception as e:
@@ -1414,6 +1456,27 @@ def smart_scrape_swaths():
         logger.error(f"Smart scrape error: {e}")
         logger.error(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
+
+
+@fleet_locations_api_bp.route('/api-status')
+@login_required
+def get_api_status():
+    """Get configuration status of all discovery APIs."""
+    service = get_swath_discovery_service()
+    if not service:
+        return jsonify({'error': 'Discovery service not available'}), 503
+
+    return jsonify({
+        'apis': service.get_api_status(),
+        'recommended': ['osm', 'foursquare', 'yelp'],
+        'setup_instructions': {
+            'foursquare': 'Set FOURSQUARE_API_KEY in .env (get key at https://foursquare.com/developers)',
+            'yelp': 'Set YELP_API_KEY in .env (get key at https://www.yelp.com/developers)',
+            'here': 'Set HERE_API_KEY in .env (get key at https://developer.here.com)',
+            'tomtom': 'Set TOMTOM_API_KEY in .env (get key at https://developer.tomtom.com)',
+            'google': 'Set GOOGLE_PLACES_API_KEY in .env (get key at https://console.cloud.google.com)',
+        }
+    })
 
 
 @fleet_locations_api_bp.route('/swath-businesses/<int:business_id>/add-to-crm', methods=['POST'])
@@ -1508,9 +1571,11 @@ def tile_discover_businesses():
     }
 
     Available sources:
-    - "osm": OpenStreetMap (comprehensive, has coordinates)
-    - "bbb": Better Business Bureau (accredited businesses)
-    - "yellowpages": Yellow Pages (may be blocked)
+    - "osm": OpenStreetMap (comprehensive, has coordinates) - WORKING
+    - "bbb": Better Business Bureau (accredited businesses) - WORKING
+    - "yellowpages": Yellow Pages (may be blocked) - BLOCKED
+    - "manta": Manta.com business directory (may be blocked) - BLOCKED
+    - "foursquare": Foursquare Places API (needs API key) - READY
     - "google": Google Places (future - not implemented)
 
     Returns:
@@ -1533,6 +1598,11 @@ def tile_discover_businesses():
         }
     }
     """
+    print("=" * 60)
+    print(">>> /api/fleet-locations/tile-discover ENDPOINT REACHED <<<")
+    print(f">>> Request data: {request.get_json()}")
+    print("=" * 60)
+
     service = get_tile_discovery_service()
     if not service:
         return jsonify({'error': 'Tile discovery service not available'}), 503
@@ -1547,7 +1617,7 @@ def tile_discover_businesses():
         return jsonify({'error': 'event_ids is required'}), 400
 
     # Validate sources
-    valid_sources = ['osm', 'bbb', 'yellowpages', 'google']
+    valid_sources = ['osm', 'bbb', 'yellowpages', 'google', 'manta', 'foursquare']
     sources = [s for s in sources if s in valid_sources]
     if not sources:
         sources = ['osm']
@@ -1558,7 +1628,8 @@ def tile_discover_businesses():
 
         # Load swath polygons from database
         swaths = []
-        conn = sqlite3.connect(get_crm_db_path())
+        db_path = os.path.join(PROJECT_ROOT, 'data', 'hailtracker_crm.db')
+        conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         placeholders = ','.join('?' * len(event_ids))
         cursor = conn.execute(f'''
@@ -1639,6 +1710,162 @@ def tile_discover_businesses():
     except Exception as e:
         import traceback
         logger.error(f"Tile discovery error: {e}")
+        logger.error(traceback.format_exc())
+        return jsonify({'error': str(e)}), 500
+
+
+# =============================================================================
+# FAST SWATH-LEVEL DISCOVERY (OPTIMIZED)
+# =============================================================================
+
+@fleet_locations_api_bp.route('/fast-discover', methods=['POST'])
+@login_required
+@require_any_permission('leads.view_all', 'admin.access')
+def fast_discover_businesses():
+    """
+    HYBRID business discovery using multiple sources.
+
+    BEFORE: 28 swaths × 50 tiles = 1,373 API calls = 45+ minutes
+    AFTER:  1 OSM query + city-based YP/BBB/Manta = ~60 seconds
+
+    POST body:
+    {
+        "event_ids": [80812, 80801, ...],
+        "force_refresh": false,
+        "include_osm": true,
+        "include_yp": true,
+        "include_bbb": true,
+        "include_manta": true
+    }
+
+    Returns:
+    {
+        "success": true,
+        "businesses": [...],
+        "stats": {
+            "swaths_total": 28,
+            "osm_found": 50,
+            "yp_found": 30,
+            "bbb_found": 20,
+            "manta_found": 15,
+            "total_found": 100,
+            "total_vehicles": 3500
+        },
+        "timing": {
+            "total_seconds": 60,
+            "osm_seconds": 5,
+            "city_seconds": 55
+        }
+    }
+    """
+    print("=" * 60)
+    print(">>> /api/fleet-locations/fast-discover ENDPOINT REACHED <<<")
+    print(f">>> Request data: {request.get_json()}")
+    print("=" * 60)
+
+    try:
+        from src.business.fast_discovery import FastSwathDiscovery
+        service = FastSwathDiscovery()
+    except Exception as e:
+        logger.error(f"FastSwathDiscovery import error: {e}")
+        return jsonify({'error': 'Fast discovery service not available'}), 503
+
+    data = request.get_json() or {}
+    event_ids = data.get('event_ids', [])
+    force_refresh = data.get('force_refresh', False)
+
+    # Source options (all enabled by default)
+    include_osm = data.get('include_osm', True)
+    include_yp = data.get('include_yp', True)
+    include_bbb = data.get('include_bbb', True)
+    include_manta = data.get('include_manta', True)
+
+    if not event_ids:
+        return jsonify({'error': 'event_ids is required'}), 400
+
+    try:
+        logger.info(f"Fast discovery for {len(event_ids)} events")
+
+        # Load swath polygons from database
+        swaths = []
+        db_path = os.path.join(PROJECT_ROOT, 'data', 'hailtracker_crm.db')
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        placeholders = ','.join('?' * len(event_ids))
+        cursor = conn.execute(f'''
+            SELECT id, event_name, event_date, swath_polygon, max_hail_size
+            FROM hail_events
+            WHERE id IN ({placeholders})
+            AND swath_polygon IS NOT NULL
+        ''', event_ids)
+
+        for row in cursor:
+            try:
+                polygon = json.loads(row['swath_polygon'])
+                swaths.append({
+                    'event_id': row['id'],
+                    'event_name': row['event_name'],
+                    'event_date': row['event_date'],
+                    'max_hail_size': row['max_hail_size'],
+                    'polygon': polygon,
+                    **polygon
+                })
+            except Exception as e:
+                logger.debug(f"Skip invalid swath for event {row['id']}: {e}")
+
+        conn.close()
+
+        if not swaths:
+            return jsonify({
+                'success': True,
+                'businesses': [],
+                'stats': {'message': 'No valid swaths found'},
+            })
+
+        # Use hybrid discovery (OSM + YP/BBB/Manta)
+        result = service.discover_for_swaths(
+            swaths=swaths,
+            use_cache=not force_refresh,
+            include_osm=include_osm,
+            include_yp=include_yp,
+            include_bbb=include_bbb,
+            include_manta=include_manta
+        )
+
+        # Format businesses for frontend
+        businesses = []
+        for biz in result.get('businesses', []):
+            businesses.append({
+                'id': biz.get('id') or abs(hash(biz.get('name', '') + biz.get('address', ''))) % 1000000,
+                'name': biz.get('name', ''),
+                'address': biz.get('address', ''),
+                'city': biz.get('city', ''),
+                'state': biz.get('state', ''),
+                'zip': biz.get('zip', ''),
+                'phone': biz.get('phone', ''),
+                'website': biz.get('website', ''),
+                'email': biz.get('email', ''),
+                'category': biz.get('category', 'other'),
+                'subcategory': '',
+                'estimated_vehicles': biz.get('estimated_vehicles', 10),
+                'tier': biz.get('tier', 3),
+                'latitude': biz.get('latitude'),
+                'longitude': biz.get('longitude'),
+                'source': biz.get('source', 'osm'),
+                'osm_id': biz.get('osm_id', ''),
+                'added_to_crm': False,
+            })
+
+        return jsonify({
+            'success': True,
+            'businesses': businesses,
+            'stats': result.get('stats', {}),
+            'timing': result.get('timing', {}),
+        })
+
+    except Exception as e:
+        import traceback
+        logger.error(f"Fast discovery error: {e}")
         logger.error(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 

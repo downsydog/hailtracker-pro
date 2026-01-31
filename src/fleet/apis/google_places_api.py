@@ -1,0 +1,248 @@
+"""
+Google Places API Client
+========================
+Free tier: $200/month credit
+IMPORTANT: Uses pagination for complete coverage (60 result limit per query)
+Docs: https://developers.google.com/maps/documentation/places/web-service/nearby-search
+
+Setup:
+1. Go to https://console.cloud.google.com
+2. Create a project and enable Places API
+3. Create API key with Places API permissions
+4. Set environment variable: GOOGLE_PLACES_API_KEY=your_key_here
+"""
+
+import requests
+from typing import List, Dict
+import os
+import logging
+import time
+
+logger = logging.getLogger('GooglePlacesAPI')
+
+
+class GooglePlacesAPI:
+    """
+    Google Places API client.
+    Free tier: $200/month credit
+    IMPORTANT: Uses tiles for complete coverage (60 result limit per query)
+    """
+
+    BASE_URL = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
+
+    # Google place types
+    # Docs: https://developers.google.com/maps/documentation/places/web-service/supported_types
+    TYPES = [
+        'car_dealer', 'car_rental', 'car_repair', 'car_wash',
+        'gas_station', 'parking',
+        'local_government_office', 'police', 'fire_station',
+        'school', 'university',
+        'moving_company', 'storage',
+        'general_contractor', 'electrician', 'plumber', 'roofing_contractor',
+        'painter', 'locksmith',
+    ]
+
+    def __init__(self, api_key: str = None):
+        self.api_key = api_key or os.getenv('GOOGLE_PLACES_API_KEY')
+
+    def search_radius(
+        self,
+        lat: float,
+        lon: float,
+        radius_meters: int = 5000,
+        place_type: str = None,
+        keyword: str = None
+    ) -> List[Dict]:
+        """
+        Search for places within radius.
+
+        NOTE: Max 60 results per query. Use tiles for complete coverage.
+        """
+        if not self.api_key:
+            logger.warning("[Google] API key not configured")
+            return []
+
+        params = {
+            'location': f'{lat},{lon}',
+            'radius': radius_meters,
+            'key': self.api_key,
+        }
+
+        if place_type:
+            params['type'] = place_type
+
+        if keyword:
+            params['keyword'] = keyword
+
+        all_results = []
+
+        try:
+            # First page
+            response = requests.get(self.BASE_URL, params=params, timeout=15)
+
+            if response.status_code == 200:
+                data = response.json()
+
+                if data.get('status') not in ['OK', 'ZERO_RESULTS']:
+                    logger.error(f"[Google] Status: {data.get('status')} - {data.get('error_message', '')}")
+                    return []
+
+                all_results.extend(self._parse_results(data.get('results', [])))
+
+                # Get next pages (up to 60 total)
+                while data.get('next_page_token'):
+                    time.sleep(2)  # Required delay for next_page_token
+
+                    next_params = {
+                        'pagetoken': data['next_page_token'],
+                        'key': self.api_key,
+                    }
+
+                    response = requests.get(self.BASE_URL, params=next_params, timeout=15)
+
+                    if response.status_code == 200:
+                        data = response.json()
+                        all_results.extend(self._parse_results(data.get('results', [])))
+                    else:
+                        break
+
+                return all_results
+            elif response.status_code == 401:
+                logger.error("[Google] Invalid API key (401)")
+                return []
+            elif response.status_code == 429:
+                logger.error("[Google] Rate limit exceeded (429)")
+                return []
+            else:
+                logger.error(f"[Google] Error {response.status_code}")
+                return []
+
+        except requests.Timeout:
+            logger.error("[Google] Request timed out")
+            return []
+        except Exception as e:
+            logger.error(f"[Google] Error: {e}")
+            return []
+
+    def search_all_categories(self, lat: float, lon: float, radius_meters: int = 5000) -> List[Dict]:
+        """Search all relevant place types."""
+        all_results = []
+        seen_ids = set()
+
+        # Keywords that work well with Google Places
+        keywords = [
+            'landscaping', 'lawn care',
+            'hvac', 'air conditioning',
+            'plumber', 'plumbing',
+            'electrician',
+            'pest control',
+            'roofing',
+            'contractor',
+            'auto body', 'car dealer',
+            'towing',
+        ]
+
+        for keyword in keywords:
+            results = self.search_radius(lat, lon, radius_meters, keyword=keyword)
+
+            for biz in results:
+                if biz.get('google_id') not in seen_ids:
+                    seen_ids.add(biz.get('google_id'))
+                    all_results.append(biz)
+
+        return all_results
+
+    def _parse_results(self, results: list) -> List[Dict]:
+        """Parse Google Places results into standard format."""
+        parsed = []
+
+        for place in results:
+            location = place.get('geometry', {}).get('location', {})
+
+            parsed.append({
+                'name': place.get('name', ''),
+                'address': place.get('vicinity', ''),
+                'city': '',  # Not directly provided
+                'state': '',
+                'zip': '',
+                'phone': '',  # Requires Place Details API call
+                'website': '',  # Requires Place Details API call
+                'latitude': location.get('lat'),
+                'longitude': location.get('lng'),
+                'category': place.get('types', [''])[0] if place.get('types') else '',
+                'rating': place.get('rating'),
+                'source': 'google',
+                'google_id': place.get('place_id'),
+            })
+
+        return parsed
+
+    def get_place_details(self, place_id: str) -> Dict:
+        """
+        Get detailed info for a place (phone, website, etc.)
+        Note: Each call costs extra - use sparingly.
+        """
+        if not self.api_key:
+            return {}
+
+        url = "https://maps.googleapis.com/maps/api/place/details/json"
+        params = {
+            'place_id': place_id,
+            'fields': 'formatted_phone_number,website,formatted_address',
+            'key': self.api_key,
+        }
+
+        try:
+            response = requests.get(url, params=params, timeout=15)
+            if response.status_code == 200:
+                data = response.json()
+                result = data.get('result', {})
+                return {
+                    'phone': result.get('formatted_phone_number', ''),
+                    'website': result.get('website', ''),
+                    'address': result.get('formatted_address', ''),
+                }
+        except Exception as e:
+            logger.error(f"[Google] Error getting place details: {e}")
+
+        return {}
+
+    def is_configured(self) -> bool:
+        return bool(self.api_key)
+
+    def test_connection(self) -> Dict:
+        """Test API connection and key validity."""
+        if not self.api_key:
+            return {
+                'success': False,
+                'configured': False,
+                'message': 'Google Places API key not configured. Set GOOGLE_PLACES_API_KEY environment variable.'
+            }
+
+        try:
+            params = {
+                'location': '35.4676,-97.5164',
+                'radius': 1000,
+                'key': self.api_key,
+            }
+            response = requests.get(self.BASE_URL, params=params, timeout=15)
+            data = response.json()
+
+            if data.get('status') in ['OK', 'ZERO_RESULTS']:
+                return {
+                    'success': True,
+                    'configured': True,
+                    'message': 'Google Places API is working'
+                }
+            else:
+                return {
+                    'success': False,
+                    'configured': True,
+                    'message': f"API error: {data.get('status')} - {data.get('error_message', '')}"
+                }
+        except Exception as e:
+            return {
+                'success': False,
+                'configured': True,
+                'message': f'Connection error: {str(e)}'
+            }

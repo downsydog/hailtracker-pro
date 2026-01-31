@@ -214,7 +214,7 @@ class GooglePlacesAPI:
                         all_results.append(biz)
 
                 # Small delay to respect rate limits
-                time.sleep(0.05)
+                time.sleep(0.1)
 
             # Progress logging
             if (i + 1) % 10 == 0 or (i + 1) == total_tiles:
@@ -229,7 +229,7 @@ class GooglePlacesAPI:
     def search_swaths_with_tiles(
         self,
         swaths: List[Dict],
-        tile_size_miles: float = 0.5,
+        tile_size_miles: float = 0.25,
         keywords: List[str] = None
     ) -> List[Dict]:
         """

@@ -152,6 +152,117 @@ class GooglePlacesAPI:
 
         return all_results
 
+    def search_tiles(
+        self,
+        tiles: List[Dict],
+        keywords: List[str] = None,
+        progress_callback=None
+    ) -> List[Dict]:
+        """
+        Search Google Places using tiles for complete coverage.
+
+        Google returns max 60 results per query, so we break the area
+        into small tiles and query each one.
+
+        Args:
+            tiles: List of tile dicts with center_lat, center_lon, search_radius_miles
+            keywords: Keywords to search (defaults to fleet-relevant terms)
+            progress_callback: Optional callback(tiles_done, total_tiles, results_count)
+
+        Returns:
+            Deduplicated list of businesses
+        """
+        if not self.api_key:
+            logger.warning("[Google] API key not configured")
+            return []
+
+        if keywords is None:
+            keywords = [
+                'car dealer', 'auto dealer',
+                'auto body', 'body shop',
+                'landscaping', 'lawn care',
+                'hvac', 'plumber', 'electrician',
+                'roofing', 'contractor',
+            ]
+
+        all_results = []
+        seen_ids = set()
+
+        total_tiles = len(tiles)
+        logger.info(f"[Google] Searching {total_tiles} tiles with {len(keywords)} keywords...")
+
+        for i, tile in enumerate(tiles):
+            center_lat = tile.get('center_lat') or tile.get('lat')
+            center_lon = tile.get('center_lon') or tile.get('lon')
+            radius_miles = tile.get('search_radius_miles', 0.5)
+            radius_meters = int(radius_miles * 1609)
+
+            # Search each keyword for this tile
+            for keyword in keywords:
+                results = self.search_radius(
+                    center_lat,
+                    center_lon,
+                    radius_meters,
+                    keyword=keyword
+                )
+
+                # Dedupe as we go
+                for biz in results:
+                    google_id = biz.get('google_id')
+                    if google_id and google_id not in seen_ids:
+                        seen_ids.add(google_id)
+                        all_results.append(biz)
+
+                # Small delay to respect rate limits
+                time.sleep(0.05)
+
+            # Progress logging
+            if (i + 1) % 10 == 0 or (i + 1) == total_tiles:
+                logger.info(f"[Google] Searched {i + 1}/{total_tiles} tiles, found {len(all_results)} unique businesses")
+
+            if progress_callback:
+                progress_callback(i + 1, total_tiles, len(all_results))
+
+        logger.info(f"[Google] Total: {len(all_results)} unique businesses from {total_tiles} tiles")
+        return all_results
+
+    def search_swaths_with_tiles(
+        self,
+        swaths: List[Dict],
+        tile_size_miles: float = 0.5,
+        keywords: List[str] = None
+    ) -> List[Dict]:
+        """
+        Search Google Places within swath polygons using tile-based approach.
+
+        This is the recommended method for complete coverage within swaths.
+
+        Args:
+            swaths: List of GeoJSON swath polygons
+            tile_size_miles: Size of tiles (0.5 recommended)
+            keywords: Search keywords
+
+        Returns:
+            List of unique businesses within swaths
+        """
+        from src.business.tile_system import SwathTileSystem
+
+        # Generate tiles for all swaths
+        tile_system = SwathTileSystem(tile_size_miles=tile_size_miles)
+        tiles = tile_system.generate_tiles_for_multiple_swaths(swaths)
+
+        logger.info(f"[Google] Generated {len(tiles)} tiles for {len(swaths)} swaths")
+
+        if not tiles:
+            logger.warning("[Google] No tiles generated for swaths")
+            return []
+
+        # Convert Tile objects to dicts
+        tile_dicts = [t.to_dict() for t in tiles]
+
+        # Search all tiles
+        return self.search_tiles(tile_dicts, keywords=keywords)
+
     def _parse_results(self, results: list) -> List[Dict]:
         """Parse Google Places results into standard format."""
         parsed = []

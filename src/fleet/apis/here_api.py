@@ -67,7 +67,6 @@ class HereAPI:
             return []
 
         params = {
-            'at': f'{lat},{lon}',
             'limit': limit,
             'apiKey': self.api_key,
         }
@@ -75,8 +74,11 @@ class HereAPI:
         if query:
             params['q'] = query
 
+        # Use 'in' for circle search (mutually exclusive with 'at')
         if radius_meters:
             params['in'] = f'circle:{lat},{lon};r={radius_meters}'
+        else:
+            params['at'] = f'{lat},{lon}'
 
         try:
             response = requests.get(self.BASE_URL, params=params, timeout=15)

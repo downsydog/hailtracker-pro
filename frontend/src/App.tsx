@@ -1,4 +1,4 @@
-import { Routes, Route } from "react-router-dom"
+import { Routes, Route, Navigate } from "react-router-dom"
 import { PortalProvider } from "./contexts/portal-context"
 import { AppLayout } from "./layouts/app-layout"
 import { AuthLayout } from "./layouts/auth-layout"
@@ -103,6 +103,7 @@ function App() {
             {/* Protected app routes */}
             <Route element={<AppLayout />}>
               <Route path="/" element={<DashboardPage />} />
+              <Route path="/dashboard" element={<Navigate to="/" replace />} />
 
               {/* Jobs */}
               <Route path="/jobs" element={<JobsPage />} />

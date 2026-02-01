@@ -922,6 +922,299 @@ def get_customers():
     return jsonify({"customers": [], "total": 0})
 
 
+# =============================================================================
+# FLEET LOCATIONS ENDPOINTS
+# =============================================================================
+
+@app.route('/api/fleet-locations/tile-discover', methods=['POST'])
+def tile_discover():
+    """Tile-based business discovery within swath polygons."""
+    data = request.get_json() or {}
+    event_ids = data.get('event_ids', [])
+
+    # Return mock business data for testing
+    # In production, this would search for businesses within the swath polygons
+    mock_businesses = []
+
+    # Generate some mock businesses based on the events
+    if event_ids:
+        for i, event_id in enumerate(event_ids[:5]):  # Limit to 5 for mock
+            mock_businesses.extend([
+                {
+                    "id": i * 10 + 1,
+                    "name": f"ABC Auto Dealership #{event_id}",
+                    "address": f"{100 + i} Main St",
+                    "city": "Oklahoma City",
+                    "state": "OK",
+                    "zip": "73101",
+                    "phone": "405-555-0100",
+                    "website": "",
+                    "email": "",
+                    "category": "auto_dealership",
+                    "subcategory": "used_cars",
+                    "estimated_vehicles": 150,
+                    "tier": 1,
+                    "latitude": 35.4 + (i * 0.01),
+                    "longitude": -97.5 + (i * 0.01),
+                    "source": "mock",
+                    "added_to_crm": False,
+                    "event_id": event_id
+                },
+                {
+                    "id": i * 10 + 2,
+                    "name": f"City Fleet Services #{event_id}",
+                    "address": f"{200 + i} Commerce Ave",
+                    "city": "Norman",
+                    "state": "OK",
+                    "zip": "73019",
+                    "phone": "405-555-0200",
+                    "website": "",
+                    "email": "",
+                    "category": "fleet_service",
+                    "subcategory": "government",
+                    "estimated_vehicles": 75,
+                    "tier": 2,
+                    "latitude": 35.22 + (i * 0.01),
+                    "longitude": -97.44 + (i * 0.01),
+                    "source": "mock",
+                    "added_to_crm": False,
+                    "event_id": event_id
+                }
+            ])
+
+    return jsonify({
+        "success": True,
+        "businesses": mock_businesses,
+        "stats": {
+            "tiles_total": len(event_ids) * 10,
+            "tiles_searched": len(event_ids) * 10,
+            "tiles_from_cache": 0,
+            "by_source": {"mock": len(mock_businesses)},
+            "total_found": len(mock_businesses),
+            "duplicates_removed": 0,
+            "geocoded": len(mock_businesses),
+            "total_vehicles": sum(b["estimated_vehicles"] for b in mock_businesses),
+            "by_category": {"auto_dealership": len(event_ids), "fleet_service": len(event_ids)}
+        },
+        "tile_stats": {
+            "count": len(event_ids) * 10,
+            "tile_size_miles": 0.5,
+            "estimated_area_sq_miles": len(event_ids) * 25
+        }
+    })
+
+
+@app.route('/api/fleet-locations/fast-discover', methods=['POST'])
+def fast_discover():
+    """Fast hybrid business discovery."""
+    data = request.get_json() or {}
+    event_ids = data.get('event_ids', [])
+
+    mock_businesses = []
+    for i, event_id in enumerate(event_ids[:3]):
+        mock_businesses.append({
+            "id": i + 1,
+            "name": f"Quick Fleet Auto #{event_id}",
+            "address": f"{300 + i} Industrial Blvd",
+            "city": "Oklahoma City",
+            "state": "OK",
+            "zip": "73102",
+            "phone": "405-555-0300",
+            "category": "auto_dealership",
+            "estimated_vehicles": 200,
+            "tier": 1,
+            "latitude": 35.45 + (i * 0.01),
+            "longitude": -97.52 + (i * 0.01),
+            "source": "osm"
+        })
+
+    return jsonify({
+        "success": True,
+        "businesses": mock_businesses,
+        "stats": {
+            "swaths_total": len(event_ids),
+            "swaths_from_cache": 0,
+            "osm_queries": 1,
+            "osm_found": len(mock_businesses),
+            "total_found": len(mock_businesses),
+            "duplicates_removed": 0,
+            "total_vehicles": sum(b["estimated_vehicles"] for b in mock_businesses),
+            "by_category": {"auto_dealership": len(mock_businesses)},
+            "by_source": {"osm": len(mock_businesses)}
+        },
+        "timing": {
+            "total_seconds": 2.5,
+            "osm_seconds": 1.5,
+            "city_seconds": 1.0
+        }
+    })
+
+
+@app.route('/api/fleet-locations/smart-scrape-swaths', methods=['POST'])
+def smart_scrape_swaths():
+    """Smart swath-based business discovery."""
+    data = request.get_json() or {}
+    event_ids = data.get('event_ids', [])
+
+    mock_businesses = []
+    for i, event_id in enumerate(event_ids[:5]):
+        mock_businesses.append({
+            "id": i + 1,
+            "name": f"Enterprise Fleet #{event_id}",
+            "address": f"{400 + i} Airport Rd",
+            "city": "Oklahoma City",
+            "state": "OK",
+            "zip": "73159",
+            "phone": "405-555-0400",
+            "category": "car_rental",
+            "estimated_vehicles": 300,
+            "tier": 1,
+            "latitude": 35.39 + (i * 0.01),
+            "longitude": -97.60 + (i * 0.01),
+            "source": "foursquare"
+        })
+
+    return jsonify({
+        "success": True,
+        "businesses": mock_businesses,
+        "stats": {
+            "total_found": len(mock_businesses),
+            "cached": False,
+            "from_cache": 0,
+            "newly_scraped": len(mock_businesses),
+            "osm_found": 0,
+            "foursquare_found": len(mock_businesses),
+            "yelp_found": 0,
+            "geocoded": len(mock_businesses),
+            "duplicates_removed": 0,
+            "final_in_swath": len(mock_businesses),
+            "by_category": {"car_rental": len(mock_businesses)},
+            "by_source": {"foursquare": len(mock_businesses)},
+            "total_vehicles": sum(b["estimated_vehicles"] for b in mock_businesses),
+            "events_processed": len(event_ids)
+        },
+        "api_status": {
+            "foursquare": {"configured": True, "free_tier": "1000/day"},
+            "yelp": {"configured": False, "free_tier": "5000/day"},
+            "osm": {"configured": True, "free_tier": "unlimited"}
+        }
+    })
+
+
+@app.route('/api/fleet-locations')
+def get_fleet_locations():
+    """Get fleet locations."""
+    return jsonify({
+        "locations": [],
+        "total": 0,
+        "page": 1,
+        "per_page": 50,
+        "pages": 0
+    })
+
+
+@app.route('/api/fleet-locations/categories')
+def get_fleet_categories():
+    """Get fleet location categories."""
+    return jsonify({
+        "categories": [
+            {"category": "auto_dealership", "display_name": "Auto Dealerships", "location_count": 0, "total_vehicles": 0},
+            {"category": "car_rental", "display_name": "Car Rentals", "location_count": 0, "total_vehicles": 0},
+            {"category": "fleet_service", "display_name": "Fleet Services", "location_count": 0, "total_vehicles": 0}
+        ]
+    })
+
+
+@app.route('/api/fleet-locations/stats')
+def get_fleet_stats():
+    """Get fleet location stats."""
+    return jsonify({
+        "total_locations": 0,
+        "total_vehicles": 0,
+        "categories": 3,
+        "potential_revenue": 0,
+        "top_categories": []
+    })
+
+
+@app.route('/api/fleet-leads')
+def get_fleet_leads():
+    """Get fleet leads."""
+    return jsonify({
+        "leads": [],
+        "count": 0
+    })
+
+
+@app.route('/api/fleet-leads/stats')
+def get_fleet_leads_stats():
+    """Get fleet leads stats."""
+    return jsonify({
+        "by_status": [],
+        "pipeline": {"count": 0, "vehicles": 0, "value": 0},
+        "won": {"count": 0, "value": 0},
+        "hail_affected": {"count": 0, "vehicles": 0},
+        "followups_due": 0,
+        "recent_activity": 0,
+        "by_city": []
+    })
+
+
+@app.route('/api/hail-events/recent-significant')
+def get_recent_significant_v2():
+    """Get recent significant storms for the sidebar."""
+    try:
+        days = request.args.get('days', 90, type=int)
+        min_size = request.args.get('min_size', 1.0, type=float)
+        limit = request.args.get('limit', 30, type=int)
+
+        conn = get_db()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        cursor.execute("""
+            SELECT
+                DATE(st.event_date) as date,
+                COUNT(*) as total_events,
+                MAX(s.max_hail_size) as max_hail_size,
+                array_agg(DISTINCT s.state) as states_affected,
+                array_agg(DISTINCT s.city) as major_cities,
+                SUM(COALESCE(s.area_sq_miles, 0)) as total_area_sq_miles
+            FROM swaths s
+            JOIN storms st ON s.storm_id = st.id
+            WHERE s.max_hail_size >= %s
+              AND st.event_date >= CURRENT_DATE - INTERVAL '%s days'
+            GROUP BY DATE(st.event_date)
+            ORDER BY DATE(st.event_date) DESC
+            LIMIT %s
+        """, (min_size, days, limit))
+
+        storms = cursor.fetchall()
+        conn.close()
+
+        result = []
+        for storm in storms:
+            states = storm['states_affected'] or []
+            cities = storm['major_cities'] or []
+            result.append({
+                "date": storm['date'].isoformat() if storm.get('date') else None,
+                "total_events": storm['total_events'],
+                "max_hail_size": float(storm['max_hail_size']) if storm.get('max_hail_size') else 0,
+                "states_affected": [s for s in states if s],
+                "major_cities": [c for c in cities if c][:5],
+                "total_area_sq_miles": float(storm['total_area_sq_miles']) if storm.get('total_area_sq_miles') else 0,
+                "display_name": f"{cities[0] if cities else 'Storm'} - {storm['date'].strftime('%b %d, %Y') if storm.get('date') else ''}"
+            })
+
+        return jsonify({
+            "storms": result,
+            "count": len(result),
+            "days_back": days,
+            "min_size": min_size
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == '__main__':
     print("=" * 60)
     print("HailTracker Test API Server")

@@ -1,6 +1,4 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom"
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { AuthProvider } from "./contexts/auth-context"
+import { Routes, Route } from "react-router-dom"
 import { PortalProvider } from "./contexts/portal-context"
 import { AppLayout } from "./layouts/app-layout"
 import { AuthLayout } from "./layouts/auth-layout"
@@ -94,21 +92,9 @@ import {
   DealershipApiPage,
 } from "./pages/dealership"
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 1000 * 60 * 5, // 5 minutes
-      retry: 1,
-    },
-  },
-})
-
 function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <BrowserRouter>
-          <Routes>
+    <Routes>
             {/* Auth routes */}
             <Route element={<AuthLayout />}>
               <Route path="/login" element={<LoginPage />} />
@@ -272,10 +258,7 @@ function App() {
               <Route path="locations" element={<DealershipLocationsPage />} />
               <Route path="api" element={<DealershipApiPage />} />
             </Route>
-          </Routes>
-        </BrowserRouter>
-      </AuthProvider>
-    </QueryClientProvider>
+    </Routes>
   )
 }
 

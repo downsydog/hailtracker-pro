@@ -75,51 +75,51 @@ export interface InvoiceFilters {
 export const invoicesApi = {
   // List invoices with filters
   getInvoices: (filters?: InvoiceFilters) =>
-    apiGet<{ invoices: Invoice[]; total: number; page: number }>('/api/invoices', { params: filters }),
+    apiGet<{ invoices: Invoice[]; total: number; page: number }>('/invoices', { params: filters }),
 
   // Get single invoice with details
   getInvoice: (id: number) =>
-    apiGet<{ invoice: Invoice; items: InvoiceLineItem[]; payments: InvoicePayment[] }>(`/api/invoices/${id}`),
+    apiGet<{ invoice: Invoice; items: InvoiceLineItem[]; payments: InvoicePayment[] }>(`/invoices/${id}`),
 
   // Create new invoice
   createInvoice: (data: InvoiceCreateData) =>
-    apiPost<{ success: boolean; invoice_id: number; invoice_number: string }>('/api/invoices', data),
+    apiPost<{ success: boolean; invoice_id: number; invoice_number: string }>('/invoices', data),
 
   // Update invoice
   updateInvoice: (id: number, data: Partial<InvoiceCreateData>) =>
-    apiPut<{ success: boolean }>(`/api/invoices/${id}`, data),
+    apiPut<{ success: boolean }>(`/invoices/${id}`, data),
 
   // Delete invoice (only drafts)
   deleteInvoice: (id: number) =>
-    apiDelete<{ success: boolean }>(`/api/invoices/${id}`),
+    apiDelete<{ success: boolean }>(`/invoices/${id}`),
 
   // Send invoice to customer
   sendInvoice: (id: number, method?: 'email' | 'sms') =>
-    apiPost<{ success: boolean }>(`/api/invoices/${id}/send`, { method }),
+    apiPost<{ success: boolean }>(`/invoices/${id}/send`, { method }),
 
   // Mark invoice as paid
   markPaid: (id: number) =>
-    apiPost<{ success: boolean }>(`/api/invoices/${id}/mark-paid`),
+    apiPost<{ success: boolean }>(`/invoices/${id}/mark-paid`),
 
   // Record payment
   addPayment: (id: number, payment: Omit<InvoicePayment, 'id' | 'invoice_id' | 'created_at'>) =>
-    apiPost<{ success: boolean; payment_id: number }>(`/api/invoices/${id}/payments`, payment),
+    apiPost<{ success: boolean; payment_id: number }>(`/invoices/${id}/payments`, payment),
 
   // Delete payment
   deletePayment: (invoiceId: number, paymentId: number) =>
-    apiDelete<{ success: boolean }>(`/api/invoices/${invoiceId}/payments/${paymentId}`),
+    apiDelete<{ success: boolean }>(`/invoices/${invoiceId}/payments/${paymentId}`),
 
   // Generate PDF
   generatePdf: (id: number) =>
-    apiGet<Blob>(`/api/invoices/${id}/pdf`, { responseType: 'blob' }),
+    apiGet<Blob>(`/invoices/${id}/pdf`, { responseType: 'blob' }),
 
   // Create from estimate
   createFromEstimate: (estimateId: number) =>
-    apiPost<{ success: boolean; invoice_id: number }>(`/api/estimates/${estimateId}/create-invoice`),
+    apiPost<{ success: boolean; invoice_id: number }>(`/estimates/${estimateId}/create-invoice`),
 
   // Create from job
   createFromJob: (jobId: number) =>
-    apiPost<{ success: boolean; invoice_id: number }>(`/api/jobs/${jobId}/create-invoice`),
+    apiPost<{ success: boolean; invoice_id: number }>(`/jobs/${jobId}/create-invoice`),
 
   // Get invoice summary stats
   getStats: () =>
@@ -128,5 +128,5 @@ export const invoicesApi = {
       total_overdue: number
       total_this_month: number
       count_by_status: Record<string, number>
-    }>('/api/invoices/stats'),
+    }>('/invoices/stats'),
 }

@@ -142,50 +142,50 @@ export interface FleetStats {
 export const fleetApi = {
   // Get all fleet vehicles with current locations
   getVehicles: () =>
-    apiGet<{ vehicles: FleetVehicle[] }>('/api/fleet/vehicles'),
+    apiGet<{ vehicles: FleetVehicle[] }>('/fleet/vehicles'),
 
   // Get single vehicle details
   getVehicle: (id: number) =>
-    apiGet<FleetVehicle>(`/api/fleet/vehicles/${id}`),
+    apiGet<FleetVehicle>(`/fleet/vehicles/${id}`),
 
   // Update vehicle status
   updateVehicleStatus: (id: number, status: FleetVehicle['status'], notes?: string) =>
-    apiPost<{ success: boolean }>(`/api/fleet/vehicles/${id}/status`, { status, notes }),
+    apiPost<{ success: boolean }>(`/fleet/vehicles/${id}/status`, { status, notes }),
 
   // Update vehicle location (from mobile app)
   updateVehicleLocation: (id: number, lat: number, lng: number) =>
-    apiPost<{ success: boolean }>(`/api/fleet/vehicles/${id}/location`, { lat, lng }),
+    apiPost<{ success: boolean }>(`/fleet/vehicles/${id}/location`, { lat, lng }),
 
   // Assign vehicle to driver
   assignVehicle: (vehicleId: number, driverId: number) =>
-    apiPost<{ success: boolean }>(`/api/fleet/vehicles/${vehicleId}/assign`, { driver_id: driverId }),
+    apiPost<{ success: boolean }>(`/fleet/vehicles/${vehicleId}/assign`, { driver_id: driverId }),
 
   // Unassign vehicle
   unassignVehicle: (vehicleId: number) =>
-    apiPost<{ success: boolean }>(`/api/fleet/vehicles/${vehicleId}/unassign`),
+    apiPost<{ success: boolean }>(`/fleet/vehicles/${vehicleId}/unassign`),
 
   // Get all drivers with status
   getDrivers: () =>
-    apiGet<{ drivers: FleetDriver[] }>('/api/fleet/drivers'),
+    apiGet<{ drivers: FleetDriver[] }>('/fleet/drivers'),
 
   // Get driver details
   getDriver: (id: number) =>
-    apiGet<FleetDriver>(`/api/fleet/drivers/${id}`),
+    apiGet<FleetDriver>(`/fleet/drivers/${id}`),
 
   // Update driver status
   updateDriverStatus: (id: number, status: FleetDriver['status']) =>
-    apiPost<{ success: boolean }>(`/api/fleet/drivers/${id}/status`, { status }),
+    apiPost<{ success: boolean }>(`/fleet/drivers/${id}/status`, { status }),
 
   // Update driver location (from mobile app)
   updateDriverLocation: (id: number, lat: number, lng: number) =>
-    apiPost<{ success: boolean }>(`/api/fleet/drivers/${id}/location`, { lat, lng }),
+    apiPost<{ success: boolean }>(`/fleet/drivers/${id}/location`, { lat, lng }),
 
   // Routes
   getRoutes: (date?: string) =>
-    apiGet<{ routes: FleetRoute[] }>('/api/fleet/routes', { params: { date } }),
+    apiGet<{ routes: FleetRoute[] }>('/fleet/routes', { params: { date } }),
 
   getRoute: (id: number) =>
-    apiGet<FleetRoute>(`/api/fleet/routes/${id}`),
+    apiGet<FleetRoute>(`/fleet/routes/${id}`),
 
   createRoute: (data: {
     driver_id: number
@@ -198,37 +198,37 @@ export const fleetApi = {
       estimated_duration_minutes?: number
     }>
   }) =>
-    apiPost<{ success: boolean; route_id: number }>('/api/fleet/routes', data),
+    apiPost<{ success: boolean; route_id: number }>('/fleet/routes', data),
 
   updateRoute: (id: number, data: Partial<FleetRoute>) =>
-    apiPut<{ success: boolean }>(`/api/fleet/routes/${id}`, data),
+    apiPut<{ success: boolean }>(`/fleet/routes/${id}`, data),
 
   // Start route
   startRoute: (id: number) =>
-    apiPost<{ success: boolean }>(`/api/fleet/routes/${id}/start`),
+    apiPost<{ success: boolean }>(`/fleet/routes/${id}/start`),
 
   // Complete route stop
   completeStop: (routeId: number, stopId: number, notes?: string) =>
-    apiPost<{ success: boolean }>(`/api/fleet/routes/${routeId}/stops/${stopId}/complete`, { notes }),
+    apiPost<{ success: boolean }>(`/fleet/routes/${routeId}/stops/${stopId}/complete`, { notes }),
 
   // Skip route stop
   skipStop: (routeId: number, stopId: number, reason: string) =>
-    apiPost<{ success: boolean }>(`/api/fleet/routes/${routeId}/stops/${stopId}/skip`, { reason }),
+    apiPost<{ success: boolean }>(`/fleet/routes/${routeId}/stops/${stopId}/skip`, { reason }),
 
   // Optimize route order
   optimizeRoute: (id: number) =>
-    apiPost<{ success: boolean; optimized_stops: FleetRouteStop[] }>(`/api/fleet/routes/${id}/optimize`),
+    apiPost<{ success: boolean; optimized_stops: FleetRouteStop[] }>(`/fleet/routes/${id}/optimize`),
 
   // Get fleet stats
   getStats: () =>
-    apiGet<FleetStats>('/api/fleet/stats'),
+    apiGet<FleetStats>('/fleet/stats'),
 
   // Get real-time positions (for map refresh)
   getRealTimePositions: () =>
     apiGet<{
       vehicles: Array<{ id: number; lat: number; lng: number; status: string }>
       drivers: Array<{ id: number; lat: number; lng: number; status: string }>
-    }>('/api/fleet/positions'),
+    }>('/fleet/positions'),
 
   // Get directions between points
   getDirections: (origin: { lat: number; lng: number }, destination: { lat: number; lng: number }) =>
@@ -236,7 +236,7 @@ export const fleetApi = {
       distance_miles: number
       duration_minutes: number
       polyline: string
-    }>('/api/fleet/directions', {
+    }>('/fleet/directions', {
       params: {
         origin_lat: origin.lat,
         origin_lng: origin.lng,
@@ -262,17 +262,17 @@ export const fleetLocationsApi = {
       page: number
       per_page: number
       pages: number
-    }>('/api/fleet-locations', { params }),
+    }>('/fleet-locations', { params }),
 
   // Search locations
   search: (query: string, limit?: number) =>
-    apiGet<{ locations: FleetLocation[] }>('/api/fleet-locations/search', {
+    apiGet<{ locations: FleetLocation[] }>('/fleet-locations/search', {
       params: { q: query, limit }
     }),
 
   // Get locations within bounding box
   getInBbox: (bbox: { south: number; west: number; north: number; east: number }, categories?: string[]) =>
-    apiGet<{ locations: FleetLocation[] }>('/api/fleet-locations/bbox', {
+    apiGet<{ locations: FleetLocation[] }>('/fleet-locations/bbox', {
       params: { ...bbox, category: categories }
     }),
 
@@ -282,17 +282,17 @@ export const fleetLocationsApi = {
     min_vehicles?: number
     categories?: string[]
   }) =>
-    apiGet<{ locations: FleetLocation[] }>('/api/fleet-locations/nearby', {
+    apiGet<{ locations: FleetLocation[] }>('/fleet-locations/nearby', {
       params: { lat, lon, ...options, category: options?.categories }
     }),
 
   // Get category summary
   getCategories: () =>
-    apiGet<{ categories: FleetLocationCategory[] }>('/api/fleet-locations/categories'),
+    apiGet<{ categories: FleetLocationCategory[] }>('/fleet-locations/categories'),
 
   // Get overall stats
   getStats: () =>
-    apiGet<FleetLocationStats>('/api/fleet-locations/stats'),
+    apiGet<FleetLocationStats>('/fleet-locations/stats'),
 
   // Get unique cities in database
   getCities: () =>
@@ -303,7 +303,7 @@ export const fleetLocationsApi = {
         location_count: number
         total_vehicles: number
       }>
-    }>('/api/fleet-locations/cities'),
+    }>('/fleet-locations/cities'),
 
   // Discover fleet locations for a city using multi-source discovery
   discoverCity: (city: string, state: string, bbox?: [number, number, number, number], sources?: string[]) =>
@@ -324,7 +324,7 @@ export const fleetLocationsApi = {
         verified_fleets: number
       }
       errors?: string[]
-    }>('/api/fleet-locations/discover', { city, state, bbox, sources }),
+    }>('/fleet-locations/discover', { city, state, bbox, sources }),
 
   // Get data sources status (OSM, FMCSA, Yelp)
   getDataSources: () =>
@@ -338,7 +338,7 @@ export const fleetLocationsApi = {
         carriers?: number
         signup_url?: string
       }>
-    }>('/api/fleet-locations/sources'),
+    }>('/fleet-locations/sources'),
 
   // Get all category definitions
   getCategoryInfo: () =>
@@ -355,7 +355,7 @@ export const fleetLocationsApi = {
         fmcsa?: boolean
       }>
       tier_descriptions: Record<number, string>
-    }>('/api/fleet-locations/category-info'),
+    }>('/fleet-locations/category-info'),
 
   // ===== SCRAPED BUSINESSES (BBB, Manta, etc.) =====
 
@@ -392,7 +392,7 @@ export const fleetLocationsApi = {
         scraped_at: string
       }>
       count: number
-    }>('/api/fleet-locations/businesses', { params }),
+    }>('/fleet-locations/businesses', { params }),
 
   // Get scraped business stats
   getScrapedStats: (city?: string, state?: string) =>
@@ -402,7 +402,7 @@ export const fleetLocationsApi = {
       by_source: Record<string, number>
       by_category: Array<{ category: string; count: number; vehicles: number }>
       by_tier: Record<number, number>
-    }>('/api/fleet-locations/businesses/stats', { params: { city, state } }),
+    }>('/fleet-locations/businesses/stats', { params: { city, state } }),
 
   // Scrape businesses for a city
   scrapeCity: (city: string, state: string, sources?: string[]) =>
@@ -412,7 +412,7 @@ export const fleetLocationsApi = {
       new_businesses: number
       by_source: Record<string, number>
       total_in_database: number
-    }>('/api/fleet-locations/scrape', { city, state, sources }),
+    }>('/fleet-locations/scrape', { city, state, sources }),
 
   // Scrape multiple cities
   scrapeMultiple: (cities: Array<{ city: string; state: string }>, sources?: string[]) =>
@@ -425,7 +425,7 @@ export const fleetLocationsApi = {
         by_source: Record<string, number>
       }>
       total_new: number
-    }>('/api/fleet-locations/scrape-multiple', { cities, sources }),
+    }>('/fleet-locations/scrape-multiple', { cities, sources }),
 
   // Geocode all businesses in database
   geocodeAll: (limit?: number) =>
@@ -434,7 +434,7 @@ export const fleetLocationsApi = {
       geocoded: number
       failed: number
       total_with_coords: number
-    }>('/api/fleet-locations/geocode-all', { limit }),
+    }>('/fleet-locations/geocode-all', { limit }),
 
   // ===== ROUTE OPTIMIZATION =====
 
@@ -464,7 +464,7 @@ export const fleetLocationsApi = {
         distance_miles: number
         duration_minutes: number
       }>
-    }>('/api/fleet-locations/optimize-route', { locations, start_location: startLocation }),
+    }>('/fleet-locations/optimize-route', { locations, start_location: startLocation }),
 
   // Get turn-by-turn directions
   getDirections: (origin: { latitude: number; longitude: number }, destination: { latitude: number; longitude: number }) =>
@@ -479,11 +479,11 @@ export const fleetLocationsApi = {
         duration_minutes: number
         name: string
       }>
-    }>('/api/fleet-locations/directions', { origin, destination }),
+    }>('/fleet-locations/directions', { origin, destination }),
 
   // Generate Google Maps URL for route
   getGoogleMapsUrl: (locations: Array<{ latitude: number; longitude: number }>) =>
-    apiPost<{ url: string }>('/api/fleet-locations/google-maps-url', { locations }),
+    apiPost<{ url: string }>('/fleet-locations/google-maps-url', { locations }),
 
   // ===== HAIL OVERLAY =====
 
@@ -513,7 +513,7 @@ export const fleetLocationsApi = {
       }>
       total: number
       by_hail_size: Record<string, number>
-    }>('/api/fleet-locations/businesses/hail-affected', { params }),
+    }>('/fleet-locations/businesses/hail-affected', { params }),
 
   // Smart swath-based discovery - finds businesses INSIDE hail swath polygons
   // Uses multiple data sources: OSM, Foursquare, Yelp, HERE, TomTom, Google, Yellow Pages, BBB
@@ -561,7 +561,7 @@ export const fleetLocationsApi = {
         google: { configured: boolean; free_tier: string }
         osm: { configured: boolean; free_tier: string }
       }
-    }>('/api/fleet-locations/smart-scrape-swaths', params),
+    }>('/fleet-locations/smart-scrape-swaths', params),
 
   // Get API configuration status for all discovery sources
   getApiStatus: () =>
@@ -576,19 +576,19 @@ export const fleetLocationsApi = {
       }
       recommended: string[]
       setup_instructions: Record<string, string>
-    }>('/api/fleet-locations/api-status'),
+    }>('/fleet-locations/api-status'),
 
   // Mark a swath-discovered business as added to CRM
   markBusinessAddedToCRM: (businessId: number) =>
     apiPost<{ success: boolean; message: string }>(
-      `/api/fleet-locations/swath-businesses/${businessId}/add-to-crm`,
+      `/fleet-locations/swath-businesses/${businessId}/add-to-crm`,
       {}
     ),
 
   // Clear cached swath discoveries
   clearSwathCache: (eventIds?: number[]) =>
     apiPost<{ success: boolean; message: string }>(
-      '/api/fleet-locations/swath-businesses/clear-cache',
+      '/fleet-locations/swath-businesses/clear-cache',
       { event_ids: eventIds }
     ),
 
@@ -626,7 +626,7 @@ export const fleetLocationsApi = {
           max_lon: number
         }
       }
-    }>('/api/fleet-locations/tile-discover', params),
+    }>('/fleet-locations/tile-discover', params),
 
   // HYBRID discovery - OSM + YellowPages + BBB + Manta
   // 1 OSM query for all swaths + city-based queries = ~60 seconds
@@ -661,7 +661,7 @@ export const fleetLocationsApi = {
         osm_seconds: number
         city_seconds: number
       }
-    }>('/api/fleet-locations/fast-discover', params),
+    }>('/fleet-locations/fast-discover', params),
 }
 
 // ===== HAIL EVENTS DATE-BASED OVERLAY =====
@@ -678,7 +678,7 @@ export interface HailEvent {
   estimated_vehicles?: number
   data_source?: string
   confidence?: number
-  swath_geojson?: any
+  swath_polygon?: any
   swath_raw?: string
 }
 
@@ -729,7 +729,7 @@ export const hailEventsApi = {
       count: number
       events: HailEvent[]
       query: typeof params
-    }>('/api/hail-events/by-date', { params }),
+    }>('/hail-events/by-date', { params }),
 
   // Get list of dates that have hail events
   getEventDates: (params?: {
@@ -743,7 +743,7 @@ export const hailEventsApi = {
       year: number
       month?: number
       dates: HailEventDate[]
-    }>('/api/hail-events/dates', { params }),
+    }>('/hail-events/dates', { params }),
 
   // Get businesses within a specific hail event's swath
   getAffectedBusinesses: (eventId: number) =>
@@ -762,7 +762,7 @@ export const hailEventsApi = {
       total_estimated_vehicles: number
       estimated_value: number
       businesses: AffectedBusiness[]
-    }>(`/api/hail-events/${eventId}/affected-businesses`),
+    }>(`/hail-events/${eventId}/affected-businesses`),
 
   // Get all businesses affected by hail on a specific date
   // If eventIds provided, only search those specific events (viewport filtering)
@@ -784,7 +784,7 @@ export const hailEventsApi = {
       estimated_value: number
       businesses: AffectedBusiness[]
       viewport_filtered?: boolean
-    }>('/api/hail-events/affected-businesses-by-date', {
+    }>('/hail-events/affected-businesses-by-date', {
       params: {
         date,
         min_size: minSize,
@@ -851,11 +851,11 @@ export const fleetLeadsApi = {
     apiGet<{
       leads: FleetLead[]
       count: number
-    }>('/api/fleet-leads', { params }),
+    }>('/fleet-leads', { params }),
 
   // Get single lead
   getLead: (id: number) =>
-    apiGet<FleetLead>(`/api/fleet-leads/${id}`),
+    apiGet<FleetLead>(`/fleet-leads/${id}`),
 
   // Create new lead from scraped business
   createLead: (data: {
@@ -878,19 +878,19 @@ export const fleetLeadsApi = {
     hail_size?: number
     hail_distance?: number
   }) =>
-    apiPost<{ success: boolean; lead_id: number; message: string }>('/api/fleet-leads', data),
+    apiPost<{ success: boolean; lead_id: number; message: string }>('/fleet-leads', data),
 
   // Update lead
   updateLead: (id: number, data: Partial<FleetLead>) =>
-    apiPut<{ success: boolean; lead: FleetLead }>(`/api/fleet-leads/${id}`, data),
+    apiPut<{ success: boolean; lead: FleetLead }>(`/fleet-leads/${id}`, data),
 
   // Delete lead
   deleteLead: (id: number) =>
-    apiDelete<{ success: boolean }>(`/api/fleet-leads/${id}`),
+    apiDelete<{ success: boolean }>(`/fleet-leads/${id}`),
 
   // Log activity/note
   logNote: (id: number, note: string) =>
-    apiPost<{ success: boolean }>(`/api/fleet-leads/${id}/note`, { note }),
+    apiPost<{ success: boolean }>(`/fleet-leads/${id}/note`, { note }),
 
   // Get leads stats
   getStats: () =>
@@ -902,11 +902,11 @@ export const fleetLeadsApi = {
       followups_due: number
       recent_activity: number
       by_city: Array<{ city: string; state: string; count: number; vehicles: number }>
-    }>('/api/fleet-leads/stats'),
+    }>('/fleet-leads/stats'),
 
   // Get leads due for follow-up
   getFollowups: (days?: number) =>
-    apiGet<{ leads: FleetLead[] }>('/api/fleet-leads/followups', { params: { days } }),
+    apiGet<{ leads: FleetLead[] }>('/fleet-leads/followups', { params: { days } }),
 
   // Bulk import from scraped businesses
   bulkImport: (businesses: Array<{
@@ -928,7 +928,7 @@ export const fleetLeadsApi = {
       created: number
       duplicates: number
       errors?: string[]
-    }>('/api/fleet-leads/bulk', { businesses }),
+    }>('/fleet-leads/bulk', { businesses }),
 
   // Get leads for map display
   getLeadsMap: (params?: {
@@ -939,7 +939,7 @@ export const fleetLeadsApi = {
     apiGet<{
       leads: FleetLead[]
       count: number
-    }>('/api/fleet-leads', { params: { ...params, limit: 500 } }),
+    }>('/fleet-leads', { params: { ...params, limit: 500 } }),
 }
 
 // =============================================================================
@@ -992,18 +992,18 @@ export interface BatchScrapeResult {
 export const batchScrapeApi = {
   // Get available scrape presets (Hail Alley, Texas, etc.)
   getPresets: () =>
-    apiGet<{ presets: Record<string, ScrapePreset> }>('/api/fleet-locations/scrape-presets'),
+    apiGet<{ presets: Record<string, ScrapePreset> }>('/fleet-locations/scrape-presets'),
 
   // Batch scrape cities
   batchScrape: (params: {
     cities: Array<{ city: string; state: string }>
     sources?: string[]
   }) =>
-    apiPost<BatchScrapeResult>('/api/fleet-locations/batch-scrape', params),
+    apiPost<BatchScrapeResult>('/fleet-locations/batch-scrape', params),
 
   // Scrape using a preset
   scrapePreset: (presetKey: string, sources?: string[]) =>
-    apiPost<BatchScrapeResult>('/api/fleet-locations/batch-scrape', {
+    apiPost<BatchScrapeResult>('/fleet-locations/batch-scrape', {
       preset: presetKey,
       sources
     }),
@@ -1038,11 +1038,11 @@ export const emailTemplatesApi = {
         subject_preview: string
         follow_up_days: number
       }>
-    }>('/api/fleet-locations/email-templates'),
+    }>('/fleet-locations/email-templates'),
 
   // Get a specific template with variables filled
   getTemplate: (templateKey: string, variables?: Record<string, string>) =>
-    apiGet<{ template: GeneratedEmail }>(`/api/fleet-locations/email-templates/${templateKey}`, {
+    apiGet<{ template: GeneratedEmail }>(`/fleet-locations/email-templates/${templateKey}`, {
       params: variables
     }),
 
@@ -1056,7 +1056,7 @@ export const emailTemplatesApi = {
     apiGet<{
       template: GeneratedEmail
       template_key: string
-    }>(`/api/fleet-locations/email-templates/for-business/${businessId}`, {
+    }>(`/fleet-locations/email-templates/for-business/${businessId}`, {
       params: senderInfo
     }),
 }
@@ -1081,11 +1081,11 @@ export const callScriptsApi = {
         name: string
         category: string
       }>
-    }>('/api/fleet-locations/call-scripts'),
+    }>('/fleet-locations/call-scripts'),
 
   // Get a specific script with variables filled
   getScript: (scriptKey: string, variables?: Record<string, string>) =>
-    apiGet<{ script: CallScript }>(`/api/fleet-locations/call-scripts/${scriptKey}`, {
+    apiGet<{ script: CallScript }>(`/fleet-locations/call-scripts/${scriptKey}`, {
       params: variables
     }),
 
@@ -1097,7 +1097,7 @@ export const callScriptsApi = {
     apiGet<{
       script: CallScript
       script_key: string
-    }>(`/api/fleet-locations/call-scripts/for-business/${businessId}`, {
+    }>(`/fleet-locations/call-scripts/for-business/${businessId}`, {
       params: callerInfo
     }),
 }
@@ -1150,11 +1150,11 @@ export const recentStormsApi = {
       count: number
       days_back: number
       min_size: number
-    }>('/api/hail-events/recent-significant', { params }),
+    }>('/hail-events/recent-significant', { params }),
 
   // Get detailed summary for a specific storm date
   getStormSummary: (stormDate: string) =>
-    apiGet<StormSummary>(`/api/hail-events/storm-summary/${stormDate}`),
+    apiGet<StormSummary>(`/hail-events/storm-summary/${stormDate}`),
 }
 
 // =============================================================================
@@ -1236,7 +1236,7 @@ export const fleetReportsApi = {
         start_date?: string
         end_date?: string
       }
-    }>('/api/leads/reports/fleet', { params }),
+    }>('/leads/reports/fleet', { params }),
 }
 
 // =============================================================================
@@ -1266,7 +1266,7 @@ export const mainCrmLeadsApi = {
     hail_size?: number
     hail_distance?: number
   }) =>
-    apiPost<MainCrmLeadResult>('/api/leads/from-fleet-discovery', {
+    apiPost<MainCrmLeadResult>('/leads/from-fleet-discovery', {
       company_name: business.name,
       address: business.address,
       city: business.city,
@@ -1304,7 +1304,7 @@ export const mainCrmLeadsApi = {
     hail_date: string
     hail_size: number
   }) =>
-    apiPost<BulkLeadResult>('/api/leads/from-fleet-discovery/bulk', {
+    apiPost<BulkLeadResult>('/leads/from-fleet-discovery/bulk', {
       businesses: params.businesses.map(b => ({
         company_name: b.name,
         name: b.name,

@@ -149,11 +149,11 @@ export function FleetMapPage() {
       console.log(`[Fleet] Events array:`, events)
 
       // Debug logging
-      const eventsWithSwath = events.filter(e => e.swath_geojson)
+      const eventsWithSwath = events.filter(e => e.swath_polygon)
       const eventsWithCenter = events.filter(e => e.center_lat && e.center_lon)
       console.log(`[Fleet] Event stats:`)
       console.log(`  - Total events: ${events.length}`)
-      console.log(`  - With swath_geojson: ${eventsWithSwath.length}`)
+      console.log(`  - With swath_polygon: ${eventsWithSwath.length}`)
       console.log(`  - With center coordinates: ${eventsWithCenter.length}`)
       console.log(`  - Cities: ${[...new Set(events.map(e => e.city).filter(Boolean))].join(', ')}`)
 
@@ -164,7 +164,7 @@ export function FleetMapPage() {
 
       if (eventsWithSwath.length > 0) {
         console.log(`[Fleet] First event with swath:`, eventsWithSwath[0])
-        console.log(`[Fleet] Swath type:`, typeof eventsWithSwath[0].swath_geojson)
+        console.log(`[Fleet] Swath type:`, typeof eventsWithSwath[0].swath_polygon)
       }
 
       // Check map readiness
@@ -208,11 +208,11 @@ export function FleetMapPage() {
 
     events.forEach((event, index) => {
       // Add swath polygon if available
-      if (event.swath_geojson) {
+      if (event.swath_polygon) {
         try {
-          const geojson = typeof event.swath_geojson === "string"
-            ? JSON.parse(event.swath_geojson)
-            : event.swath_geojson
+          const geojson = typeof event.swath_polygon === "string"
+            ? JSON.parse(event.swath_polygon)
+            : event.swath_polygon
 
           const color = event.max_hail_size >= 2 ? "#ef4444" : event.max_hail_size >= 1.5 ? "#f97316" : "#eab308"
 
@@ -246,7 +246,7 @@ export function FleetMapPage() {
       }
 
       // Add center marker if no swath polygon
-      if (!event.swath_geojson && event.center_lat && event.center_lon) {
+      if (!event.swath_polygon && event.center_lat && event.center_lon) {
         const marker = L.circleMarker([event.center_lat, event.center_lon], {
           radius: Math.max(10, Math.min(25, event.max_hail_size * 8)),
           fillColor: event.max_hail_size >= 2 ? "#ef4444" : event.max_hail_size >= 1.5 ? "#f97316" : "#eab308",
@@ -788,7 +788,7 @@ export function FleetMapPage() {
                     </div>
                     <div className="bg-white dark:bg-gray-800 rounded p-2">
                       <div className="text-orange-600 dark:text-orange-400 font-bold">
-                        {hailEvents.filter(e => e.swath_geojson).length}
+                        {hailEvents.filter(e => e.swath_polygon).length}
                       </div>
                       <div className="text-xs text-muted-foreground">Swath Polygons</div>
                     </div>
@@ -803,9 +803,9 @@ export function FleetMapPage() {
 
                   {/* Swath stats */}
                   <div className="text-xs text-red-500 dark:text-red-400 pt-1 border-t border-red-200 dark:border-red-700">
-                    {hailEvents.filter(e => e.swath_geojson).length > 0 ? (
+                    {hailEvents.filter(e => e.swath_polygon).length > 0 ? (
                       <span className="text-green-600">
-                        ✓ {hailEvents.filter(e => e.swath_geojson).length} events with swath polygons on map
+                        ✓ {hailEvents.filter(e => e.swath_polygon).length} events with swath polygons on map
                       </span>
                     ) : (
                       <span className="text-orange-600">

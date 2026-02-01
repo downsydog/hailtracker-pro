@@ -185,29 +185,29 @@ export interface EstimatesReport {
 // API functions
 export const reportsApi = {
   dashboard: (filters?: ReportFilters) =>
-    apiGet<DashboardStats>('/api/reports/dashboard', { params: filters }),
+    apiGet<DashboardStats>('/reports/dashboard', { params: filters }),
 
   revenue: (filters?: ReportFilters) =>
-    apiGet<RevenueReport>('/api/reports/revenue', { params: filters }),
+    apiGet<RevenueReport>('/reports/revenue', { params: filters }),
 
   jobs: (filters?: ReportFilters) =>
-    apiGet<JobsReport>('/api/reports/jobs', { params: filters }),
+    apiGet<JobsReport>('/reports/jobs', { params: filters }),
 
   jobsByStatus: () =>
-    apiGet<JobsByStatus>('/api/reports/jobs/by-status'),
+    apiGet<JobsByStatus>('/reports/jobs/by-status'),
 
   leads: (filters?: ReportFilters) =>
-    apiGet<LeadsReport>('/api/reports/leads', { params: filters }),
+    apiGet<LeadsReport>('/reports/leads', { params: filters }),
 
   leadSources: () =>
-    apiGet<LeadSources>('/api/reports/leads/sources'),
+    apiGet<LeadSources>('/reports/leads/sources'),
 
   techs: (filters?: ReportFilters) =>
-    apiGet<TechPerformance>('/api/reports/techs', { params: filters }),
+    apiGet<TechPerformance>('/reports/techs', { params: filters }),
 
   techDetail: (techId: number, filters?: ReportFilters) =>
-    apiGet<TechDetail>(`/api/reports/techs/${techId}`, { params: filters }),
+    apiGet<TechDetail>(`/reports/techs/${techId}`, { params: filters }),
 
   estimates: (filters?: ReportFilters) =>
-    apiGet<EstimatesReport>('/api/reports/estimates', { params: filters }),
+    apiGet<EstimatesReport>('/reports/estimates', { params: filters }),
 }

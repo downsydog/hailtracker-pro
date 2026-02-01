@@ -183,21 +183,21 @@ export interface InstantEstimate {
 
 export const getSalespeople = (status?: string) =>
   apiGet<{ salespeople: Salesperson[]; count: number }>(
-    `/api/elite/salespeople${status ? `?status=${status}` : ''}`
+    `/elite/salespeople${status ? `?status=${status}` : ''}`
   );
 
 export const createSalesperson = (data: Partial<Salesperson>) =>
-  apiPost<{ success: boolean; salesperson_id: number }>('/api/elite/salespeople', data);
+  apiPost<{ success: boolean; salesperson_id: number }>('/elite/salespeople', data);
 
 export const getSalesperson = (id: number) =>
   apiGet<{
     salesperson: Salesperson;
     stats: { leads_today: number; hot_leads_today: number; total_points: number; achievements_count: number };
     achievements: Achievement[];
-  }>(`/api/elite/salespeople/${id}`);
+  }>(`/elite/salespeople/${id}`);
 
 export const updateSalesperson = (id: number, data: Partial<Salesperson>) =>
-  apiPut<{ success: boolean }>(`/api/elite/salespeople/${id}`, data);
+  apiPut<{ success: boolean }>(`/elite/salespeople/${id}`, data);
 
 // =============================================================================
 // ROUTE OPTIMIZATION API
@@ -209,7 +209,7 @@ export const optimizeRoute = (data: {
   start_time?: string;
   target_homes?: number;
 }) =>
-  apiPost<{ success: boolean; route: CanvassingRoute }>('/api/elite/routes/optimize', data);
+  apiPost<{ success: boolean; route: CanvassingRoute }>('/elite/routes/optimize', data);
 
 // Storm-based route generation
 export const generateStormRoute = (data: {
@@ -229,11 +229,11 @@ export const generateStormRoute = (data: {
       max_hail_size: number;
       swath_polygon?: any;
     };
-  }>('/api/elite/routes/storm', data);
+  }>('/elite/routes/storm', data);
 
 export const getPropertyData = (address: string) =>
   apiGet<{ address: string; property_data: PropertyData }>(
-    `/api/elite/routes/property/${encodeURIComponent(address)}`
+    `/elite/routes/property/${encodeURIComponent(address)}`
   );
 
 // =============================================================================
@@ -251,12 +251,12 @@ export const getGridCells = (params?: {
   if (params?.assigned_to) searchParams.append('assigned_to', String(params.assigned_to));
   const query = searchParams.toString();
   return apiGet<{ grid_cells: GridCell[]; count: number }>(
-    `/api/elite/grid-cells${query ? `?${query}` : ''}`
+    `/elite/grid-cells${query ? `?${query}` : ''}`
   );
 };
 
 export const assignGridCell = (cellId: number, salespersonId: number) =>
-  apiPut<{ success: boolean }>(`/api/elite/grid-cells/${cellId}/assign`, {
+  apiPut<{ success: boolean }>(`/elite/grid-cells/${cellId}/assign`, {
     salesperson_id: salespersonId,
   });
 
@@ -281,7 +281,7 @@ export const getFieldLeads = (params?: {
   if (params?.limit) searchParams.append('limit', String(params.limit));
   const query = searchParams.toString();
   return apiGet<{ leads: FieldLead[]; count: number }>(
-    `/api/elite/leads${query ? `?${query}` : ''}`
+    `/elite/leads${query ? `?${query}` : ''}`
   );
 };
 
@@ -300,23 +300,23 @@ export const createFieldLead = (data: {
   photo_urls?: string[];
   grid_cell_id?: number;
 }) =>
-  apiPost<{ success: boolean; lead_id: number }>('/api/elite/leads', data);
+  apiPost<{ success: boolean; lead_id: number }>('/elite/leads', data);
 
 export const getFieldLead = (id: number) =>
-  apiGet<FieldLead>(`/api/elite/leads/${id}`);
+  apiGet<FieldLead>(`/elite/leads/${id}`);
 
 export const updateFieldLead = (id: number, data: Partial<FieldLead>) =>
-  apiPut<{ success: boolean }>(`/api/elite/leads/${id}`, data);
+  apiPut<{ success: boolean }>(`/elite/leads/${id}`, data);
 
 export const syncLeadToCRM = (leadId: number) =>
-  apiPost<{ success: boolean; crm_lead_id: number }>(`/api/elite/leads/${leadId}/sync`, {});
+  apiPost<{ success: boolean; crm_lead_id: number }>(`/elite/leads/${leadId}/sync`, {});
 
 export const bulkSyncLeads = (leadIds: number[]) =>
   apiPost<{
     results: Array<{ field_lead_id: number; crm_lead_id: number | null; success: boolean }>;
     synced: number;
     failed: number;
-  }>('/api/elite/leads/bulk-sync', { lead_ids: leadIds });
+  }>('/elite/leads/bulk-sync', { lead_ids: leadIds });
 
 // =============================================================================
 // COMPETITOR INTELLIGENCE API
@@ -335,7 +335,7 @@ export const getCompetitorActivity = (params?: {
   if (params?.limit) searchParams.append('limit', String(params.limit));
   const query = searchParams.toString();
   return apiGet<{ activity: CompetitorActivity[]; count: number; period_days: number }>(
-    `/api/elite/competitors${query ? `?${query}` : ''}`
+    `/elite/competitors${query ? `?${query}` : ''}`
   );
 };
 
@@ -348,14 +348,14 @@ export const logCompetitorActivity = (data: {
   notes?: string;
   photo_url?: string;
 }) =>
-  apiPost<{ success: boolean; activity_id: number }>('/api/elite/competitors', data);
+  apiPost<{ success: boolean; activity_id: number }>('/elite/competitors', data);
 
 export const getCompetitorHeatmap = (swathId?: number, days?: number) => {
   const searchParams = new URLSearchParams();
   if (swathId) searchParams.append('swath_id', String(swathId));
   if (days) searchParams.append('days', String(days));
   const query = searchParams.toString();
-  return apiGet<Record<string, any>>(`/api/elite/competitors/heatmap${query ? `?${query}` : ''}`);
+  return apiGet<Record<string, any>>(`/elite/competitors/heatmap${query ? `?${query}` : ''}`);
 };
 
 export const getCompetitorSummary = (days?: number) =>
@@ -367,7 +367,7 @@ export const getCompetitorSummary = (days?: number) =>
       last_seen: string;
     }>;
     period_days: number;
-  }>(`/api/elite/competitors/summary${days ? `?days=${days}` : ''}`);
+  }>(`/elite/competitors/summary${days ? `?days=${days}` : ''}`);
 
 // =============================================================================
 // DO NOT KNOCK API
@@ -379,7 +379,7 @@ export const getDNKList = (limit?: number, reason?: string) => {
   if (reason) searchParams.append('reason', reason);
   const query = searchParams.toString();
   return apiGet<{ dnk_list: DNKEntry[]; count: number }>(
-    `/api/elite/dnk${query ? `?${query}` : ''}`
+    `/elite/dnk${query ? `?${query}` : ''}`
   );
 };
 
@@ -391,7 +391,7 @@ export const addDNK = (data: {
   notes?: string;
   salesperson_id?: number;
 }) =>
-  apiPost<{ success: boolean; dnk_id: number }>('/api/elite/dnk', data);
+  apiPost<{ success: boolean; dnk_id: number }>('/elite/dnk', data);
 
 export const checkDNK = (lat: number, lon: number, radius?: number) => {
   const searchParams = new URLSearchParams();
@@ -399,12 +399,12 @@ export const checkDNK = (lat: number, lon: number, radius?: number) => {
   searchParams.append('lon', String(lon));
   if (radius) searchParams.append('radius', String(radius));
   return apiGet<{ is_dnk: boolean; dnk_entry: DNKEntry | null }>(
-    `/api/elite/dnk/check?${searchParams.toString()}`
+    `/elite/dnk/check?${searchParams.toString()}`
   );
 };
 
 export const removeDNK = (id: number) =>
-  apiDelete<{ success: boolean }>(`/api/elite/dnk/${id}`);
+  apiDelete<{ success: boolean }>(`/elite/dnk/${id}`);
 
 // =============================================================================
 // SCRIPTS & OBJECTIONS API
@@ -417,11 +417,11 @@ export const getScript = (situation: string, propertyData?: Record<string, any>)
   if (propertyData?.vehicle_make) searchParams.append('vehicle_make', propertyData.vehicle_make);
   if (propertyData?.vehicle_model) searchParams.append('vehicle_model', propertyData.vehicle_model);
   const query = searchParams.toString();
-  return apiGet<SalesScript>(`/api/elite/scripts/${situation}${query ? `?${query}` : ''}`);
+  return apiGet<SalesScript>(`/elite/scripts/${situation}${query ? `?${query}` : ''}`);
 };
 
 export const getAllScripts = () =>
-  apiGet<{ scripts: Record<string, SalesScript>; count: number }>('/api/elite/scripts');
+  apiGet<{ scripts: Record<string, SalesScript>; count: number }>('/elite/scripts');
 
 export const getObjections = (params?: {
   salesperson_id?: number;
@@ -438,7 +438,7 @@ export const getObjections = (params?: {
   if (params?.limit) searchParams.append('limit', String(params.limit));
   const query = searchParams.toString();
   return apiGet<{ objections: ObjectionEntry[]; count: number; period_days: number }>(
-    `/api/elite/objections${query ? `?${query}` : ''}`
+    `/elite/objections${query ? `?${query}` : ''}`
   );
 };
 
@@ -448,10 +448,10 @@ export const logObjection = (data: {
   response_used: string;
   outcome: string;
 }) =>
-  apiPost<{ success: boolean; objection_id: number }>('/api/elite/objections', data);
+  apiPost<{ success: boolean; objection_id: number }>('/elite/objections', data);
 
 export const getObjectionAnalytics = (days?: number) =>
-  apiGet<Record<string, any>>(`/api/elite/objections/analytics${days ? `?days=${days}` : ''}`);
+  apiGet<Record<string, any>>(`/elite/objections/analytics${days ? `?days=${days}` : ''}`);
 
 // =============================================================================
 // ESTIMATES & CONTRACTS API
@@ -465,14 +465,14 @@ export const generateInstantEstimate = (data: {
     model: string;
   };
 }) =>
-  apiPost<{ success: boolean; estimate: InstantEstimate }>('/api/elite/estimates/instant', data);
+  apiPost<{ success: boolean; estimate: InstantEstimate }>('/elite/estimates/instant', data);
 
 export const createFieldContract = (data: {
   lead_id: number;
   estimate?: Record<string, any>;
   customer_email: string;
 }) =>
-  apiPost<{ success: boolean; contract_url: string }>('/api/elite/contracts', data);
+  apiPost<{ success: boolean; contract_url: string }>('/elite/contracts', data);
 
 // =============================================================================
 // GAMIFICATION API
@@ -480,7 +480,7 @@ export const createFieldContract = (data: {
 
 export const getAchievements = (salespersonId: number) =>
   apiGet<{ achievements: Achievement[]; total_points: number; count: number }>(
-    `/api/elite/achievements/${salespersonId}`
+    `/elite/achievements/${salespersonId}`
   );
 
 export const awardAchievement = (data: {
@@ -488,11 +488,11 @@ export const awardAchievement = (data: {
   achievement_type: string;
   achievement_data?: Record<string, any>;
 }) =>
-  apiPost<{ success: boolean; achievement_id: number }>('/api/elite/achievements', data);
+  apiPost<{ success: boolean; achievement_id: number }>('/elite/achievements', data);
 
 export const getLeaderboard = (period?: 'TODAY' | 'THIS_WEEK' | 'THIS_MONTH') =>
   apiGet<{ leaderboard: LeaderboardEntry[]; period: string; updated_at: string }>(
-    `/api/elite/leaderboard${period ? `?period=${period}` : ''}`
+    `/elite/leaderboard${period ? `?period=${period}` : ''}`
   );
 
 export const getLeaderboardStats = () =>
@@ -500,7 +500,7 @@ export const getLeaderboardStats = () =>
     today: { leads: number; hot_leads: number };
     this_week: { leads: number; hot_leads: number };
     this_month: { leads: number; hot_leads: number };
-  }>('/api/elite/leaderboard/stats');
+  }>('/elite/leaderboard/stats');
 
 // =============================================================================
 // MOBILE API
@@ -520,7 +520,7 @@ export const mobileCheckin = (data: {
     nearby_dnk: DNKEntry[];
     nearby_competitors: CompetitorActivity[];
     server_time: string;
-  }>('/api/elite/mobile/checkin', data);
+  }>('/elite/mobile/checkin', data);
 
 export const mobileQuickLead = (data: {
   salesperson_id: number;
@@ -533,7 +533,7 @@ export const mobileQuickLead = (data: {
   notes?: string;
 }) =>
   apiPost<{ success: boolean; lead_id: number; message: string }>(
-    '/api/elite/mobile/quick-lead',
+    '/elite/mobile/quick-lead',
     data
   );
 
@@ -547,4 +547,4 @@ export const getMobileDashboard = (salespersonId: number) =>
     points: number;
     recent_achievements: Achievement[];
     updated_at: string;
-  }>(`/api/elite/mobile/dashboard?salesperson_id=${salespersonId}`);
+  }>(`/elite/mobile/dashboard?salesperson_id=${salespersonId}`);

@@ -22,10 +22,10 @@ interface LeadsResponse {
 }
 
 export const leadsApi = {
-  list: (filters?: LeadsQueryParams) => apiGet<LeadsResponse>('/api/leads', { params: filters }),
-  get: (id: number) => apiGet<Lead>(`/api/leads/${id}`),
-  create: (data: CreateLeadData) => apiPost<Lead>('/api/leads', data),
-  update: (id: number, data: UpdateLeadData) => apiPut<Lead>(`/api/leads/${id}`, data),
-  delete: (id: number) => apiDelete<{ success: boolean }>(`/api/leads/${id}`),
-  convert: (id: number, data?: { create_job?: boolean }) => apiPost<{ customer_id: number, job_id?: number }>(`/api/leads/${id}/convert`, data),
+  list: (filters?: LeadsQueryParams) => apiGet<LeadsResponse>('/leads', { params: filters }),
+  get: (id: number) => apiGet<Lead>(`/leads/${id}`),
+  create: (data: CreateLeadData) => apiPost<Lead>('/leads', data),
+  update: (id: number, data: UpdateLeadData) => apiPut<Lead>(`/leads/${id}`, data),
+  delete: (id: number) => apiDelete<{ success: boolean }>(`/leads/${id}`),
+  convert: (id: number, data?: { create_job?: boolean }) => apiPost<{ customer_id: number, job_id?: number }>(`/leads/${id}/convert`, data),
 }

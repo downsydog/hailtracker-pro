@@ -31,11 +31,11 @@ interface CreateJobResponse {
 }
 
 export const jobsApi = {
-  list: (filters?: JobsQueryParams) => apiGet<JobsResponse>('/api/jobs', { params: filters }),
-  get: (id: number) => apiGet<Job>(`/api/jobs/${id}`),
-  create: (data: CreateJobData) => apiPost<CreateJobResponse>('/api/jobs', data),
-  update: (id: number, data: UpdateJobData) => apiPut<Job>(`/api/jobs/${id}`, data),
-  delete: (id: number) => apiDelete<{ success: boolean }>(`/api/jobs/${id}`),
-  updateStatus: (id: number, status: string, notes?: string) => apiPost<Job>(`/api/jobs/${id}/status`, { status, notes }),
-  assign: (id: number, techId: number) => apiPost<Job>(`/api/jobs/${id}/assign`, { tech_id: techId }),
+  list: (filters?: JobsQueryParams) => apiGet<JobsResponse>('/jobs', { params: filters }),
+  get: (id: number) => apiGet<Job>(`/jobs/${id}`),
+  create: (data: CreateJobData) => apiPost<CreateJobResponse>('/jobs', data),
+  update: (id: number, data: UpdateJobData) => apiPut<Job>(`/jobs/${id}`, data),
+  delete: (id: number) => apiDelete<{ success: boolean }>(`/jobs/${id}`),
+  updateStatus: (id: number, status: string, notes?: string) => apiPost<Job>(`/jobs/${id}/status`, { status, notes }),
+  assign: (id: number, techId: number) => apiPost<Job>(`/jobs/${id}/assign`, { tech_id: techId }),
 }

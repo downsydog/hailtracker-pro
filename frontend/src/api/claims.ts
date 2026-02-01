@@ -69,59 +69,59 @@ export interface ClaimFilters {
 export const claimsApi = {
   // List claims with filters
   getClaims: (filters?: ClaimFilters) =>
-    apiGet<{ claims: InsuranceClaim[]; total: number; page: number }>('/api/claims', { params: filters }),
+    apiGet<{ claims: InsuranceClaim[]; total: number; page: number }>('/claims', { params: filters }),
 
   // Get single claim with timeline
   getClaim: (id: number) =>
-    apiGet<{ claim: InsuranceClaim; timeline: ClaimTimelineEvent[] }>(`/api/claims/${id}`),
+    apiGet<{ claim: InsuranceClaim; timeline: ClaimTimelineEvent[] }>(`/claims/${id}`),
 
   // Create new claim
   createClaim: (data: ClaimCreateData) =>
-    apiPost<{ success: boolean; claim_id: number; claim_number: string }>('/api/claims', data),
+    apiPost<{ success: boolean; claim_id: number; claim_number: string }>('/claims', data),
 
   // Update claim
   updateClaim: (id: number, data: Partial<ClaimCreateData>) =>
-    apiPut<{ success: boolean }>(`/api/claims/${id}`, data),
+    apiPut<{ success: boolean }>(`/claims/${id}`, data),
 
   // Delete claim
   deleteClaim: (id: number) =>
-    apiDelete<{ success: boolean }>(`/api/claims/${id}`),
+    apiDelete<{ success: boolean }>(`/claims/${id}`),
 
   // Update claim status
   updateStatus: (id: number, status: InsuranceClaim['status'], notes?: string) =>
-    apiPost<{ success: boolean }>(`/api/claims/${id}/status`, { status, notes }),
+    apiPost<{ success: boolean }>(`/claims/${id}/status`, { status, notes }),
 
   // Submit to insurance
   submitClaim: (id: number) =>
-    apiPost<{ success: boolean }>(`/api/claims/${id}/submit`),
+    apiPost<{ success: boolean }>(`/claims/${id}/submit`),
 
   // Record approval
   recordApproval: (id: number, data: { approved_amount: number; notes?: string }) =>
-    apiPost<{ success: boolean }>(`/api/claims/${id}/approve`, data),
+    apiPost<{ success: boolean }>(`/claims/${id}/approve`, data),
 
   // Record denial
   recordDenial: (id: number, reason: string) =>
-    apiPost<{ success: boolean }>(`/api/claims/${id}/deny`, { reason }),
+    apiPost<{ success: boolean }>(`/claims/${id}/deny`, { reason }),
 
   // Record payment received
   recordPayment: (id: number, data: { paid_amount: number; paid_date: string; notes?: string }) =>
-    apiPost<{ success: boolean }>(`/api/claims/${id}/payment`, data),
+    apiPost<{ success: boolean }>(`/claims/${id}/payment`, data),
 
   // Upload document
   uploadDocument: (id: number, file: File, documentType: ClaimDocument['document_type']) => {
     const formData = new FormData()
     formData.append('file', file)
     formData.append('document_type', documentType)
-    return apiPost<{ success: boolean; document_id: number }>(`/api/claims/${id}/documents`, formData)
+    return apiPost<{ success: boolean; document_id: number }>(`/claims/${id}/documents`, formData)
   },
 
   // Delete document
   deleteDocument: (claimId: number, documentId: number) =>
-    apiDelete<{ success: boolean }>(`/api/claims/${claimId}/documents/${documentId}`),
+    apiDelete<{ success: boolean }>(`/claims/${claimId}/documents/${documentId}`),
 
   // Add timeline note
   addNote: (id: number, note: string) =>
-    apiPost<{ success: boolean }>(`/api/claims/${id}/notes`, { note }),
+    apiPost<{ success: boolean }>(`/claims/${id}/notes`, { note }),
 
   // Get claim stats
   getStats: () =>
@@ -132,9 +132,9 @@ export const claimsApi = {
       total_value_pending: number
       avg_processing_days: number
       count_by_company: Record<string, number>
-    }>('/api/claims/stats'),
+    }>('/claims/stats'),
 
   // Get insurance companies list
   getInsuranceCompanies: () =>
-    apiGet<{ companies: string[] }>('/api/claims/insurance-companies'),
+    apiGet<{ companies: string[] }>('/claims/insurance-companies'),
 }

@@ -36,7 +36,7 @@ export interface HailEvent {
   estimated_vehicles?: number
   estimated_vehicles_affected?: number
   potential_revenue?: number
-  swath_geojson?: string
+  swath_polygon?: string
   swath_polygon?: string
   severity_info?: SeverityInfo
   stats?: StormStats
@@ -374,8 +374,8 @@ export const hailEventsApi = {
     limit?: number
   }) =>
     api.get<{ events: HailEvent[]; count: number; stats: OverallStats }>(
-      '/api/hail-events',
-      { params }
+      '/hail-events',
+      params
     ),
 
   search: (params: {
@@ -389,60 +389,60 @@ export const hailEventsApi = {
     limit?: number
   }) =>
     api.get<{ events: HailEvent[]; count: number }>(
-      '/api/hail-events/search',
-      { params }
+      '/hail-events/search',
+      params
     ),
 
   getActive: (days?: number) =>
     api.get<{ events: HailEvent[]; count: number }>(
-      '/api/hail-events/active',
-      { params: { days } }
+      '/hail-events/active',
+      { days }
     ),
 
   getByZip: (zipCode: string) =>
     api.get<{ events: HailEvent[]; count: number; zip_code: string }>(
-      `/api/hail-events/by-zip/${zipCode}`
+      `/hail-events/by-zip/${zipCode}`
     ),
 
   getBySeverity: (severity: string, days?: number) =>
     api.get<{ events: HailEvent[]; count: number; severity: string }>(
-      `/api/hail-events/by-severity/${severity}`,
-      { params: { days } }
+      `/hail-events/by-severity/${severity}`,
+      { days }
     ),
 
   getNearby: (lat: number, lon: number, radius?: number) =>
     api.get<{ events: HailEvent[]; count: number }>(
-      '/api/hail-events/nearby',
-      { params: { lat, lon, radius } }
+      '/hail-events/nearby',
+      { lat, lon, radius }
     ),
 
   // CRUD
-  get: (id: number) => api.get<HailEvent>(`/api/hail-events/${id}`),
+  get: (id: number) => api.get<HailEvent>(`/hail-events/${id}`),
 
   create: (data: HailEventInput) =>
-    api.post<{ id: number; storm: HailEvent }>('/api/hail-events', data),
+    api.post<{ id: number; storm: HailEvent }>('/hail-events', data),
 
   update: (id: number, data: Partial<HailEventInput>) =>
-    api.put<HailEvent>(`/api/hail-events/${id}`, data),
+    api.put<HailEvent>(`/hail-events/${id}`, data),
 
   close: (id: number, notes?: string) =>
     api.delete<{ success: boolean; status: string }>(
-      `/api/hail-events/${id}`,
+      `/hail-events/${id}`,
       { data: { notes } }
     ),
 
   reopen: (id: number) =>
     api.post<{ success: boolean; status: string }>(
-      `/api/hail-events/${id}/reopen`
+      `/hail-events/${id}/reopen`
     ),
 
   // Statistics & ROI
-  getStats: (id: number) => api.get<StormStats>(`/api/hail-events/${id}/stats`),
+  getStats: (id: number) => api.get<StormStats>(`/hail-events/${id}/stats`),
 
   getOverallStats: (days?: number) =>
-    api.get<OverallStats>('/api/hail-events/stats/overall', { params: { days } }),
+    api.get<OverallStats>('/hail-events/stats/overall', { days }),
 
-  getROI: (id: number) => api.get<StormROI>(`/api/hail-events/${id}/roi`),
+  getROI: (id: number) => api.get<StormROI>(`/hail-events/${id}/roi`),
 
   getPerformance: (params?: {
     start_date?: string
@@ -450,13 +450,13 @@ export const hailEventsApi = {
     min_jobs?: number
   }) =>
     api.get<{ storms: StormROI[]; count: number }>(
-      '/api/hail-events/performance',
-      { params }
+      '/hail-events/performance',
+      params
     ),
 
   compare: (stormIds: number[]) =>
     api.post<{ storms: StormROI[]; totals: Record<string, number>; averages: Record<string, number> }>(
-      '/api/hail-events/compare',
+      '/hail-events/compare',
       { storm_ids: stormIds }
     ),
 
@@ -466,88 +466,88 @@ export const hailEventsApi = {
     severity: string
     capture_rate?: number
   }) =>
-    api.post<MarketOpportunity>('/api/hail-events/market-opportunity', data),
+    api.post<MarketOpportunity>('/hail-events/market-opportunity', data),
 
   // Reports
   getReport: (id: number, format?: 'json' | 'text') =>
     api.get<{ storm: HailEvent; stats: StormStats; roi: StormROI }>(
-      `/api/hail-events/${id}/report`,
-      { params: { format } }
+      `/hail-events/${id}/report`,
+      { format }
     ),
 
   getPerformanceReport: (id: number, format?: 'json' | 'text') =>
     api.get<{ storm: HailEvent; performance: StormROI }>(
-      `/api/hail-events/${id}/performance-report`,
-      { params: { format } }
+      `/hail-events/${id}/performance-report`,
+      { format }
     ),
 
   getSummaryReport: (days?: number, format?: 'json' | 'text') =>
     api.get<{ period_days: number; stats: OverallStats; active_storms: HailEvent[] }>(
-      '/api/hail-events/summary-report',
-      { params: { days, format } }
+      '/hail-events/summary-report',
+      { days, format }
     ),
 
   getMultiStormReport: (days?: number, format?: 'json' | 'text') =>
     api.get<{ period_days: number; storms: StormROI[]; stats: OverallStats }>(
-      '/api/hail-events/multi-storm-report',
-      { params: { days, format } }
+      '/hail-events/multi-storm-report',
+      { days, format }
     ),
 
   // Job-Storm Linking
   linkJob: (stormId: number, jobId: number, confidence?: string, notes?: string) =>
     api.post<{ success: boolean; storm_id: number; job_id: number }>(
-      `/api/hail-events/${stormId}/link-job`,
+      `/hail-events/${stormId}/link-job`,
       { job_id: jobId, confidence, notes }
     ),
 
   unlinkJob: (stormId: number, jobId: number) =>
     api.delete<{ success: boolean }>(
-      `/api/hail-events/${stormId}/unlink-job/${jobId}`
+      `/hail-events/${stormId}/unlink-job/${jobId}`
     ),
 
   getStormJobs: (stormId: number) =>
     api.get<{ storm_id: number; jobs: unknown[]; count: number }>(
-      `/api/hail-events/${stormId}/jobs`
+      `/hail-events/${stormId}/jobs`
     ),
 
   getJobStorm: (jobId: number) =>
     api.get<{ job_id: number; storm: HailEvent | null; link: unknown }>(
-      `/api/jobs/${jobId}/storm`
+      `/jobs/${jobId}/storm`
     ),
 
   findMatchingStorm: (jobId: number, zipCode: string, damageDate: string, daysRange?: number) =>
     api.post<{ job_id: number; matching_storm: HailEvent | null }>(
-      `/api/jobs/${jobId}/find-storm`,
+      `/jobs/${jobId}/find-storm`,
       { zip_code: zipCode, damage_date: damageDate, days_range: daysRange }
     ),
 
   // Severity
   getSeverityInfo: (severity: string) =>
     api.get<{ severity: string; info: SeverityInfo }>(
-      `/api/hail-events/severity-info/${severity}`
+      `/hail-events/severity-info/${severity}`
     ),
 
   getAllSeverityLevels: () =>
     api.get<{ levels: Record<string, SeverityInfo> }>(
-      '/api/hail-events/severity-levels'
+      '/hail-events/severity-levels'
     ),
 
   classifySeverity: (hailSizeInches: number) =>
     api.post<{ hail_size_inches: number; severity: string; info: SeverityInfo }>(
-      '/api/hail-events/classify-severity',
+      '/hail-events/classify-severity',
       { hail_size_inches: hailSizeInches }
     ),
 
   // Calendar
   getCalendar: (params: { year?: number; month?: number; state?: string }) =>
-    api.get<CalendarMonthData>('/api/hail-events/calendar', { params }),
+    api.get<CalendarMonthData>('/hail-events/calendar', params),
 
   getCalendarYear: (params: { year?: number; state?: string }) =>
-    api.get<CalendarYearData>('/api/hail-events/calendar/year', { params }),
+    api.get<CalendarYearData>('/hail-events/calendar/year', params),
 
   // Address lookup
   checkLocation: (params: { lat: number; lon: number; years?: number; radius_miles?: number }) =>
-    api.get<LocationCheckResult>('/api/hail-events/check-location', { params }),
+    api.get<LocationCheckResult>('/hail-events/check-location', params),
 
   // Generate PDF impact report
   generateImpactReport: async (params: {
@@ -561,7 +561,7 @@ export const hailEventsApi = {
     company_email?: string
     company_website?: string
   }): Promise<Blob> => {
-    const response = await api.post('/api/hail-events/impact-report', params, {
+    const response = await api.post('/hail-events/impact-report', params, {
       responseType: 'blob',
     })
     return response.data
@@ -575,27 +575,27 @@ export const hailEventsApi = {
 export const stormCellsApi = {
   // Tracks
   getTracks: (minDuration?: number) =>
-    api.get<{ tracks: CellTrack[]; count: number }>('/api/storm-cells', {
-      params: { min_duration: minDuration },
+    api.get<{ tracks: CellTrack[]; count: number }>('/storm-cells', {
+      min_duration: minDuration,
     }),
 
   getTrack: (cellId: number) =>
-    api.get<CellTrack>(`/api/storm-cells/${cellId}`),
+    api.get<CellTrack>(`/storm-cells/${cellId}`),
 
   getActiveCells: () =>
     api.get<{ active_cells: StormCell[]; count: number }>(
-      '/api/storm-cells/active'
+      '/storm-cells/active'
     ),
 
   // Swaths
   getCellSwath: (cellId: number, bufferKm?: number) =>
-    api.get<SwathFeature>(`/api/storm-cells/${cellId}/swath`, {
-      params: { buffer_km: bufferKm },
+    api.get<SwathFeature>(`/storm-cells/${cellId}/swath`, {
+      buffer_km: bufferKm,
     }),
 
   getAllSwaths: (minDuration?: number, bufferKm?: number) =>
-    api.get<SwathCollection>('/api/storm-cells/swaths', {
-      params: { min_duration: minDuration, buffer_km: bufferKm },
+    api.get<SwathCollection>('/storm-cells/swaths', {
+      min_duration: minDuration, buffer_km: bufferKm,
     }),
 
   // Forecasting
@@ -604,15 +604,15 @@ export const stormCellsApi = {
       cell_id: number
       forecast_minutes: number
       positions: Array<{ lat: number; lon: number; timestamp: string }>
-    }>(`/api/storm-cells/${cellId}/forecast`, { params: { minutes } }),
+    }>(`/storm-cells/${cellId}/forecast`, { minutes }),
 
   // Statistics
-  getStats: () => api.get<Record<string, unknown>>('/api/storm-cells/stats'),
+  getStats: () => api.get<Record<string, unknown>>('/storm-cells/stats'),
 
   // Processing
   processRadarScan: (detections: unknown[], scanTime?: string) =>
     api.post<{ cells: StormCell[]; count: number; scan_time: string }>(
-      '/api/storm-cells/process',
+      '/storm-cells/process',
       { detections, scan_time: scanTime }
     ),
 
@@ -629,9 +629,9 @@ export const stormCellsApi = {
       tracks: number
       swaths: SwathCollection
       statistics: Record<string, unknown>
-    }>('/api/storm-cells/simulate', params),
+    }>('/storm-cells/simulate', params),
 
-  reset: () => api.post<{ success: boolean }>('/api/storm-cells/reset'),
+  reset: () => api.post<{ success: boolean }>('/storm-cells/reset'),
 }
 
 // =============================================================================
@@ -639,27 +639,27 @@ export const stormCellsApi = {
 // =============================================================================
 
 export const stormMonitorApi = {
-  getStatus: () => api.get<MonitorStatus>('/api/storm-monitor/status'),
+  getStatus: () => api.get<MonitorStatus>('/storm-monitor/status'),
 
   start: (config?: Partial<MonitorConfig>) =>
     api.post<{ success: boolean; message: string; radars?: string[] }>(
-      '/api/storm-monitor/start',
+      '/storm-monitor/start',
       config
     ),
 
   stop: () =>
-    api.post<{ success: boolean; message: string }>('/api/storm-monitor/stop'),
+    api.post<{ success: boolean; message: string }>('/storm-monitor/stop'),
 
-  getConfig: () => api.get<MonitorConfig>('/api/storm-monitor/config'),
+  getConfig: () => api.get<MonitorConfig>('/storm-monitor/config'),
 
   updateConfig: (config: Partial<MonitorConfig>) =>
     api.put<{ success: boolean; message: string; config: MonitorConfig }>(
-      '/api/storm-monitor/config',
+      '/storm-monitor/config',
       config
     ),
 
   getAvailableRadars: () =>
-    api.get<{ radars: RadarSite[]; count: number }>('/api/storm-monitor/radars'),
+    api.get<{ radars: RadarSite[]; count: number }>('/storm-monitor/radars'),
 
   // Radar history for replay
   getRadarHistory: (params: {
@@ -683,7 +683,7 @@ export const stormMonitorApi = {
         image_url: string
         index: number
       }>
-    }>('/api/storm-monitor/radar/history', { params }),
+    }>('/storm-monitor/radar/history', params),
 
   // Get radar loop URL
   getRadarLoop: (params: { region?: string; duration?: number }) =>
@@ -692,7 +692,7 @@ export const stormMonitorApi = {
       duration_hours: number
       loop_url: string
       frames_url: string
-    }>('/api/storm-monitor/radar/loop', { params }),
+    }>('/storm-monitor/radar/loop', params),
 }
 
 // =============================================================================
@@ -740,7 +740,7 @@ export interface TerritoryAlert {
 export const territoryAlertsApi = {
   // List territories
   listTerritories: () =>
-    api.get<{ territories: Territory[]; count: number }>('/api/territory-alerts/territories'),
+    api.get<{ territories: Territory[]; count: number }>('/territory-alerts/territories'),
 
   // Create territory
   createTerritory: (data: {
@@ -756,42 +756,42 @@ export const territoryAlertsApi = {
     push_alerts?: boolean
   }) =>
     api.post<{ success: boolean; territory_id: number; message: string }>(
-      '/api/territory-alerts/territories',
+      '/territory-alerts/territories',
       data
     ),
 
   // Get territory
   getTerritory: (id: number) =>
-    api.get<{ territory: Territory }>(`/api/territory-alerts/territories/${id}`),
+    api.get<{ territory: Territory }>(`/territory-alerts/territories/${id}`),
 
   // Update territory
   updateTerritory: (id: number, data: Partial<Territory>) =>
     api.put<{ success: boolean; message: string }>(
-      `/api/territory-alerts/territories/${id}`,
+      `/territory-alerts/territories/${id}`,
       data
     ),
 
   // Delete territory
   deleteTerritory: (id: number) =>
     api.delete<{ success: boolean; message: string }>(
-      `/api/territory-alerts/territories/${id}`
+      `/territory-alerts/territories/${id}`
     ),
 
   // List alerts
   listAlerts: (params?: { days?: number; unread_only?: boolean }) =>
     api.get<{ alerts: TerritoryAlert[]; count: number }>(
-      '/api/territory-alerts/alerts',
-      { params }
+      '/territory-alerts/alerts',
+      params
     ),
 
   // Mark alert as read
   markAlertRead: (id: number) =>
-    api.post<{ success: boolean }>(`/api/territory-alerts/alerts/${id}/read`, {}),
+    api.post<{ success: boolean }>(`/territory-alerts/alerts/${id}/read`, {}),
 
   // Mark all alerts as read
   markAllAlertsRead: () =>
     api.post<{ success: boolean; message: string }>(
-      '/api/territory-alerts/alerts/mark-all-read',
+      '/territory-alerts/alerts/mark-all-read',
       {}
     ),
 
@@ -810,7 +810,7 @@ export const territoryAlertsApi = {
       }>
       territories_checked: number
       events_checked: number
-    }>('/api/territory-alerts/check-storms', { hours_back }),
+    }>('/territory-alerts/check-storms', { hours_back }),
 
   // Get stats
   getStats: () =>
@@ -818,15 +818,15 @@ export const territoryAlertsApi = {
       territories_count: number
       unread_alerts: number
       alerts_this_week: number
-    }>('/api/territory-alerts/stats'),
+    }>('/territory-alerts/stats'),
 
   getAvailableRegions: () =>
-    api.get<{ regions: string[] }>('/api/storm-monitor/regions'),
+    api.get<{ regions: string[] }>('/storm-monitor/regions'),
 
   getAlerts: () =>
-    api.get<{ alerts: StormAlert[]; count: number }>('/api/storm-monitor/alerts'),
+    api.get<{ alerts: StormAlert[]; count: number }>('/storm-monitor/alerts'),
 
-  getAlertStats: () => api.get<Record<string, unknown>>('/api/storm-monitor/alerts/stats'),
+  getAlertStats: () => api.get<Record<string, unknown>>('/storm-monitor/alerts/stats'),
 }
 
 // =============================================================================
@@ -842,7 +842,7 @@ export const mlApi = {
     radar_data?: Record<string, unknown>
     environmental_data?: Record<string, unknown>
     cell_data?: Record<string, unknown>
-  }) => api.post<HailClassification>('/api/ml/classify', data),
+  }) => api.post<HailClassification>('/ml/classify', data),
 
   classifyBatch: (events: Array<{
     lat: number
@@ -853,19 +853,19 @@ export const mlApi = {
     cell_data?: Record<string, unknown>
   }>) =>
     api.post<{ results: HailClassification[]; count: number; success_count: number }>(
-      '/api/ml/classify-batch',
+      '/ml/classify-batch',
       { events }
     ),
 
   // Model Info
-  getModelInfo: () => api.get<Record<string, unknown>>('/api/ml/model-info'),
+  getModelInfo: () => api.get<Record<string, unknown>>('/ml/model-info'),
 
   getFeatureImportance: () =>
-    api.get<{ features: Array<{ name: string; importance: number }> }>('/api/ml/feature-importance'),
+    api.get<{ features: Array<{ name: string; importance: number }> }>('/ml/feature-importance'),
 
   // Forecasting
   forecast: (radarTrend: unknown[], environment: Record<string, unknown>) =>
-    api.post<StormForecast>('/api/ml/forecast', {
+    api.post<StormForecast>('/ml/forecast', {
       radar_trend: radarTrend,
       environment,
     }),
@@ -875,7 +875,7 @@ export const mlApi = {
     image_base64?: string
     features?: number[]
     image_stats?: Record<string, unknown>
-  }) => api.post<SizeEstimate>('/api/ml/estimate-size', data),
+  }) => api.post<SizeEstimate>('/ml/estimate-size', data),
 
   // Raw Prediction
   predict: (data: {
@@ -890,7 +890,7 @@ export const mlApi = {
       size_inches: number
       severity: string
       confidence: number
-    }>('/api/ml/predict', data),
+    }>('/ml/predict', data),
 
   extractFeatures: (data: {
     radar_data?: Record<string, unknown>
@@ -898,12 +898,12 @@ export const mlApi = {
     cell_data?: Record<string, unknown>
   }) =>
     api.post<{ features: number[]; feature_names: string[]; feature_count: number }>(
-      '/api/ml/extract-features',
+      '/ml/extract-features',
       data
     ),
 
   // Status
-  getStatus: () => api.get<MLStatus>('/api/ml/status'),
+  getStatus: () => api.get<MLStatus>('/ml/status'),
 
   // Reference
   getSizeReference: () =>
@@ -914,7 +914,7 @@ export const mlApi = {
         mm: number
         damage: string
       }>
-    }>('/api/ml/size-reference'),
+    }>('/ml/size-reference'),
 }
 
 // =============================================================================

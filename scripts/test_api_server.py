@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
 """
 Simple test API server for HailTracker frontend testing.
-Serves storm data from PostgreSQL.
+Serves storm data from PostgreSQL and fleet data from SQLite.
 """
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 import psycopg2
 import psycopg2.extras
+import sqlite3
 import json
+import os
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend
 
+# PostgreSQL for storm data
 PG_CONFIG = {
     "host": "localhost",
     "port": 5432,
@@ -21,10 +24,20 @@ PG_CONFIG = {
     "password": "hailtracker_dev_2024"
 }
 
+# SQLite for fleet/CRM data
+SQLITE_DB = r'C:\Users\xtxll\Desktop\HailTracker\hailtracker-pro\data\hailtracker_crm.db'
+
 
 def get_db():
-    """Get database connection."""
+    """Get PostgreSQL database connection."""
     return psycopg2.connect(**PG_CONFIG)
+
+
+def get_sqlite_db():
+    """Get SQLite database connection."""
+    conn = sqlite3.connect(SQLITE_DB)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
 @app.route('/api/health')
@@ -923,241 +936,480 @@ def get_customers():
 
 
 # =============================================================================
-# FLEET LOCATIONS ENDPOINTS
+# FLEET LOCATIONS ENDPOINTS (Using real SQLite data)
 # =============================================================================
+
+def get_swath_bounds(event_ids):
+    """Get bounding box from swath polygons for given event IDs."""
+    if not event_ids:
+        return None
+
+    conn = get_db()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+    placeholders = ','.join(['%s'] * len(event_ids))
+    cursor.execute(f"""
+        SELECT
+            MIN(s.center_lat) - 0.5 as min_lat,
+            MAX(s.center_lat) + 0.5 as max_lat,
+            MIN(s.center_lon) - 0.5 as min_lon,
+            MAX(s.center_lon) + 0.5 as max_lon
+        FROM swaths s
+        WHERE s.id IN ({placeholders})
+    """, event_ids)
+
+    result = cursor.fetchone()
+    conn.close()
+
+    if result and result['min_lat']:
+        return {
+            'min_lat': float(result['min_lat']),
+            'max_lat': float(result['max_lat']),
+            'min_lon': float(result['min_lon']),
+            'max_lon': float(result['max_lon'])
+        }
+    return None
+
+
+def query_fleet_locations(bounds=None, limit=500):
+    """Query fleet locations from SQLite within optional bounds."""
+    try:
+        conn = get_sqlite_db()
+
+        if bounds:
+            query = """
+                SELECT id, name, category, subcategory, address, city, state, zip_code,
+                       lat, lon, phone, email, website, estimated_vehicles,
+                       vehicle_confidence, data_source, worked_before
+                FROM fleet_locations
+                WHERE lat BETWEEN ? AND ?
+                  AND lon BETWEEN ? AND ?
+                  AND lat IS NOT NULL
+                  AND lon IS NOT NULL
+                ORDER BY estimated_vehicles DESC
+                LIMIT ?
+            """
+            cursor = conn.execute(query, (
+                bounds['min_lat'], bounds['max_lat'],
+                bounds['min_lon'], bounds['max_lon'],
+                limit
+            ))
+        else:
+            query = """
+                SELECT id, name, category, subcategory, address, city, state, zip_code,
+                       lat, lon, phone, email, website, estimated_vehicles,
+                       vehicle_confidence, data_source, worked_before
+                FROM fleet_locations
+                WHERE lat IS NOT NULL AND lon IS NOT NULL
+                ORDER BY estimated_vehicles DESC
+                LIMIT ?
+            """
+            cursor = conn.execute(query, (limit,))
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        businesses = []
+        for row in rows:
+            businesses.append({
+                "id": row['id'],
+                "name": row['name'] or "Unknown Business",
+                "category": row['category'] or "other",
+                "subcategory": row['subcategory'] or "",
+                "address": row['address'] or "",
+                "city": row['city'] or "",
+                "state": row['state'] or "",
+                "zip": row['zip_code'] or "",
+                "phone": row['phone'] or "",
+                "email": row['email'] or "",
+                "website": row['website'] or "",
+                "estimated_vehicles": row['estimated_vehicles'] or 0,
+                "tier": 1 if (row['estimated_vehicles'] or 0) >= 100 else 2 if (row['estimated_vehicles'] or 0) >= 50 else 3,
+                "latitude": row['lat'],
+                "longitude": row['lon'],
+                "source": row['data_source'] or "database",
+                "added_to_crm": bool(row['worked_before'])
+            })
+
+        return businesses
+    except Exception as e:
+        print(f"Error querying fleet locations: {e}")
+        return []
+
 
 @app.route('/api/fleet-locations/tile-discover', methods=['POST'])
 def tile_discover():
     """Tile-based business discovery within swath polygons."""
-    data = request.get_json() or {}
-    event_ids = data.get('event_ids', [])
+    try:
+        data = request.get_json() or {}
+        event_ids = data.get('event_ids', [])
 
-    # Return mock business data for testing
-    # In production, this would search for businesses within the swath polygons
-    mock_businesses = []
+        # Get bounds from swath polygons
+        bounds = get_swath_bounds(event_ids) if event_ids else None
 
-    # Generate some mock businesses based on the events
-    if event_ids:
-        for i, event_id in enumerate(event_ids[:5]):  # Limit to 5 for mock
-            mock_businesses.extend([
-                {
-                    "id": i * 10 + 1,
-                    "name": f"ABC Auto Dealership #{event_id}",
-                    "address": f"{100 + i} Main St",
-                    "city": "Oklahoma City",
-                    "state": "OK",
-                    "zip": "73101",
-                    "phone": "405-555-0100",
-                    "website": "",
-                    "email": "",
-                    "category": "auto_dealership",
-                    "subcategory": "used_cars",
-                    "estimated_vehicles": 150,
-                    "tier": 1,
-                    "latitude": 35.4 + (i * 0.01),
-                    "longitude": -97.5 + (i * 0.01),
-                    "source": "mock",
-                    "added_to_crm": False,
-                    "event_id": event_id
-                },
-                {
-                    "id": i * 10 + 2,
-                    "name": f"City Fleet Services #{event_id}",
-                    "address": f"{200 + i} Commerce Ave",
-                    "city": "Norman",
-                    "state": "OK",
-                    "zip": "73019",
-                    "phone": "405-555-0200",
-                    "website": "",
-                    "email": "",
-                    "category": "fleet_service",
-                    "subcategory": "government",
-                    "estimated_vehicles": 75,
-                    "tier": 2,
-                    "latitude": 35.22 + (i * 0.01),
-                    "longitude": -97.44 + (i * 0.01),
-                    "source": "mock",
-                    "added_to_crm": False,
-                    "event_id": event_id
-                }
-            ])
+        # Query real fleet locations
+        businesses = query_fleet_locations(bounds, limit=500)
 
-    return jsonify({
-        "success": True,
-        "businesses": mock_businesses,
-        "stats": {
-            "tiles_total": len(event_ids) * 10,
-            "tiles_searched": len(event_ids) * 10,
-            "tiles_from_cache": 0,
-            "by_source": {"mock": len(mock_businesses)},
-            "total_found": len(mock_businesses),
-            "duplicates_removed": 0,
-            "geocoded": len(mock_businesses),
-            "total_vehicles": sum(b["estimated_vehicles"] for b in mock_businesses),
-            "by_category": {"auto_dealership": len(event_ids), "fleet_service": len(event_ids)}
-        },
-        "tile_stats": {
-            "count": len(event_ids) * 10,
-            "tile_size_miles": 0.5,
-            "estimated_area_sq_miles": len(event_ids) * 25
-        }
-    })
+        # Calculate stats
+        by_category = {}
+        by_source = {}
+        total_vehicles = 0
+        for b in businesses:
+            cat = b.get('category', 'other')
+            src = b.get('source', 'database')
+            by_category[cat] = by_category.get(cat, 0) + 1
+            by_source[src] = by_source.get(src, 0) + 1
+            total_vehicles += b.get('estimated_vehicles', 0)
+
+        return jsonify({
+            "success": True,
+            "businesses": businesses,
+            "stats": {
+                "tiles_total": len(event_ids) * 10 if event_ids else 1,
+                "tiles_searched": len(event_ids) * 10 if event_ids else 1,
+                "tiles_from_cache": 0,
+                "by_source": by_source,
+                "total_found": len(businesses),
+                "duplicates_removed": 0,
+                "geocoded": len(businesses),
+                "total_vehicles": total_vehicles,
+                "by_category": by_category
+            },
+            "tile_stats": {
+                "count": len(event_ids) * 10 if event_ids else 1,
+                "tile_size_miles": 0.5,
+                "estimated_area_sq_miles": len(event_ids) * 25 if event_ids else 100
+            }
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e), "businesses": []}), 500
 
 
 @app.route('/api/fleet-locations/fast-discover', methods=['POST'])
 def fast_discover():
     """Fast hybrid business discovery."""
-    data = request.get_json() or {}
-    event_ids = data.get('event_ids', [])
+    try:
+        data = request.get_json() or {}
+        event_ids = data.get('event_ids', [])
 
-    mock_businesses = []
-    for i, event_id in enumerate(event_ids[:3]):
-        mock_businesses.append({
-            "id": i + 1,
-            "name": f"Quick Fleet Auto #{event_id}",
-            "address": f"{300 + i} Industrial Blvd",
-            "city": "Oklahoma City",
-            "state": "OK",
-            "zip": "73102",
-            "phone": "405-555-0300",
-            "category": "auto_dealership",
-            "estimated_vehicles": 200,
-            "tier": 1,
-            "latitude": 35.45 + (i * 0.01),
-            "longitude": -97.52 + (i * 0.01),
-            "source": "osm"
+        bounds = get_swath_bounds(event_ids) if event_ids else None
+        businesses = query_fleet_locations(bounds, limit=200)
+
+        by_category = {}
+        by_source = {}
+        total_vehicles = 0
+        for b in businesses:
+            cat = b.get('category', 'other')
+            src = b.get('source', 'database')
+            by_category[cat] = by_category.get(cat, 0) + 1
+            by_source[src] = by_source.get(src, 0) + 1
+            total_vehicles += b.get('estimated_vehicles', 0)
+
+        return jsonify({
+            "success": True,
+            "businesses": businesses,
+            "stats": {
+                "swaths_total": len(event_ids),
+                "swaths_from_cache": 0,
+                "osm_queries": 1,
+                "osm_found": len(businesses),
+                "total_found": len(businesses),
+                "duplicates_removed": 0,
+                "total_vehicles": total_vehicles,
+                "by_category": by_category,
+                "by_source": by_source
+            },
+            "timing": {
+                "total_seconds": 0.5,
+                "osm_seconds": 0.3,
+                "city_seconds": 0.2
+            }
         })
-
-    return jsonify({
-        "success": True,
-        "businesses": mock_businesses,
-        "stats": {
-            "swaths_total": len(event_ids),
-            "swaths_from_cache": 0,
-            "osm_queries": 1,
-            "osm_found": len(mock_businesses),
-            "total_found": len(mock_businesses),
-            "duplicates_removed": 0,
-            "total_vehicles": sum(b["estimated_vehicles"] for b in mock_businesses),
-            "by_category": {"auto_dealership": len(mock_businesses)},
-            "by_source": {"osm": len(mock_businesses)}
-        },
-        "timing": {
-            "total_seconds": 2.5,
-            "osm_seconds": 1.5,
-            "city_seconds": 1.0
-        }
-    })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e), "businesses": []}), 500
 
 
 @app.route('/api/fleet-locations/smart-scrape-swaths', methods=['POST'])
 def smart_scrape_swaths():
     """Smart swath-based business discovery."""
-    data = request.get_json() or {}
-    event_ids = data.get('event_ids', [])
+    try:
+        data = request.get_json() or {}
+        event_ids = data.get('event_ids', [])
 
-    mock_businesses = []
-    for i, event_id in enumerate(event_ids[:5]):
-        mock_businesses.append({
-            "id": i + 1,
-            "name": f"Enterprise Fleet #{event_id}",
-            "address": f"{400 + i} Airport Rd",
-            "city": "Oklahoma City",
-            "state": "OK",
-            "zip": "73159",
-            "phone": "405-555-0400",
-            "category": "car_rental",
-            "estimated_vehicles": 300,
-            "tier": 1,
-            "latitude": 35.39 + (i * 0.01),
-            "longitude": -97.60 + (i * 0.01),
-            "source": "foursquare"
+        bounds = get_swath_bounds(event_ids) if event_ids else None
+        businesses = query_fleet_locations(bounds, limit=300)
+
+        by_category = {}
+        by_source = {}
+        total_vehicles = 0
+        for b in businesses:
+            cat = b.get('category', 'other')
+            src = b.get('source', 'database')
+            by_category[cat] = by_category.get(cat, 0) + 1
+            by_source[src] = by_source.get(src, 0) + 1
+            total_vehicles += b.get('estimated_vehicles', 0)
+
+        return jsonify({
+            "success": True,
+            "businesses": businesses,
+            "stats": {
+                "total_found": len(businesses),
+                "cached": False,
+                "from_cache": 0,
+                "newly_scraped": len(businesses),
+                "osm_found": by_source.get('osm', 0),
+                "foursquare_found": 0,
+                "yelp_found": 0,
+                "geocoded": len(businesses),
+                "duplicates_removed": 0,
+                "final_in_swath": len(businesses),
+                "by_category": by_category,
+                "by_source": by_source,
+                "total_vehicles": total_vehicles,
+                "events_processed": len(event_ids)
+            },
+            "api_status": {
+                "foursquare": {"configured": False, "free_tier": "1000/day"},
+                "yelp": {"configured": False, "free_tier": "5000/day"},
+                "osm": {"configured": True, "free_tier": "unlimited"}
+            }
         })
-
-    return jsonify({
-        "success": True,
-        "businesses": mock_businesses,
-        "stats": {
-            "total_found": len(mock_businesses),
-            "cached": False,
-            "from_cache": 0,
-            "newly_scraped": len(mock_businesses),
-            "osm_found": 0,
-            "foursquare_found": len(mock_businesses),
-            "yelp_found": 0,
-            "geocoded": len(mock_businesses),
-            "duplicates_removed": 0,
-            "final_in_swath": len(mock_businesses),
-            "by_category": {"car_rental": len(mock_businesses)},
-            "by_source": {"foursquare": len(mock_businesses)},
-            "total_vehicles": sum(b["estimated_vehicles"] for b in mock_businesses),
-            "events_processed": len(event_ids)
-        },
-        "api_status": {
-            "foursquare": {"configured": True, "free_tier": "1000/day"},
-            "yelp": {"configured": False, "free_tier": "5000/day"},
-            "osm": {"configured": True, "free_tier": "unlimited"}
-        }
-    })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e), "businesses": []}), 500
 
 
 @app.route('/api/fleet-locations')
 def get_fleet_locations():
-    """Get fleet locations."""
-    return jsonify({
-        "locations": [],
-        "total": 0,
-        "page": 1,
-        "per_page": 50,
-        "pages": 0
-    })
+    """Get fleet locations with pagination."""
+    try:
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 50, type=int)
+        category = request.args.get('category')
+        min_vehicles = request.args.get('min_vehicles', type=int)
+        search = request.args.get('search')
+
+        conn = get_sqlite_db()
+
+        # Build query
+        query = """
+            SELECT id, name, category, subcategory, address, city, state, zip_code,
+                   lat, lon, phone, email, website, estimated_vehicles,
+                   vehicle_confidence, data_source
+            FROM fleet_locations
+            WHERE lat IS NOT NULL AND lon IS NOT NULL
+        """
+        params = []
+
+        if category:
+            query += " AND category = ?"
+            params.append(category)
+        if min_vehicles:
+            query += " AND estimated_vehicles >= ?"
+            params.append(min_vehicles)
+        if search:
+            query += " AND (name LIKE ? OR city LIKE ?)"
+            params.extend([f'%{search}%', f'%{search}%'])
+
+        # Get total count
+        count_query = query.replace(
+            "SELECT id, name, category, subcategory, address, city, state, zip_code, lat, lon, phone, email, website, estimated_vehicles, vehicle_confidence, data_source",
+            "SELECT COUNT(*)"
+        )
+        total = conn.execute(count_query, params).fetchone()[0]
+
+        # Add pagination
+        query += " ORDER BY estimated_vehicles DESC LIMIT ? OFFSET ?"
+        params.extend([per_page, (page - 1) * per_page])
+
+        rows = conn.execute(query, params).fetchall()
+        conn.close()
+
+        locations = []
+        for row in rows:
+            locations.append({
+                "id": row['id'],
+                "name": row['name'],
+                "category": row['category'],
+                "subcategory": row['subcategory'],
+                "address": row['address'],
+                "city": row['city'],
+                "state": row['state'],
+                "zip_code": row['zip_code'],
+                "lat": row['lat'],
+                "lon": row['lon'],
+                "phone": row['phone'],
+                "email": row['email'],
+                "website": row['website'],
+                "estimated_vehicles": row['estimated_vehicles'],
+                "vehicle_confidence": row['vehicle_confidence'],
+                "data_source": row['data_source']
+            })
+
+        return jsonify({
+            "locations": locations,
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "pages": (total + per_page - 1) // per_page
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/fleet-locations/categories')
 def get_fleet_categories():
-    """Get fleet location categories."""
-    return jsonify({
-        "categories": [
-            {"category": "auto_dealership", "display_name": "Auto Dealerships", "location_count": 0, "total_vehicles": 0},
-            {"category": "car_rental", "display_name": "Car Rentals", "location_count": 0, "total_vehicles": 0},
-            {"category": "fleet_service", "display_name": "Fleet Services", "location_count": 0, "total_vehicles": 0}
-        ]
-    })
+    """Get fleet location categories from SQLite."""
+    try:
+        conn = get_sqlite_db()
+        cursor = conn.execute("""
+            SELECT
+                category,
+                COUNT(*) as location_count,
+                SUM(COALESCE(estimated_vehicles, 0)) as total_vehicles,
+                AVG(COALESCE(estimated_vehicles, 0)) as avg_vehicles
+            FROM fleet_locations
+            WHERE category IS NOT NULL
+            GROUP BY category
+            ORDER BY total_vehicles DESC
+        """)
+        rows = cursor.fetchall()
+        conn.close()
+
+        categories = []
+        for row in rows:
+            display_name = row['category'].replace('_', ' ').title() if row['category'] else 'Other'
+            categories.append({
+                "category": row['category'],
+                "display_name": display_name,
+                "location_count": row['location_count'],
+                "total_vehicles": row['total_vehicles'] or 0,
+                "avg_vehicles": round(row['avg_vehicles'] or 0, 1),
+                "potential_revenue": (row['total_vehicles'] or 0) * 2000  # $2000 avg per vehicle
+            })
+
+        return jsonify({"categories": categories})
+    except Exception as e:
+        return jsonify({"error": str(e), "categories": []}), 500
 
 
 @app.route('/api/fleet-locations/stats')
 def get_fleet_stats():
-    """Get fleet location stats."""
-    return jsonify({
-        "total_locations": 0,
-        "total_vehicles": 0,
-        "categories": 3,
-        "potential_revenue": 0,
-        "top_categories": []
-    })
+    """Get fleet location stats from SQLite."""
+    try:
+        conn = get_sqlite_db()
+
+        # Get totals
+        totals = conn.execute("""
+            SELECT
+                COUNT(*) as total_locations,
+                SUM(COALESCE(estimated_vehicles, 0)) as total_vehicles,
+                COUNT(DISTINCT category) as categories
+            FROM fleet_locations
+        """).fetchone()
+
+        # Get top categories
+        top_cats = conn.execute("""
+            SELECT
+                category,
+                COUNT(*) as count,
+                SUM(COALESCE(estimated_vehicles, 0)) as vehicles
+            FROM fleet_locations
+            WHERE category IS NOT NULL
+            GROUP BY category
+            ORDER BY vehicles DESC
+            LIMIT 5
+        """).fetchall()
+
+        conn.close()
+
+        top_categories = [
+            {"category": r['category'], "count": r['count'], "vehicles": r['vehicles'] or 0}
+            for r in top_cats
+        ]
+
+        return jsonify({
+            "total_locations": totals['total_locations'],
+            "total_vehicles": totals['total_vehicles'] or 0,
+            "categories": totals['categories'],
+            "potential_revenue": (totals['total_vehicles'] or 0) * 2000,
+            "top_categories": top_categories
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/fleet-leads')
 def get_fleet_leads():
-    """Get fleet leads."""
-    return jsonify({
-        "leads": [],
-        "count": 0
-    })
+    """Get fleet leads from SQLite."""
+    try:
+        conn = get_sqlite_db()
+        cursor = conn.execute("""
+            SELECT * FROM fleet_leads
+            ORDER BY created_at DESC
+            LIMIT 100
+        """)
+        rows = cursor.fetchall()
+        conn.close()
+
+        leads = [dict(row) for row in rows]
+        return jsonify({
+            "leads": leads,
+            "count": len(leads)
+        })
+    except Exception as e:
+        return jsonify({"leads": [], "count": 0})
 
 
 @app.route('/api/fleet-leads/stats')
 def get_fleet_leads_stats():
-    """Get fleet leads stats."""
-    return jsonify({
-        "by_status": [],
-        "pipeline": {"count": 0, "vehicles": 0, "value": 0},
-        "won": {"count": 0, "value": 0},
-        "hail_affected": {"count": 0, "vehicles": 0},
-        "followups_due": 0,
-        "recent_activity": 0,
-        "by_city": []
-    })
+    """Get fleet leads stats from SQLite."""
+    try:
+        conn = get_sqlite_db()
+
+        # Get stats by status
+        by_status = conn.execute("""
+            SELECT
+                status,
+                COUNT(*) as count,
+                SUM(COALESCE(estimated_vehicles, 0)) as vehicles,
+                SUM(COALESCE(quote_amount, 0)) as value
+            FROM fleet_leads
+            GROUP BY status
+        """).fetchall()
+
+        # Get by city
+        by_city = conn.execute("""
+            SELECT
+                city, state,
+                COUNT(*) as count,
+                SUM(COALESCE(estimated_vehicles, 0)) as vehicles
+            FROM fleet_leads
+            GROUP BY city, state
+            ORDER BY count DESC
+            LIMIT 10
+        """).fetchall()
+
+        conn.close()
+
+        return jsonify({
+            "by_status": [{"status": r['status'], "count": r['count'], "vehicles": r['vehicles'] or 0, "value": r['value'] or 0} for r in by_status],
+            "pipeline": {"count": sum(r['count'] for r in by_status if r['status'] not in ('WON', 'LOST')), "vehicles": 0, "value": 0},
+            "won": {"count": sum(r['count'] for r in by_status if r['status'] == 'WON'), "value": 0},
+            "hail_affected": {"count": 0, "vehicles": 0},
+            "followups_due": 0,
+            "recent_activity": 0,
+            "by_city": [{"city": r['city'], "state": r['state'], "count": r['count'], "vehicles": r['vehicles'] or 0} for r in by_city]
+        })
+    except Exception as e:
+        return jsonify({
+            "by_status": [],
+            "pipeline": {"count": 0, "vehicles": 0, "value": 0},
+            "won": {"count": 0, "value": 0},
+            "hail_affected": {"count": 0, "vehicles": 0},
+            "followups_due": 0,
+            "recent_activity": 0,
+            "by_city": []
+        })
 
 
 @app.route('/api/hail-events/recent-significant')

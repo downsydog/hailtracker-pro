@@ -89,21 +89,23 @@ export { SettingsPage } from "./admin/settings"
 export { UsersPage } from "./admin/users"
 
 // Parts
-export { PartsPage } from "./parts"
-export { PartOrdersPage } from "./parts/orders"
+export { PartsPage, PartOrdersPage } from "./parts"
 
 // R&I (Remove & Install)
-export { RIOperationsPage } from "./ri"
-export { RITimesPage } from "./ri/times"
+export { RIOperationsPage, RITimesPage } from "./ri"
 
 // CRM
-export { CRMDashboardPage } from "./crm/dashboard"
-export { CRMDealsPage } from "./crm/deals"
-export { CRMTasksPage } from "./crm/tasks"
-export { CRMPipelinePage } from "./crm/pipeline"
+export {
+  CRMDashboardPage,
+  CRMDealsPage,
+  CRMTasksPage,
+  CRMPipelinePage,
+} from "./crm"
 
 // Portal (additional pages)
-export { PortalReferralsPage } from "./portal/referrals"
-export { PortalFlyersPage } from "./portal/flyers"
-export { PortalLoyaltyPage } from "./portal/loyalty"
-export { PortalReviewsPage } from "./portal/reviews"
+export {
+  PortalReferralsPage,
+  PortalFlyersPage,
+  PortalLoyaltyPage,
+  PortalReviewsPage,
+} from "./portal"

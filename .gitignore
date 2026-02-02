@@ -107,3 +107,99 @@ build/
 
 # tooling folders
 .claude/
+ HEAD
+=======
+
+# --- LOCAL MESS (keep out of git) ---
+backend/
+config/
+data/
+database/
+exports/
+docs/
+scripts/data_collection/
+*.png
+*.pdf
+*.html
+*.sqlite
+*.db
+*.log
+*.json
+project_summary.txt
+project_inventory.txt
+PROJECT_HANDOFF.md
+PROJECT_INVENTORY.md
+
+# demo / example scripts
+example_*.py
+demo_*.py
+visualize_*.py
+create_*.py
+export_*.py
+run_*hail*.py
+seed_crm_demo.py
+query_alerts.py
+generate_training_data.py
+
+# legacy static assets
+static/
+
+# legacy standalone tests
+test_*.py
+ dd34778 (Ignore demo, example, and legacy test scripts)
+
+# local junk / secrets
+cookies*.txt
+cookies_ui.txt
+*.log
+*.sqlite
+*.db
+*.env
+.env*
+__pycache__/
+*.pyc
+
+# data / outputs
+data/
+database/
+exports/
+frontend/coverage/
+*.png
+*.html
+*.pdf
+events_test.json
+hail_check.json
+
+# python / node
+.venv/
+venv/
+node_modules/
+dist/
+build/
+
+# tooling folders
+.claude/
+
+# demo / example scripts
+example_*.py
+demo_*.py
+visualize_*.py
+create_*.py
+export_*.py
+run_*hail*.py
+seed_crm_demo.py
+query_alerts.py
+generate_training_data.py
+
+# legacy static assets
+static/
+
+# legacy standalone tests
+test_*.py
+
+# local run / utility scripts
+run_*.py
+*.sh
+
+# local test artifacts
+test_*.txt

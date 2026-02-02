@@ -130,6 +130,8 @@ export function HailLookupPage() {
 
     const { location, events } = locationData
 
+    if (!location) return
+
     // Add search location marker
     const searchIcon = L.divIcon({
       html: `<div style="width: 30px; height: 30px; border-radius: 50%; background: #3b82f6; border: 3px solid white; box-shadow: 0 2px 8px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center;">

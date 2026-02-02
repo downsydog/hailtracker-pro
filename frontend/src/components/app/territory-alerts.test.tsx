@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { TerritoryAlerts } from './territory-alerts'
 
@@ -7,86 +7,80 @@ import { TerritoryAlerts } from './territory-alerts'
 vi.mock('@/api/weather', () => ({
   territoryAlertsApi: {
     listTerritories: vi.fn(() => Promise.resolve({
-      data: {
-        territories: [
-          {
-            id: 1,
-            name: 'Dallas Metro',
-            center_lat: 32.7767,
-            center_lon: -96.7970,
-            radius_miles: 25,
-            min_hail_size: 0.75,
-            email_alerts: true,
-            sms_alerts: false,
-            push_alerts: true,
-            is_active: true
-          },
-          {
-            id: 2,
-            name: 'Oklahoma City',
-            center_lat: 35.4676,
-            center_lon: -97.5164,
-            radius_miles: 30,
-            min_hail_size: 1.0,
-            email_alerts: true,
-            sms_alerts: true,
-            push_alerts: true,
-            is_active: true
-          }
-        ],
-        count: 2
-      }
+      territories: [
+        {
+          id: 1,
+          name: 'Dallas Metro',
+          center_lat: 32.7767,
+          center_lon: -96.7970,
+          radius_miles: 25,
+          min_hail_size: 0.75,
+          email_alerts: true,
+          sms_alerts: false,
+          push_alerts: true,
+          is_active: true
+        },
+        {
+          id: 2,
+          name: 'Oklahoma City',
+          center_lat: 35.4676,
+          center_lon: -97.5164,
+          radius_miles: 30,
+          min_hail_size: 1.0,
+          email_alerts: true,
+          sms_alerts: true,
+          push_alerts: true,
+          is_active: true
+        }
+      ],
+      count: 2
     })),
     listAlerts: vi.fn(() => Promise.resolve({
-      data: {
-        alerts: [
-          {
-            id: 1,
-            territory_id: 1,
-            territory_name: 'Dallas Metro',
-            hail_event_id: 27,
-            alert_type: 'HAIL_IN_TERRITORY',
-            alert_message: 'Hail storm detected in your territory. 1.75" hail, 11.5 miles from center.',
-            is_read: false,
-            sent_at: '2026-01-24T06:00:00Z',
-            event_name: 'Dallas Severe Hail'
-          },
-          {
-            id: 2,
-            territory_id: 1,
-            territory_name: 'Dallas Metro',
-            hail_event_id: 28,
-            alert_type: 'HAIL_IN_TERRITORY',
-            alert_message: 'Catastrophic hail storm detected. 2.63" hail, 4.4 miles from center.',
-            is_read: true,
-            sent_at: '2026-01-23T18:00:00Z',
-            event_name: 'Dallas Catastrophic Storm'
-          }
-        ],
-        count: 2
-      }
+      alerts: [
+        {
+          id: 1,
+          territory_id: 1,
+          territory_name: 'Dallas Metro',
+          hail_event_id: 27,
+          alert_type: 'HAIL_IN_TERRITORY',
+          alert_message: 'Hail storm detected in your territory. 1.75" hail, 11.5 miles from center.',
+          is_read: false,
+          sent_at: '2026-01-24T06:00:00Z',
+          event_name: 'Dallas Severe Hail'
+        },
+        {
+          id: 2,
+          territory_id: 1,
+          territory_name: 'Dallas Metro',
+          hail_event_id: 28,
+          alert_type: 'HAIL_IN_TERRITORY',
+          alert_message: 'Catastrophic hail storm detected. 2.63" hail, 4.4 miles from center.',
+          is_read: true,
+          sent_at: '2026-01-23T18:00:00Z',
+          event_name: 'Dallas Catastrophic Storm'
+        }
+      ],
+      count: 2
     })),
     getStats: vi.fn(() => Promise.resolve({
-      data: {
-        territories_count: 2,
-        unread_alerts: 1,
-        alerts_this_week: 4
-      }
+      territories_count: 2,
+      unread_alerts: 1,
+      alerts_this_week: 4
     })),
     createTerritory: vi.fn(() => Promise.resolve({
-      data: { success: true, territory_id: 3 }
+      success: true, territory_id: 3
     })),
     updateTerritory: vi.fn(() => Promise.resolve({
-      data: { success: true }
+      success: true
     })),
     deleteTerritory: vi.fn(() => Promise.resolve({
-      data: { success: true }
+      success: true
     })),
     checkStorms: vi.fn(() => Promise.resolve({
-      data: { success: true, alerts_created: 2 }
+      success: true, alerts_created: 2
     })),
     markAlertRead: vi.fn(() => Promise.resolve({
-      data: { success: true }
+      success: true
     })),
   }
 }))
@@ -187,7 +181,7 @@ describe('TerritoryAlerts', () => {
     it('shows empty state when no alerts', async () => {
       const { territoryAlertsApi } = await import('@/api/weather')
       vi.mocked(territoryAlertsApi.listAlerts).mockResolvedValueOnce({
-        data: { alerts: [], count: 0 }
+        alerts: [], count: 0
       } as any)
 
       renderWithProviders(<TerritoryAlerts />)

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { StormCalendar } from './storm-calendar'
 
@@ -7,56 +7,52 @@ import { StormCalendar } from './storm-calendar'
 vi.mock('@/api/weather', () => ({
   hailEventsApi: {
     getCalendar: vi.fn(() => Promise.resolve({
-      data: {
-        year: 2026,
-        month: 1,
-        days: {
-          '2026-01-05': {
-            count: 2,
-            max_severity: 'SEVERE',
-            max_hail_size: 2.5,
-            total_vehicles: 15000,
-            events: [
-              { id: 1, event_name: 'Dallas Hail Storm', hail_size: 2.5, severity: 'SEVERE', lat: 32.77, lon: -96.79, vehicles: 10000, area_sqmi: 50 },
-              { id: 2, event_name: 'Fort Worth Storm', hail_size: 1.5, severity: 'MODERATE', lat: 32.75, lon: -97.33, vehicles: 5000, area_sqmi: 30 },
-            ]
-          },
-          '2026-01-10': {
-            count: 1,
-            max_severity: 'MINOR',
-            max_hail_size: 0.75,
-            total_vehicles: 2000,
-            events: [
-              { id: 3, event_name: 'Small Hail Event', hail_size: 0.75, severity: 'MINOR', lat: 33.0, lon: -97.0, vehicles: 2000, area_sqmi: 10 },
-            ]
-          }
-        },
-        month_stats: {
-          storm_days: 2,
-          total_events: 3,
-          total_vehicles: 17000,
+      year: 2026,
+      month: 1,
+      days: {
+        '2026-01-05': {
+          count: 2,
+          max_severity: 'SEVERE',
           max_hail_size: 2.5,
-          severe_days: 1,
-          moderate_days: 0,
-          minor_days: 1
+          total_vehicles: 15000,
+          events: [
+            { id: 1, event_name: 'Dallas Hail Storm', hail_size: 2.5, severity: 'SEVERE', lat: 32.77, lon: -96.79, vehicles: 10000, area_sqmi: 50 },
+            { id: 2, event_name: 'Fort Worth Storm', hail_size: 1.5, severity: 'MODERATE', lat: 32.75, lon: -97.33, vehicles: 5000, area_sqmi: 30 },
+          ]
+        },
+        '2026-01-10': {
+          count: 1,
+          max_severity: 'MINOR',
+          max_hail_size: 0.75,
+          total_vehicles: 2000,
+          events: [
+            { id: 3, event_name: 'Small Hail Event', hail_size: 0.75, severity: 'MINOR', lat: 33.0, lon: -97.0, vehicles: 2000, area_sqmi: 10 },
+          ]
         }
+      },
+      month_stats: {
+        storm_days: 2,
+        total_events: 3,
+        total_vehicles: 17000,
+        max_hail_size: 2.5,
+        severe_days: 1,
+        moderate_days: 0,
+        minor_days: 1
       }
     })),
     getCalendarYear: vi.fn(() => Promise.resolve({
-      data: {
-        year: 2026,
-        months: {
-          '1': { storm_days: 5, total_events: 8, total_vehicles: 50000, max_hail_size: 2.5, severe_count: 2, moderate_count: 3, minor_count: 3 },
-          '2': { storm_days: 0, total_events: 0, total_vehicles: 0, max_hail_size: 0, severe_count: 0, moderate_count: 0, minor_count: 0 },
-          '3': { storm_days: 3, total_events: 5, total_vehicles: 25000, max_hail_size: 1.75, severe_count: 0, moderate_count: 2, minor_count: 3 },
-        },
-        year_stats: {
-          total_storm_days: 8,
-          total_events: 13,
-          total_vehicles: 75000,
-          max_hail_size: 2.5,
-          peak_month: 1
-        }
+      year: 2026,
+      months: {
+        '1': { storm_days: 5, total_events: 8, total_vehicles: 50000, max_hail_size: 2.5, severe_count: 2, moderate_count: 3, minor_count: 3 },
+        '2': { storm_days: 0, total_events: 0, total_vehicles: 0, max_hail_size: 0, severe_count: 0, moderate_count: 0, minor_count: 0 },
+        '3': { storm_days: 3, total_events: 5, total_vehicles: 25000, max_hail_size: 1.75, severe_count: 0, moderate_count: 2, minor_count: 3 },
+      },
+      year_stats: {
+        total_storm_days: 8,
+        total_events: 13,
+        total_vehicles: 75000,
+        max_hail_size: 2.5,
+        peak_month: 1
       }
     })),
   }

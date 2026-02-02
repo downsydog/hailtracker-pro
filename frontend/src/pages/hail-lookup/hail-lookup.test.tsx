@@ -40,42 +40,40 @@ vi.mock('leaflet', () => ({
 vi.mock('@/api/weather', () => ({
   hailEventsApi: {
     checkLocation: vi.fn(() => Promise.resolve({
-      data: {
-        location: { lat: 32.7767, lon: -96.7970 },
-        was_hit: true,
-        events: [
-          {
-            id: 1,
-            event_name: 'Dallas Severe Hail Storm',
-            event_date: '2025-05-15',
-            hail_size_inches: 2.5,
-            distance_miles: 3.2,
-            data_source: 'NOAA'
-          },
-          {
-            id: 2,
-            event_name: 'Fort Worth Moderate Storm',
-            event_date: '2025-04-20',
-            hail_size_inches: 1.25,
-            distance_miles: 8.5,
-            data_source: 'NOAA'
-          },
-          {
-            id: 3,
-            event_name: 'Small Hail Event',
-            event_date: '2024-06-10',
-            hail_size_inches: 0.75,
-            distance_miles: 4.1,
-            data_source: 'NOAA'
-          }
-        ],
-        summary: {
-          total_events: 3,
-          max_hail_size: 2.5,
-          years_checked: 5,
-          most_recent: '2025-05-15',
-          by_year: { '2025': 2, '2024': 1 }
+      location: { lat: 32.7767, lon: -96.7970 },
+      was_hit: true,
+      events: [
+        {
+          id: 1,
+          event_name: 'Dallas Severe Hail Storm',
+          event_date: '2025-05-15',
+          hail_size_inches: 2.5,
+          distance_miles: 3.2,
+          data_source: 'NOAA'
+        },
+        {
+          id: 2,
+          event_name: 'Fort Worth Moderate Storm',
+          event_date: '2025-04-20',
+          hail_size_inches: 1.25,
+          distance_miles: 8.5,
+          data_source: 'NOAA'
+        },
+        {
+          id: 3,
+          event_name: 'Small Hail Event',
+          event_date: '2024-06-10',
+          hail_size_inches: 0.75,
+          distance_miles: 4.1,
+          data_source: 'NOAA'
         }
+      ],
+      summary: {
+        total_events: 3,
+        max_hail_size: 2.5,
+        years_checked: 5,
+        most_recent: '2025-05-15',
+        by_year: { '2025': 2, '2024': 1 }
       }
     })),
     generateImpactReport: vi.fn(() => Promise.resolve(new Blob(['PDF content'], { type: 'application/pdf' }))),
@@ -271,12 +269,10 @@ describe('HailLookupPage', () => {
     it('shows no events message when location has no hail history', async () => {
       const { hailEventsApi } = await import('@/api/weather')
       vi.mocked(hailEventsApi.checkLocation).mockResolvedValueOnce({
-        data: {
-          location: { lat: 32.7767, lon: -96.7970 },
-          was_hit: false,
-          events: [],
-          summary: { total_events: 0, max_hail_size: 0, years_checked: 5, by_year: {} }
-        }
+        location: { lat: 32.7767, lon: -96.7970 },
+        was_hit: false,
+        events: [],
+        summary: { total_events: 0, max_hail_size: 0, years_checked: 5, by_year: {} }
       } as any)
 
       renderWithProviders(<HailLookupPage />)

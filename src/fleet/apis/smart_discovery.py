@@ -19,6 +19,8 @@ from typing import List, Dict, Optional, Callable
 from dataclasses import dataclass, field
 import time
 
+from src.business.deduplication import deduplicate_businesses, analyze_duplicates
+
 logger = logging.getLogger('SmartDiscovery')
 
 
@@ -201,6 +203,15 @@ class SmartDiscoveryService:
                 log_progress("Email", f"Error: {e}")
 
         # ====================================================================
+        # PROPER DEDUPLICATION (using new deduplication engine)
+        # ====================================================================
+        log_progress("Dedup", f"Running deduplication on {len(all_businesses)} businesses...")
+        raw_count = len(all_businesses)
+        all_businesses = deduplicate_businesses(all_businesses, merge_data=True)
+        duplicates_removed = raw_count - len(all_businesses)
+        log_progress("Dedup", f"Removed {duplicates_removed} duplicates ({duplicates_removed/raw_count*100:.1f}%)")
+
+        # ====================================================================
         # Calculate final stats
         # ====================================================================
         stats.total_found = sum(stats.by_source.values())
@@ -226,25 +237,17 @@ class SmartDiscoveryService:
         self,
         results: List[Dict],
         all_businesses: List[Dict],
-        seen_keys: set,
+        seen_keys: set,  # No longer used but kept for API compatibility
         source: str
     ) -> int:
-        """Add results with deduplication. Returns count of new businesses."""
-        new_count = 0
-
+        """Add results to collection. Deduplication happens at the end."""
+        count = 0
         for biz in results:
-            # Create dedup key from name + partial address
-            name = (biz.get('name') or '').lower().strip()
-            address = (biz.get('address') or '').lower()[:30]
-            key = (name, address)
-
-            if key not in seen_keys and name:
-                seen_keys.add(key)
+            if biz.get('name'):
                 biz['source'] = source
                 all_businesses.append(biz)
-                new_count += 1
-
-        return new_count
+                count += 1
+        return count
 
     def discover_with_report(
         self,

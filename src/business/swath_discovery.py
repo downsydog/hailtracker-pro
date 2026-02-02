@@ -51,6 +51,18 @@ from src.fleet.apis.here_api import HereAPI
 from src.fleet.apis.tomtom_api import TomTomAPI
 from src.fleet.apis.google_places_api import GooglePlacesAPI
 
+# Use proper deduplication
+from src.business.deduplication import deduplicate_businesses
+
+# Use the unified category taxonomy
+from src.business.category_taxonomy import (
+    CATEGORY_TAXONOMY,
+    normalize_category_key,
+    estimate_vehicles,
+    detect_category_from_tags,
+    get_categories_by_tier,
+)
+
 logger = logging.getLogger('SwathDiscovery')
 
 
@@ -98,61 +110,25 @@ class SwathDiscoveryService:
         ('painting-contractors', 'contractor'),
     ]
 
-    # Vehicle estimates by category
-    VEHICLE_ESTIMATES = {
-        'car_dealership': 150,
-        'car_rental': 80,
-        'body_shop': 25,
-        'car_parts': 15,
-        'car_wash': 8,
-        'fuel_station': 5,
-        'parking': 200,
-        'hospital': 250,
-        'clinic': 40,
-        'veterinary': 12,
-        'police': 40,
-        'fire_station': 25,
-        'school': 100,
-        'university': 300,
-        'government': 75,
-        'post_office': 20,
-        'courthouse': 50,
-        'prison': 100,
-        'military': 200,
-        'hotel': 60,
-        'motel': 30,
-        'landscaping': 15,
-        'hvac': 12,
-        'plumbing': 10,
-        'electrical': 10,
-        'roofing': 8,
-        'contractor': 15,
-        'pest_control': 8,
-        'cleaning': 10,
-        'moving': 20,
-        'courier': 25,
-        'logistics': 50,
-        'telecom': 30,
-        'security': 15,
-        'church': 50,
-        'funeral': 15,
-        'storage': 5,
-        'rental': 20,
-        'vending': 10,
-        'beverage_wholesale': 30,
-        'default': 10
-    }
+    # Vehicle estimates now come from unified taxonomy via estimate_vehicles()
+    # Kept as property for backwards compatibility
+    @property
+    def VEHICLE_ESTIMATES(self) -> dict:
+        """Get vehicle estimates from taxonomy (backwards compat)."""
+        estimates = {'default': 10}
+        for key, config in CATEGORY_TAXONOMY.items():
+            estimates[key] = config.get('est_vehicles', 10)
+        return estimates
 
-    # Tier assignments (1=highest priority, 3=lowest)
-    TIER_MAP = {
-        1: ['car_dealership', 'car_rental', 'hospital', 'police', 'fire_station',
-            'university', 'military', 'parking'],
-        2: ['body_shop', 'clinic', 'school', 'government', 'hotel', 'logistics',
-            'landscaping', 'hvac', 'plumbing', 'electrical', 'moving', 'courier'],
-        3: ['car_parts', 'car_wash', 'fuel_station', 'veterinary', 'post_office',
-            'motel', 'roofing', 'contractor', 'pest_control', 'cleaning', 'telecom',
-            'security', 'church', 'funeral', 'storage', 'rental', 'vending']
-    }
+    # Tier assignments now come from unified taxonomy
+    @property
+    def TIER_MAP(self) -> dict:
+        """Get tier map from taxonomy (backwards compat)."""
+        return {
+            1: get_categories_by_tier(1),
+            2: get_categories_by_tier(2),
+            3: get_categories_by_tier(3),
+        }
 
     def __init__(self, db_path: str = None, crm_db_path: str = None):
         """Initialize the SwathDiscoveryService."""
@@ -403,126 +379,11 @@ out center meta;'''
         return {'elements': []}
 
     def _detect_category(self, tags: dict) -> str:
-        """Detect business category from OSM tags."""
-        # Automotive
-        if tags.get('shop') == 'car' or tags.get('shop') == 'car_dealer':
-            return 'car_dealership'
-        if tags.get('amenity') == 'car_rental':
-            return 'car_rental'
-        if tags.get('shop') == 'car_repair' or 'body' in str(tags.get('craft', '')):
-            return 'body_shop'
-        if tags.get('shop') == 'car_parts' or tags.get('shop') == 'tyres':
-            return 'car_parts'
-        if tags.get('shop') == 'motorcycle':
-            return 'car_dealership'  # Treat as dealership
-        if tags.get('amenity') == 'car_wash':
-            return 'car_wash'
-        if tags.get('amenity') == 'fuel':
-            return 'fuel_station'
-        if tags.get('amenity') == 'parking' or tags.get('building') == 'parking':
-            return 'parking'
-
-        # Medical
-        if tags.get('amenity') == 'hospital':
-            return 'hospital'
-        if tags.get('amenity') == 'clinic' or tags.get('healthcare'):
-            return 'clinic'
-        if tags.get('amenity') == 'veterinary':
-            return 'veterinary'
-
-        # Government
-        if tags.get('amenity') == 'police':
-            return 'police'
-        if tags.get('amenity') == 'fire_station':
-            return 'fire_station'
-        if tags.get('amenity') in ['school', 'kindergarten']:
-            return 'school'
-        if tags.get('amenity') in ['university', 'college']:
-            return 'university'
-        if tags.get('amenity') == 'post_office':
-            return 'post_office'
-        if tags.get('amenity') == 'courthouse':
-            return 'courthouse'
-        if tags.get('amenity') == 'prison':
-            return 'prison'
-        if tags.get('landuse') == 'military' or tags.get('military'):
-            return 'military'
-        if tags.get('office') == 'government' or tags.get('government') or tags.get('building') == 'government':
-            return 'government'
-        if tags.get('amenity') == 'townhall':
-            return 'government'
-
-        # Service/Trades - detect from craft tag
-        craft = tags.get('craft', '').lower()
-        if craft:
-            if 'hvac' in craft or 'heating' in craft or 'air_conditioning' in craft:
-                return 'hvac'
-            if 'plumb' in craft:
-                return 'plumbing'
-            if 'electri' in craft:
-                return 'electrical'
-            if 'roof' in craft:
-                return 'roofing'
-            if 'paint' in craft:
-                return 'contractor'
-            if 'landscap' in craft or 'garden' in craft:
-                return 'landscaping'
-            if 'clean' in craft:
-                return 'cleaning'
-            return 'contractor'
-
-        # Service/Trades - detect from name
-        name = tags.get('name', '').lower()
-        if any(w in name for w in ['landscap', 'lawn', 'tree service', 'mowing']):
-            return 'landscaping'
-        if any(w in name for w in ['hvac', 'heating', 'air condition', 'cooling']):
-            return 'hvac'
-        if any(w in name for w in ['plumb', 'pipe', 'drain']):
-            return 'plumbing'
-        if any(w in name for w in ['electric', 'wiring']):
-            return 'electrical'
-        if any(w in name for w in ['roof', 'shingle']):
-            return 'roofing'
-        if any(w in name for w in ['pest', 'exterminator', 'termite']):
-            return 'pest_control'
-        if any(w in name for w in ['clean', 'janitorial', 'maid']):
-            return 'cleaning'
-        if any(w in name for w in ['contractor', 'construction', 'builder']):
-            return 'contractor'
-
-        # Commercial
-        if tags.get('tourism') == 'hotel':
-            return 'hotel'
-        if tags.get('tourism') == 'motel':
-            return 'motel'
-        if tags.get('amenity') == 'place_of_worship':
-            return 'church'
-        if 'funeral' in str(tags.get('amenity', '')) or tags.get('shop') == 'funeral_directors':
-            return 'funeral'
-        if tags.get('amenity') == 'storage_rental' or 'storage' in name:
-            return 'storage'
-        if tags.get('shop') == 'rental':
-            return 'rental'
-
-        # Delivery/Logistics
-        if tags.get('office') == 'moving_company' or 'moving' in name:
-            return 'moving'
-        if tags.get('office') == 'courier' or 'courier' in name or 'delivery' in name:
-            return 'courier'
-        if tags.get('office') == 'logistics' or 'logistics' in name or 'freight' in name:
-            return 'logistics'
-
-        # Telecom/Security
-        if tags.get('office') == 'telecommunication' or 'telecom' in name:
-            return 'telecom'
-        if tags.get('office') == 'security' or 'security' in name or 'alarm' in name:
-            return 'security'
-
-        # General company office
-        if tags.get('office') == 'company':
-            return 'contractor'
-
-        return 'other'
+        """Detect business category from OSM tags using unified taxonomy."""
+        # Use the unified taxonomy's detection function
+        category = detect_category_from_tags(tags)
+        # Normalize the key to ensure consistency
+        return normalize_category_key(category)
 
     def _extract_business(self, element: dict) -> Optional[dict]:
         """Extract a clean business object from an OSM element."""
@@ -575,18 +436,15 @@ out center meta;'''
         if phone:
             phone = re.sub(r'[^\d+\-\(\)\s]', '', phone)
 
-        # Detect category
+        # Detect category using unified taxonomy
         category = self._detect_category(tags)
 
-        # Estimate vehicles
-        est_vehicles = self.VEHICLE_ESTIMATES.get(category, self.VEHICLE_ESTIMATES['default'])
+        # Estimate vehicles using taxonomy
+        est_vehicles = estimate_vehicles(category)
 
-        # Get tier
-        tier = 3
-        for t, cats in self.TIER_MAP.items():
-            if category in cats:
-                tier = t
-                break
+        # Get tier from taxonomy
+        cat_config = CATEGORY_TAXONOMY.get(category, {})
+        tier = cat_config.get('tier', 3)
 
         return {
             'name': name,
@@ -1355,9 +1213,9 @@ out center meta;'''
                 if city and state:
                     scraped_cities.add(city_key)
 
-                # 9. Deduplicate across sources
+                # 9. Deduplicate across sources (using new deduplication engine)
                 pre_dedup = len(swath_businesses_raw)
-                swath_businesses_deduped = self._deduplicate_businesses(swath_businesses_raw)
+                swath_businesses_deduped = deduplicate_businesses(swath_businesses_raw, merge_data=True)
                 stats['duplicates_removed'] += (pre_dedup - len(swath_businesses_deduped))
                 logger.info(f"  After dedup: {len(swath_businesses_deduped)} (removed {pre_dedup - len(swath_businesses_deduped)})")
 

@@ -80,16 +80,11 @@ class TomTomAPI:
             return []
 
     def search_all_categories(self, lat: float, lon: float, radius_meters: int = 5000) -> List[Dict]:
-        """Search all relevant business types."""
+        """Search all relevant business types using taxonomy."""
         all_results = []
         seen_ids = set()
 
-        search_terms = [
-            'landscaping', 'hvac', 'plumber', 'electrician',
-            'pest control', 'roofing', 'contractor',
-            'auto body', 'auto repair', 'car dealer', 'towing',
-            'moving company', 'painter', 'fence',
-        ]
+        search_terms = self._get_taxonomy_search_terms()
 
         for term in search_terms:
             results = self.search_radius(lat, lon, radius_meters, query=term, limit=50)
@@ -100,6 +95,24 @@ class TomTomAPI:
                     all_results.append(biz)
 
         return all_results
+
+    def _get_taxonomy_search_terms(self) -> List[str]:
+        """Get optimized search terms from taxonomy (display names only)."""
+        try:
+            from src.business.category_taxonomy import CATEGORIES
+            terms = set()
+            for cat_key, cat_data in CATEGORIES.items():
+                # Use display name only (104 terms) - more efficient than all tags
+                display = cat_data.get('display', '')
+                if display:
+                    terms.add(display.lower())
+            return list(terms)
+        except ImportError:
+            return [
+                'landscaping', 'hvac', 'plumber', 'electrician',
+                'pest control', 'roofing', 'contractor',
+                'auto body', 'car dealer', 'towing', 'moving',
+            ]
 
     def _parse_results(self, results: list) -> List[Dict]:
         """Parse TomTom results into standard format."""

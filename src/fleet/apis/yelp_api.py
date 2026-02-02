@@ -19,6 +19,25 @@ from math import radians, cos, sqrt
 logger = logging.getLogger('YelpAPI')
 
 
+def _get_all_yelp_categories() -> List[str]:
+    """Get all Yelp categories from the taxonomy (104 categories -> 108 Yelp terms)."""
+    try:
+        from src.business.category_taxonomy import CATEGORIES, get_yelp_categories
+        all_cats = set()
+        for cat_key in CATEGORIES:
+            yelp_cats = get_yelp_categories(cat_key)
+            all_cats.update(yelp_cats)
+        return list(all_cats)
+    except ImportError:
+        # Fallback if taxonomy not available
+        return [
+            'landscaping', 'lawn_services', 'tree_services', 'hvac',
+            'plumbing', 'electricians', 'pest_control', 'roofing',
+            'contractors', 'auto_repair', 'body_shops', 'towing',
+            'car_dealers', 'movers', 'security_systems', 'painters',
+        ]
+
+
 class YelpAPI:
     """
     Yelp Fusion API client.
@@ -27,31 +46,9 @@ class YelpAPI:
 
     BASE_URL = "https://api.yelp.com/v3"
 
-    # Categories relevant for PDR fleet prospecting
+    # Categories from taxonomy (108 Yelp categories from 104 business types)
     # Full list: https://www.yelp.com/developers/documentation/v3/all_category_list
-    CATEGORIES = [
-        'landscaping', 'lawn_services', 'tree_services',
-        'hvac', 'heating_air',
-        'plumbing', 'plumbers',
-        'electricians', 'electrical',
-        'pest_control',
-        'roofing', 'roof_inspection',
-        'contractors', 'general_contractors',
-        'auto_repair', 'body_shops', 'auto_glass',
-        'towing', 'car_dealers',
-        'movers', 'moving_companies',
-        'security_systems',
-        'painters', 'painting',
-        'fences_gates',
-        'concrete',
-        'garage_door_services',
-        'locksmiths',
-        'septic_services',
-        'dumpster_rental',
-        'flooring',
-        'gutter_services',
-        'solar_installation',
-    ]
+    CATEGORIES = _get_all_yelp_categories()
 
     def __init__(self, api_key: str = None):
         self.api_key = api_key or os.getenv('YELP_API_KEY')

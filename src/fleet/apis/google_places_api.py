@@ -125,22 +125,11 @@ class GooglePlacesAPI:
             return []
 
     def search_all_categories(self, lat: float, lon: float, radius_meters: int = 5000) -> List[Dict]:
-        """Search all relevant place types."""
+        """Search all relevant place types using taxonomy."""
         all_results = []
         seen_ids = set()
 
-        # Keywords that work well with Google Places
-        keywords = [
-            'landscaping', 'lawn care',
-            'hvac', 'air conditioning',
-            'plumber', 'plumbing',
-            'electrician',
-            'pest control',
-            'roofing',
-            'contractor',
-            'auto body', 'car dealer',
-            'towing',
-        ]
+        keywords = self._get_taxonomy_keywords()
 
         for keyword in keywords:
             results = self.search_radius(lat, lon, radius_meters, keyword=keyword)
@@ -151,6 +140,24 @@ class GooglePlacesAPI:
                     all_results.append(biz)
 
         return all_results
+
+    def _get_taxonomy_keywords(self) -> List[str]:
+        """Get optimized search keywords from taxonomy (display names only)."""
+        try:
+            from src.business.category_taxonomy import CATEGORIES
+            keywords = set()
+            for cat_key, cat_data in CATEGORIES.items():
+                # Use display name only (104 terms) - more efficient than all tags
+                display = cat_data.get('display', '')
+                if display:
+                    keywords.add(display.lower())
+            return list(keywords)
+        except ImportError:
+            return [
+                'landscaping', 'hvac', 'plumber', 'electrician',
+                'pest control', 'roofing', 'contractor',
+                'auto body', 'car dealer', 'towing',
+            ]
 
     def search_tiles(
         self,

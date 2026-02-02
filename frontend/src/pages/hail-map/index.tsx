@@ -124,14 +124,17 @@ export function HailMapPage() {
   const [calendarOpen, setCalendarOpen] = useState(true)
   const [radarReplayOpen, setRadarReplayOpen] = useState(false)
   const [territoryAlertsOpen, setTerritoryAlertsOpen] = useState(false)
+  const [selectedDate, setSelectedDate] = useState<string | null>(null) // Track selected date for filtering
 
-  // Fetch hail events using typed API
+  // Fetch hail events - filtered by selectedDate when set
   const { data: eventsData, isLoading: eventsLoading, refetch: refetchEvents } = useQuery({
-    queryKey: ["hail-events-map"],
-    queryFn: () => hailEventsApi.list({ days: 90 }),
+    queryKey: ["hail-events-map", selectedDate],
+    queryFn: () => selectedDate
+      ? hailEventsApi.list({ event_date: selectedDate }) // Filter by specific date
+      : hailEventsApi.list({ days: 365 }), // Show last year when no date selected
   })
 
-  // Fetch real GeoJSON swaths
+  // Fetch real GeoJSON swaths - all swaths, filtered client-side by selectedDate
   const { data: swathsData, refetch: refetchSwaths } = useQuery({
     queryKey: ["storm-swaths"],
     queryFn: () => stormCellsApi.getAllSwaths(),
@@ -166,12 +169,17 @@ export function HailMapPage() {
     },
   })
 
-  const events: HailEvent[] = eventsData?.data?.events || []
-  const swaths: SwathFeature[] = swathsData?.data?.features || (swathsData as any)?.features || []
-  const activeCells: StormCell[] = cellsData?.data?.active_cells || []
-  const radars: RadarSite[] = radarsData?.data?.radars || []
+  const events: HailEvent[] = eventsData?.events || []
+  const swaths: SwathFeature[] = swathsData?.features || (swathsData as any)?.features || []
+  const activeCells: StormCell[] = cellsData?.active_cells || []
+  const radars: RadarSite[] = radarsData?.radars || []
   const allLeads = leadsData?.leads || []
   const leads = allLeads.filter((l: any) => l.latitude && l.longitude)
+
+  // Debug: Log first event to verify event_date is present (dev only)
+  if (import.meta.env.DEV && events.length > 0 && !events[0].event_date) {
+    console.warn('[HailMap] First event missing event_date:', events[0])
+  }
 
   // Update stats based on map bounds
   const updateStats = useCallback(() => {
@@ -353,7 +361,8 @@ export function HailMapPage() {
         mapInstanceRef.current = null
       }
     }
-  }, [updateStats])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // Empty array - map should only initialize once on mount
 
   // Render hail swaths from real GeoJSON data
   useEffect(() => {
@@ -363,9 +372,19 @@ export function HailMapPage() {
 
     if (!layers.swaths) return
 
+    // Filter swaths by selected date if one is chosen
+    const filteredSwaths = selectedDate
+      ? swaths.filter((s) => {
+          const swathDate = s.properties.event_date
+          if (!swathDate) return false
+          // Compare just the date part (YYYY-MM-DD)
+          return swathDate.substring(0, 10) === selectedDate.substring(0, 10)
+        })
+      : swaths
+
     // First try to use real GeoJSON swaths
-    if (swaths.length > 0) {
-      swaths.forEach((swath) => {
+    if (filteredSwaths.length > 0) {
+      filteredSwaths.forEach((swath) => {
         if (!swath.geometry || swath.geometry.type !== 'Polygon') return
 
         // Use hail size for color (10-level scale)
@@ -400,10 +419,20 @@ export function HailMapPage() {
       })
     }
 
+    // Filter events by selected date if one is chosen
+    const filteredEvents = selectedDate
+      ? events.filter((e) => {
+          const eventDate = e.event_date
+          if (!eventDate) return false
+          // Compare just the date part (YYYY-MM-DD)
+          return eventDate.substring(0, 10) === selectedDate.substring(0, 10)
+        })
+      : events
+
     // Render events - use swath_polygon if available, otherwise fall back to circle
-    events.forEach((event) => {
+    filteredEvents.forEach((event) => {
       // Skip if we already have a swath for this event from the separate swaths API
-      if (swaths.some(s => s.properties.event_id === event.id)) return
+      if (filteredSwaths.some(s => s.properties.event_id === event.id)) return
 
       // Use hail size for 10-level color scale
       const hailSize = event.max_hail_size || event.hail_size_inches
@@ -492,7 +521,7 @@ export function HailMapPage() {
     })
 
     updateStats()
-  }, [events, swaths, layers.swaths, updateStats])
+  }, [events, swaths, layers.swaths, updateStats, selectedDate])
 
   // Render active storm cells
   useEffect(() => {
@@ -696,6 +725,24 @@ export function HailMapPage() {
     }
   }, [layers.radar, radars])
 
+  // Handle calendar event selection - zoom map to event location AND filter by date
+  // NOTE: Must be defined BEFORE any conditional returns to follow React hooks rules
+  const handleCalendarEventSelect = useCallback((event: CalendarDayEvent) => {
+    // Set selected date to filter swaths/events on the map
+    if (event.event_date) {
+      setSelectedDate(event.event_date)
+    }
+    // Zoom to event location
+    if (mapInstanceRef.current && event.lat && event.lon) {
+      mapInstanceRef.current.setView([event.lat, event.lon], 10, { animate: true })
+    }
+  }, [])
+
+  // Clear date filter
+  const clearDateFilter = useCallback(() => {
+    setSelectedDate(null)
+  }, [])
+
   const handleRefresh = () => {
     refetchEvents()
     refetchSwaths()
@@ -734,13 +781,6 @@ export function HailMapPage() {
     }
     return <Badge className={`${variants[s] || variants.NEW} hover:${variants[s] || variants.NEW}`}>{s}</Badge>
   }
-
-  // Handle calendar event selection - zoom map to event location
-  const handleCalendarEventSelect = useCallback((event: CalendarDayEvent) => {
-    if (mapInstanceRef.current && event.lat && event.lon) {
-      mapInstanceRef.current.setView([event.lat, event.lon], 10, { animate: true })
-    }
-  }, [])
 
   return (
     <div className="space-y-4">
@@ -811,21 +851,34 @@ export function HailMapPage() {
         </div>
       </div>
 
-      <div className="flex gap-4">
+      <div className="flex gap-4" style={{ width: "100%" }}>
         {/* Map Container */}
-        <div className={`relative bg-card rounded-xl border overflow-hidden transition-all ${calendarOpen ? 'flex-1' : 'w-full'}`} style={{ height: "calc(100vh - 220px)", minHeight: "500px" }}>
+        <div className="relative bg-card rounded-xl border overflow-hidden transition-all" style={{ flex: 1, height: "calc(100vh - 220px)", minHeight: "500px", minWidth: "400px" }}>
         <div
           ref={mapRef}
+          className="leaflet-container"
           style={{
             width: "100%",
             height: "100%",
             position: "absolute",
             top: 0,
             left: 0,
-            zIndex: 1,
-            background: "#f0f0f0"
+            zIndex: 1
           }}
         />
+
+        {/* Date Filter Indicator */}
+        {selectedDate && (
+          <div className="absolute top-4 left-4 z-[1000] bg-card rounded-lg shadow-lg border p-3">
+            <div className="flex items-center gap-2">
+              <Calendar className="h-4 w-4 text-primary" />
+              <span className="text-sm font-medium">Showing: {selectedDate}</span>
+              <Button variant="ghost" size="sm" onClick={clearDateFilter} className="h-6 px-2">
+                Clear
+              </Button>
+            </div>
+          </div>
+        )}
 
         {/* Layer Controls */}
         <div className="absolute top-4 right-4 z-[1000] bg-card rounded-lg shadow-lg border p-3 min-w-[180px]">

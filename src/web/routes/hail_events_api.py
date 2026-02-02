@@ -1124,6 +1124,7 @@ def get_storm_calendar():
         day['events'].append({
             'id': event['id'],
             'event_name': event['event_name'],
+            'event_date': event_date,  # Include date for frontend filtering
             'hail_size': hail_size,
             'severity': severity,
             'lat': event['center_lat'],

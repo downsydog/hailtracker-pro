@@ -10,6 +10,10 @@ Setup:
 1. Sign up at https://foursquare.com/developers/
 2. Create a project and get API key
 3. Set environment variable: FOURSQUARE_API_KEY=your_key_here
+
+COMPREHENSIVE PDR FLEET PROSPECTING CATEGORIES
+Updated with full list of service businesses that have work vehicles.
+Removed hotels (travelers, not customers).
 """
 
 import requests
@@ -31,19 +35,24 @@ class FoursquareAPI:
     BASE_URL = "https://places-api.foursquare.com/places/search"
     API_VERSION = "2025-06-17"
 
-    # Foursquare category IDs for fleet-relevant businesses
+    # ==========================================================================
+    # FOURSQUARE CATEGORY IDS FOR PDR FLEET PROSPECTING
+    # ==========================================================================
     # Full list: https://developer.foursquare.com/docs/categories
-    CATEGORIES = {
-        # Automotive
-        'automotive': '10000',          # Top-level automotive
+
+    # Automotive
+    AUTOMOTIVE_CATEGORIES = {
         'auto_repair': '10007',         # Auto Garage / Mechanic
         'car_dealer': '10006',          # Car Dealership
         'car_wash': '10008',            # Car Wash
         'auto_body': '10001',           # Auto Body Shop
         'tire_shop': '10014',           # Tire Shop
         'car_rental': '10005',          # Car Rental
+        'towing': '10015',              # Towing Service
+    }
 
-        # Service/Trades (under Building & Trades 12000)
+    # Service/Trades (under Building & Trades 12000)
+    TRADES_CATEGORIES = {
         'contractor': '12009',          # Contractor
         'landscaping': '12066',         # Landscaping Company
         'plumbing': '12096',            # Plumber
@@ -52,18 +61,68 @@ class FoursquareAPI:
         'roofing': '12103',             # Roofing Contractor
         'painting': '12088',            # Painter
         'flooring': '12042',            # Flooring
+        'pest_control': '12092',        # Pest Control
+        'pool_service': '12098',        # Pool Service
+        'garage_door': '12046',         # Garage Door
+        'locksmith': '12070',           # Locksmith
+        'fence': '12038',               # Fence Contractor
+        'concrete': '12014',            # Concrete
+        'septic': '12109',              # Septic Services
+        'restoration': '12101',         # Restoration
+    }
+
+    # Commercial/Property
+    COMMERCIAL_CATEGORIES = {
         'cleaning': '11128',            # Cleaning Service
-
-        # Commercial
-        'hotel': '19014',               # Hotel
-        'hospital': '15014',            # Hospital
-        'school': '12077',              # School
-
-        # Parking (high vehicle density)
-        'parking': '19020',             # Parking Lot
-
-        # Corporate
+        'janitorial': '11130',          # Janitorial
+        'property_mgmt': '11144',       # Property Management
         'office': '11000',              # Office
+    }
+
+    # Medical/Health
+    MEDICAL_CATEGORIES = {
+        'hospital': '15014',            # Hospital
+        'veterinarian': '15048',        # Veterinarian
+        'pharmacy': '15028',            # Pharmacy
+    }
+
+    # Municipal/Government
+    MUNICIPAL_CATEGORIES = {
+        'government': '12052',          # Government Building
+        'school': '12077',              # School
+        'fire_station': '12040',        # Fire Station
+        'police': '12094',              # Police Station
+    }
+
+    # Parking (high vehicle density)
+    PARKING_CATEGORIES = {
+        'parking': '19020',             # Parking Lot
+    }
+
+    # Waste/Environmental
+    WASTE_CATEGORIES = {
+        'waste_mgmt': '11168',          # Waste Management
+    }
+
+    # Other Services
+    OTHER_CATEGORIES = {
+        'courier': '11048',             # Courier
+        'moving': '11132',              # Moving Company
+        'sign_shop': '11152',           # Sign Shop
+        'printing': '11142',            # Printing
+        'funeral': '11076',             # Funeral Home
+    }
+
+    # Combined categories dict
+    CATEGORIES = {
+        **AUTOMOTIVE_CATEGORIES,
+        **TRADES_CATEGORIES,
+        **COMMERCIAL_CATEGORIES,
+        **MEDICAL_CATEGORIES,
+        **MUNICIPAL_CATEGORIES,
+        **PARKING_CATEGORIES,
+        **WASTE_CATEGORIES,
+        **OTHER_CATEGORIES,
     }
 
     # Map our internal categories to Foursquare IDs
@@ -72,18 +131,41 @@ class FoursquareAPI:
         'car_rental': ['10005'],
         'body_shop': ['10001', '10007'],
         'parking': ['19020'],
-        'hotel': ['19014'],
         'hospital': ['15014'],
         'school': ['12077'],
-        'church': [],  # No good Foursquare category for churches
         'landscaping': ['12066'],
         'hvac': ['12058'],
         'plumbing': ['12096'],
         'electrical': ['12030'],
         'roofing': ['12103'],
-        'pest_control': [],  # Limited coverage
+        'pest_control': ['12092'],
         'contractor': ['12009'],
+        'pool_service': ['12098'],
+        'fence': ['12038'],
+        'locksmith': ['12070'],
+        'garage_door': ['12046'],
+        'septic': ['12109'],
+        'towing': ['10015'],
+        'property_management': ['11144'],
+        'janitorial': ['11130'],
+        'sign_shop': ['11152'],
+        'funeral': ['11076'],
     }
+
+    # Text search terms for comprehensive coverage
+    # (Foursquare also supports text search)
+    TEXT_SEARCH_TERMS = [
+        'hvac', 'plumber', 'electrician', 'pest control',
+        'landscaping', 'lawn care', 'tree service',
+        'roofing', 'fence contractor', 'pool service',
+        'garage door', 'locksmith', 'painting contractor',
+        'concrete', 'septic', 'restoration',
+        'general contractor', 'excavation',
+        'towing', 'auto glass',
+        'property management', 'janitorial', 'commercial cleaning',
+        'sign company', 'courier', 'funeral home',
+        'beverage distributor', 'linen service',
+    ]
 
     def __init__(self, api_key: str = None):
         """
@@ -112,6 +194,7 @@ class FoursquareAPI:
         lon: float,
         radius_meters: int = 1000,
         categories: List[str] = None,
+        query: str = None,
         limit: int = 50
     ) -> List[Dict]:
         """
@@ -122,6 +205,7 @@ class FoursquareAPI:
             lon: Longitude
             radius_meters: Search radius in meters (max 100,000)
             categories: List of Foursquare category IDs (or our internal names)
+            query: Text search query
             limit: Max results per request (max 50)
 
         Returns:
@@ -151,6 +235,9 @@ class FoursquareAPI:
 
         if category_ids:
             params['categories'] = ','.join(category_ids)
+
+        if query:
+            params['query'] = query
 
         try:
             response = self.session.get(
@@ -201,14 +288,58 @@ class FoursquareAPI:
         Returns:
             Combined list of businesses
         """
-        # Key categories for fleet/PDR targets
-        target_categories = [
-            'car_dealer', 'auto_body', 'auto_repair', 'car_rental',
-            'parking', 'hotel', 'hospital', 'school',
-            'landscaping', 'hvac', 'plumbing', 'contractor'
-        ]
+        all_results = []
+        seen_ids = set()
 
-        return self.search_radius(lat, lon, radius_meters, target_categories)
+        # Search by categories
+        target_categories = list(self.CATEGORIES.keys())
+
+        # Batch categories to reduce API calls
+        batch_size = 10
+        for i in range(0, len(target_categories), batch_size):
+            batch = target_categories[i:i + batch_size]
+            results = self.search_radius(lat, lon, radius_meters, categories=batch)
+
+            for biz in results:
+                fsq_id = biz.get('foursquare_id')
+                if fsq_id and fsq_id not in seen_ids:
+                    seen_ids.add(fsq_id)
+                    all_results.append(biz)
+
+        logger.info(f"Foursquare found {len(all_results)} total fleet businesses")
+        return all_results
+
+    def search_text_terms(
+        self,
+        lat: float,
+        lon: float,
+        radius_meters: int = 1000
+    ) -> List[Dict]:
+        """
+        Search using comprehensive text search terms.
+
+        Args:
+            lat: Latitude
+            lon: Longitude
+            radius_meters: Search radius in meters
+
+        Returns:
+            Combined list of businesses
+        """
+        all_results = []
+        seen_ids = set()
+
+        for term in self.TEXT_SEARCH_TERMS:
+            results = self.search_radius(lat, lon, radius_meters, query=term)
+
+            for biz in results:
+                fsq_id = biz.get('foursquare_id')
+                if fsq_id and fsq_id not in seen_ids:
+                    seen_ids.add(fsq_id)
+                    all_results.append(biz)
+
+        logger.info(f"Foursquare text search found {len(all_results)} businesses")
+        return all_results
 
     def _parse_results(self, results: List[Dict]) -> List[Dict]:
         """Parse Foursquare results into standard format."""
@@ -263,14 +394,10 @@ class FoursquareAPI:
             return 'car_rental'
         elif 'parking' in name_lower:
             return 'parking'
-        elif 'hotel' in name_lower or 'motel' in name_lower:
-            return 'hotel'
         elif 'hospital' in name_lower or 'medical' in name_lower:
             return 'hospital'
         elif 'school' in name_lower:
             return 'school'
-        elif 'church' in name_lower:
-            return 'church'
         elif 'landscap' in name_lower:
             return 'landscaping'
         elif 'hvac' in name_lower or 'heating' in name_lower or 'cooling' in name_lower:
@@ -281,8 +408,30 @@ class FoursquareAPI:
             return 'electrical'
         elif 'roof' in name_lower:
             return 'roofing'
+        elif 'pest' in name_lower:
+            return 'pest_control'
+        elif 'pool' in name_lower:
+            return 'pool_service'
+        elif 'fence' in name_lower:
+            return 'fence'
+        elif 'locksmith' in name_lower:
+            return 'locksmith'
+        elif 'garage' in name_lower:
+            return 'garage_door'
+        elif 'septic' in name_lower:
+            return 'septic'
+        elif 'tow' in name_lower:
+            return 'towing'
+        elif 'janitor' in name_lower or 'cleaning' in name_lower:
+            return 'janitorial'
+        elif 'property' in name_lower and 'management' in name_lower:
+            return 'property_management'
+        elif 'sign' in name_lower:
+            return 'sign_shop'
+        elif 'funeral' in name_lower:
+            return 'funeral'
 
-        return 'other'
+        return 'service_company'
 
     def test_connection(self) -> Dict:
         """

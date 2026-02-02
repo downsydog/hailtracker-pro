@@ -501,3 +501,427 @@ def table_exists(db, table_name):
         (table_name,)
     )
     return len(result) > 0
+
+
+# ============================================================================
+# FLEET DISCOVERY INTEGRATION
+# ============================================================================
+# These endpoints connect Fleet Intelligence to the main CRM leads system
+
+@leads_api_bp.route('/from-fleet-discovery', methods=['POST'])
+@login_required
+@require_permission('leads.create')
+def create_lead_from_fleet_discovery():
+    """
+    Create a lead from Fleet Intelligence / Hail Swath discovery.
+
+    This connects the Fleet Intelligence module to the main CRM.
+    Businesses identified in hail swaths become HOT leads.
+
+    POST body:
+    {
+        "business_id": 123,
+        "company_name": "ABC Motors",
+        "address": "123 Main St",
+        "city": "Dallas",
+        "state": "TX",
+        "zip": "75001",
+        "phone": "(214) 555-1234",
+        "category": "car_dealership",
+        "estimated_vehicles": 150,
+        "tier": 1,
+        "latitude": 32.7767,
+        "longitude": -96.7970,
+        "hail_affected": true,
+        "hail_date": "2024-05-15",
+        "hail_size": 1.75
+    }
+    """
+    db = get_db()
+    data = request.get_json()
+
+    if not data:
+        return jsonify({'error': 'No data provided'}), 400
+
+    # Validate required fields
+    company_name = data.get('company_name') or data.get('name')
+    if not company_name:
+        return jsonify({'error': 'company_name required'}), 400
+
+    # Check for duplicate (by name + city + state)
+    existing = db.execute("""
+        SELECT id, status FROM leads
+        WHERE company_name = ? AND city = ? AND state = ? AND deleted_at IS NULL
+    """, (company_name, data.get('city'), data.get('state')))
+
+    if existing:
+        return jsonify({
+            'error': 'Lead already exists',
+            'lead_id': existing[0]['id'],
+            'status': existing[0]['status'],
+            'duplicate': True
+        }), 409
+
+    # Determine temperature based on hail and tier
+    hail_affected = data.get('hail_affected', False)
+    hail_distance = data.get('hail_distance', 999)
+    tier = data.get('tier', 3)
+
+    if hail_affected and hail_distance <= 5:
+        temperature = 'HOT'  # Inside swath or very close
+    elif hail_affected:
+        temperature = 'WARM'  # Near swath
+    elif tier == 1:
+        temperature = 'WARM'  # High value fleet
+    else:
+        temperature = 'COLD'
+
+    # Build notes with context
+    notes_parts = []
+    notes_parts.append(f"Source: Fleet Discovery ({data.get('category', 'unknown')} - Tier {tier})")
+    notes_parts.append(f"Estimated vehicles: {data.get('estimated_vehicles', 'unknown')}")
+    if data.get('latitude') and data.get('longitude'):
+        notes_parts.append(f"Coordinates: {data.get('latitude')}, {data.get('longitude')}")
+
+    if hail_affected:
+        notes_parts.append("")
+        notes_parts.append("🌨️ HAIL AFFECTED:")
+        notes_parts.append(f"  Storm date: {data.get('hail_date')}")
+        notes_parts.append(f"  Hail size: {data.get('hail_size')}\"")
+        if hail_distance == 0:
+            notes_parts.append("  Location: INSIDE swath polygon")
+        else:
+            notes_parts.append(f"  Distance from swath: {hail_distance} miles")
+
+    notes = '\n'.join(notes_parts)
+
+    # Create lead
+    lead_data = {
+        'company_name': company_name,
+        'first_name': '',
+        'last_name': '',
+        'phone': data.get('phone'),
+        'email': data.get('contact_email'),
+        'source': 'FLEET_DISCOVERY',
+        'temperature': temperature,
+        'status': 'NEW',
+        'notes': notes,
+        'damage_type': 'HAIL' if hail_affected else None,
+        'assigned_to': str(g.current_user['id']),
+        'assigned_at': datetime.now().isoformat(),
+        'organization_id': g.organization_id,
+        'created_at': datetime.now().isoformat()
+    }
+
+    lead_id = db.insert('leads', lead_data)
+
+    return jsonify({
+        'success': True,
+        'lead_id': lead_id,
+        'temperature': temperature,
+        'message': f"Lead created: {company_name}"
+    }), 201
+
+
+@leads_api_bp.route('/from-fleet-discovery/bulk', methods=['POST'])
+@login_required
+@require_permission('leads.create')
+def bulk_create_leads_from_fleet():
+    """
+    Bulk create leads from Fleet Intelligence.
+    Used for "Add All Affected Businesses" button in hail swath view.
+
+    POST body:
+    {
+        "businesses": [
+            { ...business data... },
+            { ...business data... }
+        ],
+        "hail_date": "2024-05-15",
+        "hail_size": 1.75
+    }
+    """
+    db = get_db()
+    data = request.get_json()
+
+    if not data:
+        return jsonify({'error': 'No data provided'}), 400
+
+    businesses = data.get('businesses', [])
+    hail_date = data.get('hail_date')
+    hail_size = data.get('hail_size')
+
+    if not businesses:
+        return jsonify({'error': 'No businesses provided'}), 400
+
+    created = 0
+    skipped = 0
+    created_ids = []
+    errors = []
+
+    for biz in businesses:
+        company_name = biz.get('company_name') or biz.get('name')
+        if not company_name:
+            errors.append('Skipped business with no name')
+            continue
+
+        # Check for duplicate
+        existing = db.execute("""
+            SELECT id FROM leads
+            WHERE company_name = ? AND city = ? AND state = ? AND deleted_at IS NULL
+        """, (company_name, biz.get('city'), biz.get('state')))
+
+        if existing:
+            skipped += 1
+            continue
+
+        try:
+            # Determine temperature - all hail-affected are HOT
+            hail_distance = biz.get('hail_distance', 0)
+            if hail_distance <= 5:
+                temperature = 'HOT'
+            else:
+                temperature = 'WARM'
+
+            tier = biz.get('tier', 3)
+
+            # Build notes
+            notes = f"""Source: Fleet Discovery (Hail Swath Import)
+Category: {biz.get('category', 'unknown')} - Tier {tier}
+Estimated vehicles: {biz.get('estimated_vehicles', 'unknown')}
+
+🌨️ HAIL AFFECTED:
+  Storm date: {hail_date}
+  Hail size: {hail_size}"
+  Inside swath: YES"""
+
+            lead_data = {
+                'company_name': company_name,
+                'first_name': '',
+                'last_name': '',
+                'phone': biz.get('phone'),
+                'source': 'FLEET_DISCOVERY',
+                'temperature': temperature,
+                'status': 'NEW',
+                'notes': notes,
+                'damage_type': 'HAIL',
+                'assigned_to': str(g.current_user['id']),
+                'assigned_at': datetime.now().isoformat(),
+                'organization_id': g.organization_id,
+                'created_at': datetime.now().isoformat()
+            }
+
+            lead_id = db.insert('leads', lead_data)
+            created += 1
+            created_ids.append(lead_id)
+
+        except Exception as e:
+            errors.append(f"{company_name}: {str(e)}")
+
+    return jsonify({
+        'success': True,
+        'created': created,
+        'skipped': skipped,
+        'created_ids': created_ids,
+        'errors': errors[:10],  # Limit errors returned
+        'message': f"Created {created} leads, skipped {skipped} duplicates"
+    })
+
+
+# ============================================================================
+# FLEET LEAD CONVERSION REPORTING
+# ============================================================================
+
+@leads_api_bp.route('/reports/fleet')
+@login_required
+@require_any_permission('leads.view_all', 'reports.view')
+def fleet_lead_reports():
+    """
+    Get comprehensive reports for fleet-sourced leads.
+
+    Returns:
+    - Sales funnel by status
+    - Conversion rates
+    - Hail vs non-hail performance
+    - By category and city breakdown
+    - Weekly trends
+    - Top deals
+    """
+    db = get_db()
+
+    # Date range filter
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+
+    date_filter = ""
+    date_params = []
+    if start_date:
+        date_filter += " AND l.created_at >= ?"
+        date_params.append(start_date)
+    if end_date:
+        date_filter += " AND l.created_at <= ?"
+        date_params.append(end_date + " 23:59:59")
+
+    # 1. Sales Funnel by Status
+    funnel = db.execute(f"""
+        SELECT
+            status,
+            COUNT(*) as count,
+            ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM leads WHERE source = 'FLEET_DISCOVERY' AND deleted_at IS NULL {date_filter}), 1) as percentage
+        FROM leads l
+        WHERE source = 'FLEET_DISCOVERY' AND deleted_at IS NULL {date_filter}
+        GROUP BY status
+        ORDER BY
+            CASE status
+                WHEN 'NEW' THEN 1
+                WHEN 'CONTACTED' THEN 2
+                WHEN 'QUALIFIED' THEN 3
+                WHEN 'NEGOTIATING' THEN 4
+                WHEN 'CONVERTED' THEN 5
+                WHEN 'LOST' THEN 6
+            END
+    """, tuple(date_params + date_params))
+
+    # 2. Conversion Rates
+    conversion_stats = db.execute(f"""
+        SELECT
+            COUNT(*) as total_leads,
+            SUM(CASE WHEN status = 'CONVERTED' THEN 1 ELSE 0 END) as converted,
+            SUM(CASE WHEN status = 'LOST' THEN 1 ELSE 0 END) as lost,
+            SUM(CASE WHEN status NOT IN ('CONVERTED', 'LOST') THEN 1 ELSE 0 END) as active,
+            ROUND(SUM(CASE WHEN status = 'CONVERTED' THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0), 1) as conversion_rate,
+            ROUND(SUM(CASE WHEN status = 'LOST' THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0), 1) as loss_rate
+        FROM leads l
+        WHERE source = 'FLEET_DISCOVERY' AND deleted_at IS NULL {date_filter}
+    """, tuple(date_params))[0]
+
+    # 3. Hail vs Non-Hail Performance
+    hail_comparison = db.execute(f"""
+        SELECT
+            CASE WHEN damage_type = 'HAIL' THEN 'Hail Affected' ELSE 'Non-Hail' END as category,
+            COUNT(*) as total,
+            SUM(CASE WHEN status = 'CONVERTED' THEN 1 ELSE 0 END) as converted,
+            SUM(CASE WHEN status = 'LOST' THEN 1 ELSE 0 END) as lost,
+            ROUND(SUM(CASE WHEN status = 'CONVERTED' THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0), 1) as conversion_rate,
+            ROUND(AVG(follow_up_count), 1) as avg_follow_ups
+        FROM leads l
+        WHERE source = 'FLEET_DISCOVERY' AND deleted_at IS NULL {date_filter}
+        GROUP BY CASE WHEN damage_type = 'HAIL' THEN 'Hail Affected' ELSE 'Non-Hail' END
+    """, tuple(date_params))
+
+    # 4. By Temperature
+    by_temperature = db.execute(f"""
+        SELECT
+            temperature,
+            COUNT(*) as total,
+            SUM(CASE WHEN status = 'CONVERTED' THEN 1 ELSE 0 END) as converted,
+            ROUND(SUM(CASE WHEN status = 'CONVERTED' THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0), 1) as conversion_rate
+        FROM leads l
+        WHERE source = 'FLEET_DISCOVERY' AND deleted_at IS NULL {date_filter}
+        GROUP BY temperature
+        ORDER BY
+            CASE temperature
+                WHEN 'HOT' THEN 1
+                WHEN 'WARM' THEN 2
+                WHEN 'COLD' THEN 3
+            END
+    """, tuple(date_params))
+
+    # 5. By City (Top 10)
+    by_city = db.execute(f"""
+        SELECT
+            COALESCE(city, 'Unknown') as city,
+            state,
+            COUNT(*) as total_leads,
+            SUM(CASE WHEN status = 'CONVERTED' THEN 1 ELSE 0 END) as converted,
+            ROUND(SUM(CASE WHEN status = 'CONVERTED' THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0), 1) as conversion_rate
+        FROM leads l
+        WHERE source = 'FLEET_DISCOVERY' AND deleted_at IS NULL {date_filter}
+        GROUP BY city, state
+        ORDER BY total_leads DESC
+        LIMIT 10
+    """, tuple(date_params))
+
+    # 6. Weekly Trends (last 12 weeks)
+    weekly_trends = db.execute(f"""
+        SELECT
+            strftime('%Y-%W', created_at) as week,
+            COUNT(*) as new_leads,
+            SUM(CASE WHEN status = 'CONVERTED' THEN 1 ELSE 0 END) as converted,
+            SUM(CASE WHEN status = 'CONTACTED' OR status = 'QUALIFIED' OR status = 'NEGOTIATING' THEN 1 ELSE 0 END) as in_progress
+        FROM leads l
+        WHERE source = 'FLEET_DISCOVERY'
+            AND deleted_at IS NULL
+            AND created_at >= date('now', '-12 weeks')
+        GROUP BY strftime('%Y-%W', created_at)
+        ORDER BY week DESC
+        LIMIT 12
+    """)
+
+    # 7. Top Converted Deals (recent conversions)
+    top_deals = db.execute(f"""
+        SELECT
+            l.id,
+            l.company_name,
+            l.city,
+            l.state,
+            l.temperature,
+            l.created_at,
+            l.updated_at as converted_at,
+            l.notes
+        FROM leads l
+        WHERE source = 'FLEET_DISCOVERY'
+            AND status = 'CONVERTED'
+            AND deleted_at IS NULL {date_filter}
+        ORDER BY l.updated_at DESC
+        LIMIT 10
+    """, tuple(date_params))
+
+    # 8. Lost Reasons Analysis
+    lost_reasons = db.execute(f"""
+        SELECT
+            COALESCE(lost_reason, 'No reason provided') as reason,
+            COUNT(*) as count
+        FROM leads l
+        WHERE source = 'FLEET_DISCOVERY'
+            AND status = 'LOST'
+            AND deleted_at IS NULL {date_filter}
+        GROUP BY lost_reason
+        ORDER BY count DESC
+        LIMIT 10
+    """, tuple(date_params))
+
+    # 9. Response Time Analysis (time to first contact)
+    response_time = db.execute(f"""
+        SELECT
+            AVG(JULIANDAY(last_contact_date) - JULIANDAY(DATE(created_at))) as avg_days_to_contact,
+            MIN(JULIANDAY(last_contact_date) - JULIANDAY(DATE(created_at))) as min_days,
+            MAX(JULIANDAY(last_contact_date) - JULIANDAY(DATE(created_at))) as max_days
+        FROM leads l
+        WHERE source = 'FLEET_DISCOVERY'
+            AND last_contact_date IS NOT NULL
+            AND deleted_at IS NULL {date_filter}
+    """, tuple(date_params))[0]
+
+    return jsonify({
+        'success': True,
+        'reports': {
+            'funnel': funnel,
+            'conversion_stats': conversion_stats,
+            'hail_comparison': hail_comparison,
+            'by_temperature': by_temperature,
+            'by_city': by_city,
+            'weekly_trends': list(reversed(weekly_trends)),  # Chronological order
+            'top_deals': top_deals,
+            'lost_reasons': lost_reasons,
+            'response_time': {
+                'avg_days': round(response_time['avg_days_to_contact'] or 0, 1),
+                'min_days': round(response_time['min_days'] or 0, 1),
+                'max_days': round(response_time['max_days'] or 0, 1)
+            }
+        },
+        'filters': {
+            'start_date': start_date,
+            'end_date': end_date
+        }
+    })

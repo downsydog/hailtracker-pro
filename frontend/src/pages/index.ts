@@ -107,3 +107,10 @@ export { PortalReferralsPage } from "./portal/referrals"
 export { PortalFlyersPage } from "./portal/flyers"
 export { PortalLoyaltyPage } from "./portal/loyalty"
 export { PortalReviewsPage } from "./portal/reviews"
+
+// AI Tools
+export { PhotoAnalyzerPage } from "./tools/photo-analyzer"
+export { VehicleDamagePage } from "./tools/vehicle-damage"
+
+// Map Test
+export { MapTestPage } from "./map-test"

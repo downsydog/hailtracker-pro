@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react"
+import { useEffect, useRef, useState, useCallback, useMemo } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
 import L from "leaflet"
@@ -23,6 +23,16 @@ import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Card, CardContent } from "@/components/ui/card"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuCheckboxItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { Switch } from "@/components/ui/switch"
 import { Lead } from "@/types"
 import { leadsApi } from "@/api/leads"
 import {
@@ -31,9 +41,9 @@ import {
   stormMonitorApi,
   HailEvent,
   StormCell,
-  SwathFeature,
   RadarSite,
   CalendarDayEvent,
+  StormPhoto,
 } from "@/api/weather"
 import {
   RefreshCw,
@@ -53,6 +63,17 @@ import {
   Calendar,
   Play,
   Bell,
+  Camera,
+  ExternalLink,
+  ImageIcon,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  PanelLeftClose,
+  PanelLeft,
+  Pause,
+  SkipBack,
+  SkipForward,
 } from "lucide-react"
 
 // Fix Leaflet default marker icon issue
@@ -92,9 +113,21 @@ function getHailSizeColor(hailSizeInches: number | undefined | null): { border: 
 }
 
 export function HailMapPage() {
+  console.log("=== HailMapPage RENDER ===")
+
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const mapRef = useRef<HTMLDivElement>(null)
+  const mapRef = useRef<HTMLDivElement | null>(null)
+  const [mapContainerReady, setMapContainerReady] = useState(false)
+  const [mapInitialized, setMapInitialized] = useState(false)
+
+  // Callback ref to detect when map container is mounted
+  const mapContainerRef = useCallback((node: HTMLDivElement | null) => {
+    mapRef.current = node
+    if (node && !mapContainerReady) {
+      setMapContainerReady(true)
+    }
+  }, [mapContainerReady])
   const mapInstanceRef = useRef<L.Map | null>(null)
   const swathLayerRef = useRef<L.LayerGroup | null>(null)
   const leadsClusterRef = useRef<L.MarkerClusterGroup | null>(null)
@@ -119,23 +152,59 @@ export function HailMapPage() {
 
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null)
   const [selectedCell, setSelectedCell] = useState<StormCell | null>(null)
+  const [selectedEvent, setSelectedEvent] = useState<HailEvent | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [cellDrawerOpen, setCellDrawerOpen] = useState(false)
+  const [eventDrawerOpen, setEventDrawerOpen] = useState(false)
   const [calendarOpen, setCalendarOpen] = useState(true)
   const [radarReplayOpen, setRadarReplayOpen] = useState(false)
   const [territoryAlertsOpen, setTerritoryAlertsOpen] = useState(false)
+  const [selectedDate, setSelectedDate] = useState<string | null>(null)
+  const [pendingZoomEventId, setPendingZoomEventId] = useState<number | null>(null)
 
-  // Fetch hail events using typed API
-  const { data: eventsData, isLoading: eventsLoading, refetch: refetchEvents } = useQuery({
-    queryKey: ["hail-events-map"],
-    queryFn: () => hailEventsApi.list({ days: 90 }),
+  // ============================================================================
+  // LIVE RADAR SYSTEM STATE
+  // ============================================================================
+  const [showLiveRadar, setShowLiveRadar] = useState(false)
+  const [liveRadarOpacity, setLiveRadarOpacity] = useState(0.6)
+  const [radarFrames, setRadarFrames] = useState<any[]>([])
+  const [radarHost, setRadarHost] = useState('')
+  const [currentFrame, setCurrentFrame] = useState(0)
+  const [isAnimating, setIsAnimating] = useState(false)
+  const [animationSpeed, setAnimationSpeed] = useState(500) // ms between frames
+  const liveRadarLayerRef = useRef<L.TileLayer | null>(null)
+
+  // Real-time overlay state
+  const [showAlertPolygons, setShowAlertPolygons] = useState(true)
+  const [showHailReports, setShowHailReports] = useState(true)
+  const [showTornadoReports, setShowTornadoReports] = useState(true)
+  const [showWatchBoxes, setShowWatchBoxes] = useState(true)
+  const [realtimeData, setRealtimeData] = useState<any>(null)
+  const alertPolygonLayerRef = useRef<L.LayerGroup | null>(null)
+  const hailReportLayerRef = useRef<L.LayerGroup | null>(null)
+  const tornadoReportLayerRef = useRef<L.LayerGroup | null>(null)
+  const watchBoxLayerRef = useRef<L.LayerGroup | null>(null)
+
+  // Clear any cached hail events on mount to ensure clean start
+  useEffect(() => {
+    console.log("Clearing cached hail-events data on mount")
+    queryClient.removeQueries({ queryKey: ["hail-events-map"] })
+  }, [queryClient])
+
+  // Fetch hail events - only when date is selected
+  const { data: eventsData, refetch: refetchEvents } = useQuery({
+    queryKey: ["hail-events-map", selectedDate],
+    queryFn: async () => {
+      console.log("API CALL: hailEventsApi.list with event_date:", selectedDate)
+      const response = await hailEventsApi.list({ event_date: selectedDate || undefined })
+      console.log("API RESPONSE _debug:", response.data?._debug)
+      return response
+    },
+    enabled: !!selectedDate,
   })
 
-  // Fetch real GeoJSON swaths
-  const { data: swathsData, refetch: refetchSwaths } = useQuery({
-    queryKey: ["storm-swaths"],
-    queryFn: () => stormCellsApi.getAllSwaths(),
-  })
+  // Note: Swaths come from the events data (swath_polygon field) - no separate swaths query needed
+  // The getAllSwaths API doesn't support date filtering, so we rely on events for date-filtered swaths
 
   // Fetch active storm cells
   const { data: cellsData, refetch: refetchCells } = useQuery({
@@ -166,42 +235,212 @@ export function HailMapPage() {
     },
   })
 
-  const events: HailEvent[] = eventsData?.data?.events || []
-  const swaths: SwathFeature[] = swathsData?.data?.features || (swathsData as any)?.features || []
-  const activeCells: StormCell[] = cellsData?.data?.active_cells || []
-  const radars: RadarSite[] = radarsData?.data?.radars || []
-  const allLeads = leadsData?.leads || []
-  const leads = allLeads.filter((l: any) => l.latitude && l.longitude)
+  // Fetch photos for selected storm event
+  const { data: photosData, isLoading: photosLoading, refetch: refetchPhotos } = useQuery({
+    queryKey: ["storm-photos", selectedEvent?.id],
+    queryFn: () => hailEventsApi.getStormPhotos(selectedEvent!.id),
+    enabled: !!selectedEvent?.id && eventDrawerOpen,
+  })
+
+  const stormPhotos = useMemo<StormPhoto[]>(
+    () => photosData?.data?.photos || [],
+    [photosData?.data?.photos]
+  )
+
+  // ============================================================================
+  // LIVE RADAR SYSTEM - DATA FETCHING
+  // ============================================================================
+
+  // Fetch radar data from RainViewer (FREE API)
+  const fetchRadarData = useCallback(async () => {
+    try {
+      const response = await fetch('https://api.rainviewer.com/public/weather-maps.json')
+      const data = await response.json()
+
+      // Combine past frames and nowcast (forecast)
+      const frames = [
+        ...data.radar.past,
+        ...data.radar.nowcast
+      ]
+
+      setRadarHost(data.host)
+      setRadarFrames(frames)
+      // Start at most recent past frame
+      setCurrentFrame(data.radar.past.length - 1)
+
+      console.log(`Loaded ${frames.length} radar frames from RainViewer`)
+    } catch (error) {
+      console.error('Failed to fetch radar data:', error)
+    }
+  }, [])
+
+  // Fetch real-time weather data from our API
+  const fetchRealtimeData = useCallback(async () => {
+    try {
+      const response = await fetch('/api/realtime/fetch?hours=6')
+      const data = await response.json()
+      setRealtimeData(data)
+      console.log('Realtime weather data:', {
+        alerts: data.alerts?.length || 0,
+        hailReports: data.hail_reports?.length || 0,
+        tornadoReports: data.tornado_reports?.length || 0,
+        watches: data.watches?.length || 0,
+      })
+    } catch (error) {
+      console.error('Failed to fetch realtime data:', error)
+    }
+  }, [])
+
+  // Auto-refresh radar data every 10 minutes when enabled
+  useEffect(() => {
+    if (!showLiveRadar) return
+
+    fetchRadarData()
+    const interval = setInterval(fetchRadarData, 10 * 60 * 1000)
+    return () => clearInterval(interval)
+  }, [showLiveRadar, fetchRadarData])
+
+  // Fetch realtime data when radar is enabled, refresh every 60 seconds
+  useEffect(() => {
+    if (!showLiveRadar) return
+
+    fetchRealtimeData()
+    const interval = setInterval(fetchRealtimeData, 60 * 1000)
+    return () => clearInterval(interval)
+  }, [showLiveRadar, fetchRealtimeData])
+
+  // Animation loop for radar frames
+  useEffect(() => {
+    if (!isAnimating || radarFrames.length === 0) return
+
+    const interval = setInterval(() => {
+      setCurrentFrame(prev => {
+        const next = prev + 1
+        return next >= radarFrames.length ? 0 : next
+      })
+    }, animationSpeed)
+
+    return () => clearInterval(interval)
+  }, [isAnimating, radarFrames.length, animationSpeed])
+
+  // Zoom map to fit a storm's swath bounds
+  const zoomToStorm = useCallback((storm: HailEvent) => {
+    if (!mapInstanceRef.current) return
+
+    try {
+      // If storm has a swath polygon, fit bounds to it
+      if (storm.swath_polygon) {
+        const geojson = typeof storm.swath_polygon === 'string'
+          ? JSON.parse(storm.swath_polygon)
+          : storm.swath_polygon
+
+        if (geojson && geojson.coordinates) {
+          const layer = L.geoJSON({
+            type: 'Feature',
+            geometry: geojson,
+            properties: {}
+          } as any)
+          const bounds = layer.getBounds()
+          if (bounds.isValid()) {
+            mapInstanceRef.current.fitBounds(bounds, {
+              padding: [50, 50],
+              maxZoom: 12,
+              animate: true
+            })
+            console.log("Zoomed to swath polygon bounds")
+            return
+          }
+        }
+      }
+
+      // Fall back to center coordinates with calculated zoom
+      const lat = storm.center_lat ?? storm.latitude
+      const lon = storm.center_lon ?? storm.longitude
+
+      if (lat != null && lon != null) {
+        // Calculate zoom based on swath area
+        const areaSquareMiles = storm.swath_area_sqmi || storm.affected_area_sq_miles || 10
+        // Larger areas = lower zoom, smaller areas = higher zoom
+        let zoom = 10
+        if (areaSquareMiles > 100) zoom = 8
+        else if (areaSquareMiles > 50) zoom = 9
+        else if (areaSquareMiles > 20) zoom = 10
+        else if (areaSquareMiles > 5) zoom = 11
+        else zoom = 12
+
+        mapInstanceRef.current.setView([lat, lon], zoom, { animate: true })
+        console.log(`Zoomed to storm center [${lat}, ${lon}] at zoom ${zoom}`)
+      }
+    } catch (error) {
+      console.error("Error zooming to storm:", error)
+    }
+  }, [])
+
+  // Search for photos when none exist
+  const searchPhotosMutation = useMutation({
+    mutationFn: (eventId: number) => hailEventsApi.searchStormPhotos(eventId),
+    onSuccess: () => {
+      refetchPhotos()
+    },
+  })
+
+  // Memoize derived arrays to prevent infinite re-renders
+  const events = useMemo<HailEvent[]>(() => {
+    const eventsList = eventsData?.data?.events || []
+    if (eventsList.length > 0) {
+      // Log unique dates in the returned events to check date filtering
+      const uniqueDates = [...new Set(eventsList.map((e: HailEvent) => e.event_date))]
+      console.log("API RETURNED events with dates:", uniqueDates, "count:", eventsList.length)
+    }
+    return eventsList
+  }, [eventsData?.data?.events])
+  const activeCells = useMemo<StormCell[]>(
+    () => cellsData?.data?.active_cells || [],
+    [cellsData?.data?.active_cells]
+  )
+  const radars = useMemo<RadarSite[]>(
+    () => radarsData?.data?.radars || [],
+    [radarsData?.data?.radars]
+  )
+  const leads = useMemo(() => {
+    const allLeads = leadsData?.leads || []
+    return allLeads.filter((l: any) => l.latitude && l.longitude)
+  }, [leadsData?.leads])
 
   // Update stats based on map bounds
   const updateStats = useCallback(() => {
     if (!mapInstanceRef.current) return
 
-    const bounds = mapInstanceRef.current.getBounds()
+    try {
+      const bounds = mapInstanceRef.current.getBounds()
+      if (!bounds) return
 
-    // Count events from last 7 days
-    const sevenDaysAgo = new Date()
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
-    const recentEvents = events.filter((e) => {
-      if (!e.event_date) return false
-      const eventDate = new Date(e.event_date)
-      return eventDate >= sevenDaysAgo
-    })
+      // Count events from last 7 days
+      const sevenDaysAgo = new Date()
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
+      const recentEvents = events.filter((e) => {
+        if (!e.event_date) return false
+        const eventDate = new Date(e.event_date)
+        return eventDate >= sevenDaysAgo
+      })
 
-    const leadsInView = leads.filter(
-      (l: any) => l.latitude && l.longitude && bounds.contains([l.latitude, l.longitude])
-    )
+      const leadsInView = leads.filter(
+        (l: any) => l.latitude && l.longitude && bounds.contains([l.latitude, l.longitude])
+      )
 
-    const hotLeads = leadsInView.filter(
-      (l: any) => (l.temperature || "").toUpperCase() === "HOT"
-    ).length
+      const hotLeads = leadsInView.filter(
+        (l: any) => (l.temperature || "").toUpperCase() === "HOT"
+      ).length
 
-    setStats({
-      activeStorms: recentEvents.length,
-      activeCells: activeCells.length,
-      leadsInView: leadsInView.length,
-      hotLeads,
-    })
+      setStats({
+        activeStorms: recentEvents.length,
+        activeCells: activeCells.length,
+        leadsInView: leadsInView.length,
+        hotLeads,
+      })
+    } catch (error) {
+      console.error("Error updating stats:", error)
+    }
   }, [events, leads, activeCells])
 
   // Handle lead click - open drawer
@@ -216,9 +455,28 @@ export function HailMapPage() {
     setCellDrawerOpen(true)
   }, [])
 
-  // Initialize map
+  // Listen for custom event from popup to open storm photos
   useEffect(() => {
-    if (!mapRef.current || mapInstanceRef.current) return
+    const handleOpenStormPhotos = (e: CustomEvent) => {
+      const eventId = e.detail
+      const event = events.find((ev) => ev.id === eventId)
+      if (event) {
+        setSelectedEvent(event)
+        setEventDrawerOpen(true)
+        // Also zoom to the storm
+        zoomToStorm(event)
+      }
+    }
+
+    window.addEventListener('openStormPhotos', handleOpenStormPhotos as EventListener)
+    return () => {
+      window.removeEventListener('openStormPhotos', handleOpenStormPhotos as EventListener)
+    }
+  }, [events, zoomToStorm])
+
+  // Initialize map - runs when container is ready
+  useEffect(() => {
+    if (!mapContainerReady || !mapRef.current || mapInstanceRef.current) return
 
     try {
       console.log("Initializing Leaflet map...")
@@ -339,9 +597,9 @@ export function HailMapPage() {
     }
     legend.addTo(map)
 
-    map.on("moveend", updateStats)
-
     mapInstanceRef.current = map
+    setMapInitialized(true)
+    console.log("Map fully initialized, swathLayerRef:", !!swathLayerRef.current)
     } catch (error) {
       console.error("Error initializing map:", error)
       return
@@ -351,60 +609,94 @@ export function HailMapPage() {
       if (mapInstanceRef.current) {
         mapInstanceRef.current.remove()
         mapInstanceRef.current = null
+        setMapInitialized(false)
       }
+    }
+  }, [mapContainerReady])
+
+  // Resize map when calendar sidebar toggles
+  useEffect(() => {
+    const map = mapInstanceRef.current
+    if (!map) return
+
+    // Small delay to allow CSS transition to complete
+    const timer = setTimeout(() => {
+      map.invalidateSize()
+    }, 350)
+
+    return () => clearTimeout(timer)
+  }, [calendarOpen])
+
+  // Update stats when map moves - separate effect to avoid reinitializing map
+  useEffect(() => {
+    const map = mapInstanceRef.current
+    if (!map) return
+
+    const handler = () => updateStats()
+    map.on("moveend", handler)
+
+    return () => {
+      map.off("moveend", handler)
     }
   }, [updateStats])
 
-  // Render hail swaths from real GeoJSON data
+  // Update stats when data changes (separate from moveend to avoid loops)
   useEffect(() => {
-    if (!swathLayerRef.current) return
+    updateStats()
+  }, [events.length, leads.length, activeCells.length])
 
-    swathLayerRef.current.clearLayers()
+  // Debug logging - only runs when data actually changes
+  useEffect(() => {
+    console.log("HailMap Data:", {
+      selectedDate,
+      eventsCount: events.length,
+      activeCellsCount: activeCells.length,
+      leadsCount: leads.length,
+      radarsCount: radars.length,
+    })
+  }, [selectedDate, events.length, activeCells.length, leads.length, radars.length])
 
-    if (!layers.swaths) return
+  // Render hail swaths from events data (only when date is selected)
+  useEffect(() => {
+    console.log("RENDER useEffect triggered:", {
+      mapInitialized,
+      selectedDate,
+      swathLayerExists: !!swathLayerRef.current,
+      layersSwaths: layers.swaths,
+      eventsCount: events.length,
+    })
 
-    // First try to use real GeoJSON swaths
-    if (swaths.length > 0) {
-      swaths.forEach((swath) => {
-        if (!swath.geometry || swath.geometry.type !== 'Polygon') return
-
-        // Use hail size for color (10-level scale)
-        const hailSize = swath.properties.max_hail_size
-        const colors = getHailSizeColor(hailSize)
-        const severity = swath.properties.severity || 'MODERATE'
-
-        const polygon = L.geoJSON(swath as any, {
-          style: {
-            color: colors.border,
-            fillColor: colors.fill,
-            fillOpacity: 0.5,
-            weight: 2,
-          },
-        })
-
-        polygon.bindPopup(`
-          <div style="min-width: 200px;">
-            <div style="padding: 12px 16px; border-bottom: 1px solid #e5e7eb; background: ${colors.fill};">
-              <strong>${swath.properties.event_name || 'Storm Swath'}</strong>
-            </div>
-            <div style="padding: 12px 16px;">
-              <p><strong>Cell ID:</strong> ${swath.properties.cell_id || 'N/A'}</p>
-              <p><strong>Max Hail:</strong> <span style="color: ${colors.border}; font-weight: bold;">${hailSize || 'Unknown'}"</span></p>
-              <p><strong>Severity:</strong> ${severity}</p>
-              <p><strong>Area:</strong> ${swath.properties.area_sq_miles?.toFixed(1) || 'N/A'} sq mi</p>
-            </div>
-          </div>
-        `)
-
-        swathLayerRef.current?.addLayer(polygon)
-      })
+    if (!swathLayerRef.current) {
+      console.log("EARLY RETURN: swathLayerRef.current is null")
+      return
     }
 
-    // Render events - use swath_polygon if available, otherwise fall back to circle
-    events.forEach((event) => {
-      // Skip if we already have a swath for this event from the separate swaths API
-      if (swaths.some(s => s.properties.event_id === event.id)) return
+    // ALWAYS clear old layers first
+    swathLayerRef.current.clearLayers()
+    console.log("Cleared old swath layers")
 
+    // If no date selected, don't render anything (keep map empty)
+    if (!selectedDate) {
+      console.log("NO DATE SELECTED - keeping map empty")
+      return
+    }
+
+    if (!layers.swaths) {
+      console.log("EARLY RETURN: layers.swaths is false")
+      return
+    }
+
+    // Only render if we have events for the selected date
+    if (events.length === 0) {
+      console.log("EARLY RETURN: events.length is 0 for date", selectedDate)
+      return
+    }
+
+    console.log("Processing", events.length, "events...")
+    let addedCount = 0
+
+    // Render events - use swath_polygon if available, otherwise fall back to circle
+    events.forEach((event, index) => {
       // Use hail size for 10-level color scale
       const hailSize = event.max_hail_size || event.hail_size_inches
       const colors = getHailSizeColor(hailSize)
@@ -450,15 +742,35 @@ export function HailMapPage() {
               ${event.estimated_vehicles_affected ? `<p><strong>Est. Vehicles:</strong> ${event.estimated_vehicles_affected.toLocaleString()}</p>` : ""}
               ${event.jobs_created ? `<p><strong>Jobs Created:</strong> ${event.jobs_created}</p>` : ""}
             </div>
+            <div style="padding: 8px 16px 12px; border-top: 1px solid #e5e7eb;">
+              <button
+                onclick="window.dispatchEvent(new CustomEvent('openStormPhotos', {detail: ${event.id}}))"
+                style="width: 100%; padding: 8px 12px; background: #3b82f6; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; gap: 6px;"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                View Photos
+              </button>
+            </div>
           </div>
         `)
 
         swathLayerRef.current?.addLayer(polygon)
+        addedCount++
+        console.log(`Added polygon for event ${index}:`, event.event_name || event.id)
       } else {
         // Fall back to circle representation
         const lat = event.center_lat ?? event.latitude
         const lon = event.center_lon ?? event.longitude
-        if (lat == null || lon == null) return
+        if (lat == null || lon == null) {
+          console.log(`Skipping event ${index} - no coordinates:`, {
+            id: event.id,
+            center_lat: event.center_lat,
+            center_lon: event.center_lon,
+            latitude: event.latitude,
+            longitude: event.longitude,
+          })
+          return
+        }
 
         const areaSquareMiles = event.swath_area_sqmi || event.affected_area_sq_miles || 10
         const radiusMiles = Math.sqrt(areaSquareMiles / Math.PI)
@@ -484,15 +796,27 @@ export function HailMapPage() {
               ${event.estimated_vehicles_affected ? `<p><strong>Est. Vehicles:</strong> ${event.estimated_vehicles_affected.toLocaleString()}</p>` : ""}
               ${event.jobs_created ? `<p><strong>Jobs Created:</strong> ${event.jobs_created}</p>` : ""}
             </div>
+            <div style="padding: 8px 16px 12px; border-top: 1px solid #e5e7eb;">
+              <button
+                onclick="window.dispatchEvent(new CustomEvent('openStormPhotos', {detail: ${event.id}}))"
+                style="width: 100%; padding: 8px 12px; background: #3b82f6; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; gap: 6px;"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                View Photos
+              </button>
+            </div>
           </div>
         `)
 
         swathLayerRef.current?.addLayer(circle)
+        addedCount++
+        console.log(`Added circle for event ${index}:`, event.event_name || event.id, `at [${lat}, ${lon}]`)
       }
     })
 
+    console.log(`RENDER COMPLETE: Added ${addedCount} of ${events.length} events to map`)
     updateStats()
-  }, [events, swaths, layers.swaths, updateStats])
+  }, [events, layers.swaths, updateStats, mapInitialized, selectedDate])
 
   // Render active storm cells
   useEffect(() => {
@@ -696,9 +1020,271 @@ export function HailMapPage() {
     }
   }, [layers.radar, radars])
 
+  // ============================================================================
+  // LIVE RADAR SYSTEM - LAYER RENDERING
+  // ============================================================================
+
+  // Render live radar tile layer from RainViewer
+  const updateLiveRadarLayer = useCallback(() => {
+    if (!mapInstanceRef.current || !showLiveRadar || radarFrames.length === 0 || !radarHost) return
+
+    // Remove existing radar layer
+    if (liveRadarLayerRef.current) {
+      mapInstanceRef.current.removeLayer(liveRadarLayerRef.current)
+    }
+
+    const frame = radarFrames[currentFrame]
+    if (!frame) return
+
+    // RainViewer tile URL format:
+    // {host}{path}/{size}/{z}/{x}/{y}/{colorScheme}/{smooth}_{snow}.png
+    // colorScheme: 2 = original colors (good for seeing intensity)
+    // smooth: 1 = smoothed, snow: 1 = show snow in blue
+    const tileUrl = `${radarHost}${frame.path}/256/{z}/{x}/{y}/2/1_1.png`
+
+    liveRadarLayerRef.current = L.tileLayer(tileUrl, {
+      opacity: liveRadarOpacity,
+      zIndex: 100,
+      attribution: '© RainViewer'
+    }).addTo(mapInstanceRef.current)
+
+  }, [showLiveRadar, currentFrame, radarFrames, radarHost, liveRadarOpacity])
+
+  useEffect(() => {
+    updateLiveRadarLayer()
+  }, [updateLiveRadarLayer])
+
+  // Render NWS alert polygons (Tornado/Severe Thunderstorm Warnings)
+  const updateAlertPolygons = useCallback(() => {
+    if (!mapInstanceRef.current) return
+
+    // Initialize or clear layer
+    if (alertPolygonLayerRef.current) {
+      alertPolygonLayerRef.current.clearLayers()
+    } else {
+      alertPolygonLayerRef.current = L.layerGroup().addTo(mapInstanceRef.current)
+    }
+
+    if (!showLiveRadar || !showAlertPolygons || !realtimeData?.alerts) return
+
+    realtimeData.alerts.forEach((alert: any) => {
+      if (!alert.geometry) return
+
+      // Red for tornado warnings, yellow for severe thunderstorm
+      const isTornado = alert.event?.toLowerCase().includes('tornado')
+      const color = isTornado ? '#FF0000' : '#FFFF00'
+
+      try {
+        const polygon = L.geoJSON(alert.geometry, {
+          style: {
+            color: color,
+            weight: 3,
+            fillOpacity: 0.25,
+            fillColor: color
+          }
+        })
+
+        polygon.bindPopup(`
+          <div style="min-width: 200px;">
+            <div style="padding: 10px; background: ${isTornado ? '#fef2f2' : '#fefce8'}; border-bottom: 1px solid #e5e7eb;">
+              <strong style="color: ${isTornado ? '#dc2626' : '#ca8a04'};">${alert.event || 'Alert'}</strong>
+            </div>
+            <div style="padding: 10px; font-size: 13px;">
+              <p>${alert.headline || ''}</p>
+              ${alert.hail_size_inches ? `<p><strong>Hail:</strong> ${alert.hail_size_inches}"</p>` : ''}
+              ${alert.wind_mph ? `<p><strong>Wind:</strong> ${alert.wind_mph} mph</p>` : ''}
+              <p style="color: #666; font-size: 11px; margin-top: 8px;">Expires: ${alert.expires ? new Date(alert.expires).toLocaleString() : 'N/A'}</p>
+            </div>
+          </div>
+        `)
+
+        alertPolygonLayerRef.current?.addLayer(polygon)
+      } catch (e) {
+        console.error('Error adding alert polygon:', e)
+      }
+    })
+  }, [showLiveRadar, showAlertPolygons, realtimeData])
+
+  useEffect(() => {
+    updateAlertPolygons()
+  }, [updateAlertPolygons])
+
+  // Render hail report markers
+  const updateHailReportMarkers = useCallback(() => {
+    if (!mapInstanceRef.current) return
+
+    if (hailReportLayerRef.current) {
+      hailReportLayerRef.current.clearLayers()
+    } else {
+      hailReportLayerRef.current = L.layerGroup().addTo(mapInstanceRef.current)
+    }
+
+    if (!showLiveRadar || !showHailReports || !realtimeData?.hail_reports) return
+
+    realtimeData.hail_reports.forEach((report: any) => {
+      if (!report.lat || !report.lon) return
+
+      // Size the marker based on hail size
+      const size = Math.max(8, (report.hail_size_inches || 1) * 8)
+
+      const marker = L.circleMarker([report.lat, report.lon], {
+        radius: size,
+        color: '#00FF00',
+        fillColor: '#00FF00',
+        fillOpacity: 0.7,
+        weight: 2
+      })
+
+      marker.bindPopup(`
+        <div style="min-width: 180px;">
+          <div style="padding: 10px; background: #f0fdf4; border-bottom: 1px solid #e5e7eb;">
+            <strong style="color: #16a34a;">🧊 HAIL REPORT</strong>
+          </div>
+          <div style="padding: 10px; font-size: 13px;">
+            <p><strong>Size:</strong> ${report.hail_size_inches || 'Unknown'}"</p>
+            <p><strong>Location:</strong> ${report.city || ''}, ${report.state || ''}</p>
+            <p><strong>Time:</strong> ${report.valid_time || ''}</p>
+            <p style="color: #666; font-size: 11px;">Source: ${report.source || 'LSR'}</p>
+          </div>
+        </div>
+      `)
+
+      hailReportLayerRef.current?.addLayer(marker)
+    })
+  }, [showLiveRadar, showHailReports, realtimeData])
+
+  useEffect(() => {
+    updateHailReportMarkers()
+  }, [updateHailReportMarkers])
+
+  // Render tornado report markers
+  const updateTornadoReportMarkers = useCallback(() => {
+    if (!mapInstanceRef.current) return
+
+    if (tornadoReportLayerRef.current) {
+      tornadoReportLayerRef.current.clearLayers()
+    } else {
+      tornadoReportLayerRef.current = L.layerGroup().addTo(mapInstanceRef.current)
+    }
+
+    if (!showLiveRadar || !showTornadoReports || !realtimeData?.tornado_reports) return
+
+    realtimeData.tornado_reports.forEach((report: any) => {
+      if (!report.lat || !report.lon) return
+
+      const icon = L.divIcon({
+        html: `
+          <div style="width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="#dc2626" stroke="#dc2626" stroke-width="2">
+              <path d="M12 2L2 12h3v8h6v-6h2v6h6v-8h3L12 2z"/>
+            </svg>
+          </div>
+        `,
+        className: '',
+        iconSize: [24, 24],
+        iconAnchor: [12, 12],
+      })
+
+      const marker = L.marker([report.lat, report.lon], { icon })
+
+      marker.bindPopup(`
+        <div style="min-width: 180px;">
+          <div style="padding: 10px; background: #fef2f2; border-bottom: 1px solid #e5e7eb;">
+            <strong style="color: #dc2626;">🌪️ TORNADO REPORT</strong>
+          </div>
+          <div style="padding: 10px; font-size: 13px;">
+            <p><strong>Location:</strong> ${report.city || ''}, ${report.state || ''}</p>
+            <p><strong>Time:</strong> ${report.valid_time || ''}</p>
+            ${report.remarks ? `<p><strong>Remarks:</strong> ${report.remarks}</p>` : ''}
+            <p style="color: #666; font-size: 11px;">Source: ${report.source || 'LSR'}</p>
+          </div>
+        </div>
+      `)
+
+      tornadoReportLayerRef.current?.addLayer(marker)
+    })
+  }, [showLiveRadar, showTornadoReports, realtimeData])
+
+  useEffect(() => {
+    updateTornadoReportMarkers()
+  }, [updateTornadoReportMarkers])
+
+  // Render watch boxes (Tornado/Severe Thunderstorm Watches)
+  const updateWatchBoxes = useCallback(() => {
+    if (!mapInstanceRef.current) return
+
+    if (watchBoxLayerRef.current) {
+      watchBoxLayerRef.current.clearLayers()
+    } else {
+      watchBoxLayerRef.current = L.layerGroup().addTo(mapInstanceRef.current)
+    }
+
+    if (!showLiveRadar || !showWatchBoxes || !realtimeData?.watches) return
+
+    realtimeData.watches.forEach((watch: any) => {
+      if (!watch.geometry) return
+
+      const isTornado = watch.event?.toLowerCase().includes('tornado')
+      const color = isTornado ? '#FF0000' : '#FFAA00'
+
+      try {
+        const polygon = L.geoJSON(watch.geometry, {
+          style: {
+            color: color,
+            weight: 4,
+            fillOpacity: 0.1,
+            fillColor: color,
+            dashArray: '10, 5'  // Dashed line for watches
+          }
+        })
+
+        polygon.bindPopup(`
+          <div style="min-width: 200px;">
+            <div style="padding: 10px; background: ${isTornado ? '#fef2f2' : '#fff7ed'}; border-bottom: 1px solid #e5e7eb;">
+              <strong style="color: ${isTornado ? '#dc2626' : '#ea580c'};">📦 ${watch.event || 'Watch'}</strong>
+            </div>
+            <div style="padding: 10px; font-size: 13px;">
+              <p>${watch.areas || ''}</p>
+              <p style="color: #666; font-size: 11px; margin-top: 8px;">Expires: ${watch.expires ? new Date(watch.expires).toLocaleString() : 'N/A'}</p>
+            </div>
+          </div>
+        `)
+
+        watchBoxLayerRef.current?.addLayer(polygon)
+      } catch (e) {
+        console.error('Error adding watch polygon:', e)
+      }
+    })
+  }, [showLiveRadar, showWatchBoxes, realtimeData])
+
+  useEffect(() => {
+    updateWatchBoxes()
+  }, [updateWatchBoxes])
+
+  // Cleanup radar layers when disabled
+  useEffect(() => {
+    if (!showLiveRadar) {
+      if (liveRadarLayerRef.current && mapInstanceRef.current) {
+        mapInstanceRef.current.removeLayer(liveRadarLayerRef.current)
+        liveRadarLayerRef.current = null
+      }
+      if (alertPolygonLayerRef.current) {
+        alertPolygonLayerRef.current.clearLayers()
+      }
+      if (hailReportLayerRef.current) {
+        hailReportLayerRef.current.clearLayers()
+      }
+      if (tornadoReportLayerRef.current) {
+        tornadoReportLayerRef.current.clearLayers()
+      }
+      if (watchBoxLayerRef.current) {
+        watchBoxLayerRef.current.clearLayers()
+      }
+    }
+  }, [showLiveRadar])
+
   const handleRefresh = () => {
     refetchEvents()
-    refetchSwaths()
     refetchCells()
     refetchLeads()
   }
@@ -707,7 +1293,59 @@ export function HailMapPage() {
     setLayers((prev) => ({ ...prev, [layer]: !prev[layer] }))
   }
 
-  if (eventsLoading || leadsLoading) {
+  // Handle calendar event selection - set date filter and zoom to storm
+  // MUST be before any early returns to maintain hook order
+  const handleCalendarEventSelect = useCallback((event: CalendarDayEvent) => {
+    console.log("Calendar event selected:", event)
+
+    // Set the date filter to load storms for this date
+    if (event.event_date) {
+      const date = new Date(event.event_date)
+      if (!isNaN(date.getTime())) {
+        setSelectedDate(date.toISOString().split('T')[0])
+      }
+    }
+
+    // Immediately zoom to the calendar event's coordinates while full data loads
+    if (mapInstanceRef.current && event.lat && event.lon) {
+      // Calculate zoom based on area
+      const areaSquareMiles = event.area_sqmi || 10
+      let zoom = 10
+      if (areaSquareMiles > 100) zoom = 8
+      else if (areaSquareMiles > 50) zoom = 9
+      else if (areaSquareMiles > 20) zoom = 10
+      else if (areaSquareMiles > 5) zoom = 11
+      else zoom = 12
+
+      mapInstanceRef.current.setView([event.lat, event.lon], zoom, { animate: true })
+      console.log(`Immediate zoom to calendar event [${event.lat}, ${event.lon}]`)
+    }
+
+    // Also set pending zoom ID to refine zoom after full data loads (with swath polygon)
+    if (event.id) {
+      setPendingZoomEventId(event.id)
+    }
+  }, [])
+
+  // Effect to zoom to pending event after events data loads
+  useEffect(() => {
+    if (!pendingZoomEventId || events.length === 0) return
+
+    // Find the event we need to zoom to
+    const targetEvent = events.find(e => e.id === pendingZoomEventId)
+    if (targetEvent) {
+      console.log("Zooming to pending event:", targetEvent.event_name || targetEvent.id)
+      // Small delay to ensure map layers are rendered
+      setTimeout(() => {
+        zoomToStorm(targetEvent)
+      }, 300)
+      // Clear the pending zoom
+      setPendingZoomEventId(null)
+    }
+  }, [events, pendingZoomEventId, zoomToStorm])
+
+  // Only wait for leads - events load after date selection
+  if (leadsLoading) {
     return (
       <div className="space-y-6">
         <Skeleton className="h-10 w-48" />
@@ -735,16 +1373,10 @@ export function HailMapPage() {
     return <Badge className={`${variants[s] || variants.NEW} hover:${variants[s] || variants.NEW}`}>{s}</Badge>
   }
 
-  // Handle calendar event selection - zoom map to event location
-  const handleCalendarEventSelect = useCallback((event: CalendarDayEvent) => {
-    if (mapInstanceRef.current && event.lat && event.lon) {
-      mapInstanceRef.current.setView([event.lat, event.lon], 10, { animate: true })
-    }
-  }, [])
-
   return (
-    <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+    <div className="flex flex-col h-[calc(100vh-80px)]">
+      {/* Header Row */}
+      <div className="flex items-center justify-between gap-4 mb-2">
         <PageHeader
           title="Hail Map"
           description="Real-time storm tracking, hail swaths, and lead visualization"
@@ -760,217 +1392,354 @@ export function HailMapPage() {
             <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
             Live
           </Badge>
-          <Button
-            variant={territoryAlertsOpen ? "default" : "outline"}
-            size="sm"
-            onClick={() => {
-              setTerritoryAlertsOpen(!territoryAlertsOpen)
-              if (!territoryAlertsOpen) {
-                setRadarReplayOpen(false)
-                setCalendarOpen(false)
-              }
-            }}
-            className="gap-2"
-          >
-            <Bell className="h-4 w-4" />
-            Alerts
-          </Button>
-          <Button
-            variant={radarReplayOpen ? "default" : "outline"}
-            size="sm"
-            onClick={() => {
-              setRadarReplayOpen(!radarReplayOpen)
-              if (!radarReplayOpen) {
-                setTerritoryAlertsOpen(false)
-                setCalendarOpen(false)
-              }
-            }}
-            className="gap-2"
-          >
-            <Play className="h-4 w-4" />
-            Radar
-          </Button>
-          <Button
-            variant={calendarOpen ? "default" : "outline"}
-            size="sm"
-            onClick={() => {
-              setCalendarOpen(!calendarOpen)
-              if (!calendarOpen) {
-                setRadarReplayOpen(false)
-                setTerritoryAlertsOpen(false)
-              }
-            }}
-            className="gap-2"
-          >
-            <Calendar className="h-4 w-4" />
-            Calendar
-          </Button>
           <Button variant="outline" size="icon" onClick={handleRefresh}>
             <RefreshCw className="h-4 w-4" />
           </Button>
         </div>
       </div>
 
-      <div className="flex gap-4">
-        {/* Map Container */}
-        <div className={`relative bg-card rounded-xl border overflow-hidden transition-all ${calendarOpen ? 'flex-1' : 'w-full'}`} style={{ height: "calc(100vh - 220px)", minHeight: "500px" }}>
-        <div
-          ref={mapRef}
-          style={{
-            width: "100%",
-            height: "100%",
-            position: "absolute",
-            top: 0,
-            left: 0,
-            zIndex: 1,
-            background: "#f0f0f0"
-          }}
-        />
+      {/* Toolbar Row */}
+      <div className="flex items-center gap-2 mb-2 p-2 bg-card rounded-lg border">
+        {/* Live Radar Dropdown */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant={showLiveRadar ? "default" : "outline"} size="sm" className="gap-2">
+              <Radio className="h-4 w-4" />
+              Live Radar
+              <ChevronDown className="h-3 w-3" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent className="w-80 p-4" align="start">
+            <div className="flex items-center justify-between mb-3">
+              <DropdownMenuLabel className="p-0 font-bold">Live Radar</DropdownMenuLabel>
+              <Switch checked={showLiveRadar} onCheckedChange={setShowLiveRadar} />
+            </div>
 
-        {/* Layer Controls */}
-        <div className="absolute top-4 right-4 z-[1000] bg-card rounded-lg shadow-lg border p-3 min-w-[180px]">
-          <div className="flex items-center gap-2 mb-3 text-xs font-semibold text-muted-foreground uppercase">
-            <Layers className="h-4 w-4" />
-            Layers
-          </div>
-          <div className="space-y-2">
-            <label className="flex items-center gap-2 cursor-pointer text-sm">
-              <input
-                type="checkbox"
-                checked={layers.swaths}
-                onChange={() => toggleLayer("swaths")}
-                className="rounded"
-              />
-              <CloudLightning className="h-3 w-3 text-yellow-500" />
-              Hail Swaths
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer text-sm">
-              <input
-                type="checkbox"
-                checked={layers.activeCells}
-                onChange={() => toggleLayer("activeCells")}
-                className="rounded"
-              />
-              <Zap className="h-3 w-3 text-orange-500" />
-              Active Cells
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer text-sm">
-              <input
-                type="checkbox"
-                checked={layers.forecasts}
-                onChange={() => toggleLayer("forecasts")}
-                className="rounded"
-              />
-              <Activity className="h-3 w-3 text-purple-500" />
-              Cell Forecasts
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer text-sm">
-              <input
-                type="checkbox"
-                checked={layers.leads}
-                onChange={() => toggleLayer("leads")}
-                className="rounded"
-              />
-              <MapPin className="h-3 w-3 text-blue-500" />
-              Leads
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer text-sm">
-              <input
-                type="checkbox"
-                checked={layers.radar}
-                onChange={() => toggleLayer("radar")}
-                className="rounded"
-              />
-              <Radio className="h-3 w-3 text-blue-500" />
-              Radar Coverage ({radars.length})
-            </label>
-          </div>
-
-          {/* Hail Size Legend */}
-          {layers.swaths && (
-            <div className="mt-3 pt-3 border-t">
-              <div className="text-xs font-semibold text-muted-foreground uppercase mb-2">
-                Hail Size
-              </div>
-              <div className="grid grid-cols-2 gap-1 text-xs">
-                {HAIL_SIZE_COLORS.map((level) => (
-                  <div key={level.label} className="flex items-center gap-1">
-                    <div
-                      className="w-3 h-3 rounded-sm border"
-                      style={{ backgroundColor: level.fill, borderColor: level.border }}
-                    />
-                    <span className="text-muted-foreground">{level.label}</span>
+            {showLiveRadar && (
+              <>
+                {/* Animation Controls */}
+                <div className="mb-4">
+                  <div className="flex items-center justify-center gap-2 mb-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setCurrentFrame(prev => Math.max(0, prev - 1))}
+                    >
+                      <SkipBack className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={isAnimating ? "destructive" : "default"}
+                      onClick={() => setIsAnimating(!isAnimating)}
+                    >
+                      {isAnimating ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setCurrentFrame(prev => Math.min(radarFrames.length - 1, prev + 1))}
+                    >
+                      <SkipForward className="h-4 w-4" />
+                    </Button>
                   </div>
-                ))}
-              </div>
+
+                  <input
+                    type="range"
+                    min={0}
+                    max={Math.max(0, radarFrames.length - 1)}
+                    value={currentFrame}
+                    onChange={(e) => {
+                      setIsAnimating(false)
+                      setCurrentFrame(parseInt(e.target.value))
+                    }}
+                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                  />
+
+                  <div className="text-center text-xs text-muted-foreground mt-1">
+                    {radarFrames[currentFrame] &&
+                      new Date(radarFrames[currentFrame].time * 1000).toLocaleString()
+                    }
+                    {radarFrames.length > 0 && currentFrame >= (radarFrames.length - 6) &&
+                      <span className="ml-2 text-blue-500 font-medium">(Forecast)</span>
+                    }
+                  </div>
+                </div>
+
+                {/* Speed & Opacity */}
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                  <div>
+                    <label className="text-xs text-muted-foreground block mb-1">Speed</label>
+                    <select
+                      value={animationSpeed}
+                      onChange={(e) => setAnimationSpeed(parseInt(e.target.value))}
+                      className="w-full text-sm border rounded px-2 py-1.5 bg-background"
+                    >
+                      <option value={1000}>Slow</option>
+                      <option value={500}>Normal</option>
+                      <option value={250}>Fast</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground block mb-1">
+                      Opacity: {Math.round(liveRadarOpacity * 100)}%
+                    </label>
+                    <input
+                      type="range"
+                      min={20}
+                      max={100}
+                      value={liveRadarOpacity * 100}
+                      onChange={(e) => setLiveRadarOpacity(parseInt(e.target.value) / 100)}
+                      className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                    />
+                  </div>
+                </div>
+
+                <DropdownMenuSeparator />
+
+                {/* Weather Overlays */}
+                <div className="pt-2">
+                  <div className="text-xs font-semibold text-muted-foreground uppercase mb-2">Weather Overlays</div>
+                  <div className="space-y-2">
+                    <label className="flex items-center justify-between cursor-pointer">
+                      <div className="flex items-center gap-2 text-sm">
+                        <input type="checkbox" checked={showAlertPolygons} onChange={(e) => setShowAlertPolygons(e.target.checked)} className="rounded" />
+                        <AlertTriangle className="h-3 w-3 text-red-500" />
+                        Warning Polygons
+                      </div>
+                      {realtimeData?.alerts?.length > 0 && <Badge variant="destructive" className="text-xs">{realtimeData.alerts.length}</Badge>}
+                    </label>
+                    <label className="flex items-center justify-between cursor-pointer">
+                      <div className="flex items-center gap-2 text-sm">
+                        <input type="checkbox" checked={showHailReports} onChange={(e) => setShowHailReports(e.target.checked)} className="rounded" />
+                        <CloudLightning className="h-3 w-3 text-green-500" />
+                        Hail Reports
+                      </div>
+                      {realtimeData?.hail_reports?.length > 0 && <Badge className="bg-green-500 text-xs">{realtimeData.hail_reports.length}</Badge>}
+                    </label>
+                    <label className="flex items-center justify-between cursor-pointer">
+                      <div className="flex items-center gap-2 text-sm">
+                        <input type="checkbox" checked={showTornadoReports} onChange={(e) => setShowTornadoReports(e.target.checked)} className="rounded" />
+                        <Activity className="h-3 w-3 text-red-600" />
+                        Tornado Reports
+                      </div>
+                      {realtimeData?.tornado_reports?.length > 0 && <Badge variant="destructive" className="text-xs">{realtimeData.tornado_reports.length}</Badge>}
+                    </label>
+                    <label className="flex items-center justify-between cursor-pointer">
+                      <div className="flex items-center gap-2 text-sm">
+                        <input type="checkbox" checked={showWatchBoxes} onChange={(e) => setShowWatchBoxes(e.target.checked)} className="rounded" />
+                        <AlertTriangle className="h-3 w-3 text-orange-500" />
+                        Watch Boxes
+                      </div>
+                      {realtimeData?.watches?.length > 0 && <Badge className="bg-orange-500 text-xs">{realtimeData.watches.length}</Badge>}
+                    </label>
+                  </div>
+                </div>
+
+                <DropdownMenuSeparator className="my-2" />
+
+                {/* Radar Legend */}
+                <div className="text-xs">
+                  <div className="font-semibold text-muted-foreground uppercase mb-1">Radar Intensity</div>
+                  <div className="flex items-center gap-1">
+                    <div className="flex-1 h-2 rounded" style={{ background: 'linear-gradient(to right, #00ff00, #ffff00, #ff8800, #ff0000, #ff00ff)' }}></div>
+                    <span className="text-muted-foreground ml-1">Light → Extreme</span>
+                  </div>
+                </div>
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        {/* Layers Dropdown */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" className="gap-2">
+              <Layers className="h-4 w-4" />
+              Layers
+              <ChevronDown className="h-3 w-3" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent className="w-56" align="start">
+            <DropdownMenuLabel>Map Layers</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuCheckboxItem checked={layers.swaths} onCheckedChange={() => toggleLayer("swaths")}>
+              <CloudLightning className="h-4 w-4 mr-2 text-yellow-500" />
+              Hail Swaths
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuCheckboxItem checked={layers.activeCells} onCheckedChange={() => toggleLayer("activeCells")}>
+              <Zap className="h-4 w-4 mr-2 text-orange-500" />
+              Active Cells
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuCheckboxItem checked={layers.forecasts} onCheckedChange={() => toggleLayer("forecasts")}>
+              <Activity className="h-4 w-4 mr-2 text-purple-500" />
+              Cell Forecasts
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuCheckboxItem checked={layers.leads} onCheckedChange={() => toggleLayer("leads")}>
+              <MapPin className="h-4 w-4 mr-2 text-blue-500" />
+              Leads
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuCheckboxItem checked={layers.radar} onCheckedChange={() => toggleLayer("radar")}>
+              <Radio className="h-4 w-4 mr-2 text-blue-500" />
+              Radar Coverage ({radars.length})
+            </DropdownMenuCheckboxItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <div className="h-6 w-px bg-border mx-1" />
+
+        {/* Sidebar Toggles */}
+        <Button
+          variant={territoryAlertsOpen ? "default" : "outline"}
+          size="sm"
+          onClick={() => {
+            setTerritoryAlertsOpen(!territoryAlertsOpen)
+            if (!territoryAlertsOpen) {
+              setRadarReplayOpen(false)
+            }
+          }}
+          className="gap-2"
+        >
+          <Bell className="h-4 w-4" />
+          Alerts
+        </Button>
+        <Button
+          variant={radarReplayOpen ? "default" : "outline"}
+          size="sm"
+          onClick={() => {
+            setRadarReplayOpen(!radarReplayOpen)
+            if (!radarReplayOpen) {
+              setTerritoryAlertsOpen(false)
+            }
+          }}
+          className="gap-2"
+        >
+          <Play className="h-4 w-4" />
+          Radar Replay
+        </Button>
+        <Button
+          variant={calendarOpen ? "default" : "ghost"}
+          size="sm"
+          onClick={() => setCalendarOpen(!calendarOpen)}
+          className="gap-2"
+        >
+          {calendarOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeft className="h-4 w-4" />}
+          <Calendar className="h-4 w-4" />
+          Calendar
+        </Button>
+      </div>
+
+      {/* Main Content Row */}
+      <div className="flex gap-2 flex-1 min-h-0">
+        {/* Collapsible Calendar Sidebar */}
+        <div
+          className={`transition-all duration-300 ease-in-out overflow-hidden ${calendarOpen ? 'w-80' : 'w-0'}`}
+          style={{ minHeight: 0 }}
+        >
+          {calendarOpen && (
+            <div className="h-full bg-card rounded-lg border overflow-auto">
+              <StormCalendar
+                onSelectEvent={handleCalendarEventSelect}
+                onSelectDate={(date) => {
+                  console.log("Date selected:", date)
+                  setSelectedDate(date)
+                }}
+                className="h-full"
+              />
             </div>
           )}
         </div>
 
-        {/* Active Cells Alert */}
-        {activeCells.length > 0 && (
-          <div className="absolute top-4 left-4 z-[1000] bg-orange-500 text-white rounded-lg shadow-lg px-4 py-2 flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4" />
-            <span className="font-medium">{activeCells.length} Active Storm Cells Tracking</span>
-          </div>
-        )}
+        {/* Map Container */}
+        <div className="flex-1 flex flex-col min-w-0">
+          <div className="flex-1 relative bg-card rounded-lg border overflow-hidden">
+            <div
+              ref={mapContainerRef}
+              style={{
+                width: "100%",
+                height: "100%",
+                position: "absolute",
+                top: 0,
+                left: 0,
+                zIndex: 1,
+                background: "#f0f0f0"
+              }}
+            />
 
-        {/* Stats Bar */}
-        <div className="absolute bottom-4 left-4 right-4 sm:left-auto sm:right-4 sm:w-96 bg-card rounded-lg shadow-lg border p-4 z-[1000]">
-          <div className="grid grid-cols-4 gap-4 text-center">
-            <div>
-              <p className="text-2xl font-bold text-red-600 flex items-center justify-center gap-1">
-                <CloudLightning className="h-5 w-5" />
-                {stats.activeStorms}
-              </p>
-              <p className="text-xs text-muted-foreground">Storms (7d)</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-orange-600 flex items-center justify-center gap-1">
-                <Zap className="h-5 w-5" />
-                {stats.activeCells}
-              </p>
-              <p className="text-xs text-muted-foreground">Active Cells</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-blue-600 flex items-center justify-center gap-1">
-                <MapPin className="h-5 w-5" />
-                {stats.leadsInView}
-              </p>
-              <p className="text-xs text-muted-foreground">Leads</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-orange-600 flex items-center justify-center gap-1">
-                <Flame className="h-5 w-5" />
-                {stats.hotLeads}
-              </p>
-              <p className="text-xs text-muted-foreground">Hot Leads</p>
+            {/* Active Cells Alert - small indicator on map */}
+            {activeCells.length > 0 && (
+              <div className="absolute top-3 left-3 z-[1000] bg-orange-500 text-white rounded-lg shadow-lg px-3 py-1.5 flex items-center gap-2 text-sm">
+                <AlertTriangle className="h-4 w-4" />
+                <span className="font-medium">{activeCells.length} Active Cells</span>
+              </div>
+            )}
+          </div>
+
+          {/* Stats Bar - Below Map */}
+          <div className="mt-2 bg-card rounded-lg border p-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-6">
+                <div className="flex items-center gap-2">
+                  <CloudLightning className="h-5 w-5 text-red-500" />
+                  <div>
+                    <span className="text-xl font-bold text-red-600">{stats.activeStorms}</span>
+                    <span className="text-xs text-muted-foreground ml-1">Storms (7d)</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Zap className="h-5 w-5 text-orange-500" />
+                  <div>
+                    <span className="text-xl font-bold text-orange-600">{stats.activeCells}</span>
+                    <span className="text-xs text-muted-foreground ml-1">Active Cells</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <MapPin className="h-5 w-5 text-blue-500" />
+                  <div>
+                    <span className="text-xl font-bold text-blue-600">{stats.leadsInView}</span>
+                    <span className="text-xs text-muted-foreground ml-1">Leads</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Flame className="h-5 w-5 text-orange-500" />
+                  <div>
+                    <span className="text-xl font-bold text-orange-600">{stats.hotLeads}</span>
+                    <span className="text-xs text-muted-foreground ml-1">Hot Leads</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Compact Hail Size Legend */}
+              {layers.swaths && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">Hail Size:</span>
+                  <div className="flex items-center gap-0.5">
+                    {HAIL_SIZE_COLORS.map((level) => (
+                      <div
+                        key={level.label}
+                        className="w-4 h-4 rounded-sm border cursor-help"
+                        style={{ backgroundColor: level.fill, borderColor: level.border }}
+                        title={level.label}
+                      />
+                    ))}
+                  </div>
+                  <span className="text-xs text-muted-foreground">(&lt;0.5" - 3"+)</span>
+                </div>
+              )}
             </div>
           </div>
-        </div>
         </div>
 
         {/* Territory Alerts Panel */}
         {territoryAlertsOpen && (
-          <div className="w-96 flex-shrink-0" style={{ height: "calc(100vh - 220px)", minHeight: "500px" }}>
-            <TerritoryAlerts className="h-full overflow-auto" />
+          <div className="w-80 flex-shrink-0 bg-card rounded-lg border overflow-auto">
+            <TerritoryAlerts className="h-full" />
           </div>
         )}
 
         {/* Radar Replay Panel */}
         {radarReplayOpen && !territoryAlertsOpen && (
-          <div className="w-96 flex-shrink-0" style={{ height: "calc(100vh - 220px)", minHeight: "500px" }}>
-            <RadarReplay className="h-full overflow-auto" />
-          </div>
-        )}
-
-        {/* Storm Calendar Panel */}
-        {calendarOpen && !radarReplayOpen && !territoryAlertsOpen && (
-          <div className="w-96 flex-shrink-0" style={{ height: "calc(100vh - 220px)", minHeight: "500px" }}>
-            <StormCalendar
-              onSelectEvent={handleCalendarEventSelect}
-              className="h-full overflow-auto"
-            />
+          <div className="w-80 flex-shrink-0 bg-card rounded-lg border overflow-auto">
+            <RadarReplay className="h-full" />
           </div>
         )}
       </div>
@@ -1210,6 +1979,154 @@ export function HailMapPage() {
                   <Button className="w-full" variant="outline" asChild>
                     <a
                       href={`https://www.google.com/maps?q=${selectedCell.lat},${selectedCell.lon}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      <MapPin className="h-4 w-4 mr-2" />
+                      View on Google Maps
+                    </a>
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
+
+      {/* Storm Photo Drawer */}
+      <Sheet open={eventDrawerOpen} onOpenChange={setEventDrawerOpen}>
+        <SheetContent className="w-[500px] sm:w-[600px] overflow-y-auto">
+          {selectedEvent && (
+            <>
+              <SheetHeader className="pb-4 border-b">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <SheetTitle className="text-xl flex items-center gap-2">
+                      <Camera className="h-5 w-5 text-blue-500" />
+                      Storm Photos
+                    </SheetTitle>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {selectedEvent.event_name || selectedEvent.city || "Unknown Location"}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {selectedEvent.event_date} • {selectedEvent.max_hail_size || "N/A"}" hail
+                    </p>
+                  </div>
+                </div>
+              </SheetHeader>
+
+              <div className="py-6 space-y-6">
+                {/* Storm Info */}
+                <div className="space-y-3">
+                  <h4 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">Storm Details</h4>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="p-3 bg-muted rounded-lg">
+                      <div className="text-xs text-muted-foreground">Max Hail Size</div>
+                      <div className="font-bold text-lg">{selectedEvent.max_hail_size || "N/A"}"</div>
+                    </div>
+                    <div className="p-3 bg-muted rounded-lg">
+                      <div className="text-xs text-muted-foreground">Area</div>
+                      <div className="font-bold text-lg">{selectedEvent.swath_area_sqmi?.toFixed(1) || "N/A"} sq mi</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Photos Section */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">
+                      Social Media Photos ({stormPhotos.length})
+                    </h4>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => searchPhotosMutation.mutate(selectedEvent.id)}
+                      disabled={searchPhotosMutation.isPending}
+                    >
+                      {searchPhotosMutation.isPending ? (
+                        <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-4 w-4 mr-2" />
+                      )}
+                      Search for Photos
+                    </Button>
+                  </div>
+
+                  {photosLoading ? (
+                    <div className="space-y-3">
+                      <Skeleton className="h-48 w-full" />
+                      <Skeleton className="h-48 w-full" />
+                    </div>
+                  ) : stormPhotos.length === 0 ? (
+                    <div className="text-center py-12 bg-muted rounded-lg">
+                      <ImageIcon className="h-12 w-12 mx-auto text-muted-foreground mb-3" />
+                      <p className="text-muted-foreground">No photos found for this storm</p>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Click "Search for Photos" to find social media posts
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 gap-4">
+                      {stormPhotos.map((photo) => (
+                        <Card key={photo.id} className="overflow-hidden">
+                          <div className="relative">
+                            <img
+                              src={photo.photo_url}
+                              alt={photo.title || "Storm photo"}
+                              className="w-full h-48 object-cover"
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).src = "/placeholder-image.jpg"
+                              }}
+                            />
+                            {photo.ai_detected_hail && (
+                              <Badge className="absolute top-2 right-2 bg-green-500">
+                                AI Verified Hail
+                              </Badge>
+                            )}
+                          </div>
+                          <CardContent className="p-4">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex-1 min-w-0">
+                                <p className="font-medium text-sm truncate">{photo.title || "Untitled"}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  {photo.source} • {photo.author || "Unknown"}
+                                </p>
+                              </div>
+                              <a
+                                href={photo.post_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex-shrink-0"
+                              >
+                                <Button size="sm" variant="ghost">
+                                  <ExternalLink className="h-4 w-4" />
+                                </Button>
+                              </a>
+                            </div>
+                            {photo.ai_analyzed && (
+                              <div className="mt-3 p-2 bg-muted rounded text-xs">
+                                <div className="flex justify-between">
+                                  <span>AI Estimated Size:</span>
+                                  <span className="font-medium">{photo.ai_estimated_size?.toFixed(2) || "N/A"}"</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span>Confidence:</span>
+                                  <span className="font-medium">{((photo.ai_confidence || 0) * 100).toFixed(0)}%</span>
+                                </div>
+                              </div>
+                            )}
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Actions */}
+                <div className="space-y-3 pt-4 border-t">
+                  <Button className="w-full" variant="outline" asChild>
+                    <a
+                      href={`https://www.google.com/maps?q=${selectedEvent.center_lat || selectedEvent.latitude},${selectedEvent.center_lon || selectedEvent.longitude}`}
                       target="_blank"
                       rel="noopener noreferrer"
                     >

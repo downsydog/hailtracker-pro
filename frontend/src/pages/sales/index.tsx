@@ -1,8 +1,10 @@
+import * as React from "react"
 import { Link } from "react-router-dom"
 import { PageHeader } from "@/components/app/page-header"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Progress } from "@/components/ui/progress"
 import { useLeads } from "@/hooks/use-leads"
 import { useEstimates } from "@/hooks/use-estimates"
 import { useJobs } from "@/hooks/use-jobs"
@@ -15,12 +17,41 @@ import {
   Calendar,
   Target,
   Award,
+  Wifi,
+  WifiOff,
+  Trophy,
+  MapPin,
+  Flame,
+  ChevronRight,
 } from "lucide-react"
+
+// Daily goals configuration
+const DAILY_GOALS = {
+  doors: { target: 50, label: "Doors Knocked" },
+  leads: { target: 5, label: "Leads Captured" },
+  estimates: { target: 3, label: "Estimates Created" },
+}
 
 export function SalesDashboardPage() {
   const { data: leadsData, isLoading: leadsLoading } = useLeads({ per_page: 50 })
   const { data: estimatesData, isLoading: estimatesLoading } = useEstimates({ per_page: 50 })
   const { data: jobsData, isLoading: jobsLoading } = useJobs({ per_page: 10 })
+
+  // Online/offline status
+  const [isOnline, setIsOnline] = React.useState(navigator.onLine)
+
+  React.useEffect(() => {
+    const handleOnline = () => setIsOnline(true)
+    const handleOffline = () => setIsOnline(false)
+
+    window.addEventListener("online", handleOnline)
+    window.addEventListener("offline", handleOffline)
+
+    return () => {
+      window.removeEventListener("online", handleOnline)
+      window.removeEventListener("offline", handleOffline)
+    }
+  }, [])
 
   const leads = leadsData?.leads || []
   const estimates = estimatesData?.estimates || []
@@ -40,12 +71,141 @@ export function SalesDashboardPage() {
 
   const isLoading = leadsLoading || estimatesLoading || jobsLoading
 
+  // Calculate daily goals progress (demo values)
+  const todayLeads = leads.filter(
+    (l) => new Date(l.created_at).toDateString() === new Date().toDateString()
+  ).length
+  const todayEstimates = estimates.filter(
+    (e) => new Date(e.created_at).toDateString() === new Date().toDateString()
+  ).length
+  const doorsKnocked = 32 // Demo value
+
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Sales Dashboard"
-        description="Track leads, estimates, and sales performance"
-      />
+      <div className="flex items-center justify-between">
+        <PageHeader
+          title="Sales Dashboard"
+          description="Track leads, estimates, and sales performance"
+        />
+        {/* Online/Offline Status */}
+        <Badge
+          variant={isOnline ? "default" : "destructive"}
+          className="flex items-center gap-2"
+        >
+          {isOnline ? (
+            <>
+              <Wifi className="h-4 w-4" />
+              Online
+            </>
+          ) : (
+            <>
+              <WifiOff className="h-4 w-4" />
+              Offline
+            </>
+          )}
+        </Badge>
+      </div>
+
+      {/* Daily Goals Progress */}
+      <Card className="border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50">
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Target className="h-5 w-5 text-blue-600" />
+              Today's Goals
+            </CardTitle>
+            <Button variant="ghost" size="sm" asChild>
+              <Link to="/sales/leaderboard">
+                <Trophy className="h-4 w-4 mr-1" />
+                Leaderboard
+                <ChevronRight className="h-4 w-4 ml-1" />
+              </Link>
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {/* Doors Knocked */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="flex items-center gap-1">
+                  <MapPin className="h-4 w-4 text-muted-foreground" />
+                  {DAILY_GOALS.doors.label}
+                </span>
+                <span className="font-medium">
+                  {doorsKnocked}/{DAILY_GOALS.doors.target}
+                </span>
+              </div>
+              <Progress
+                value={(doorsKnocked / DAILY_GOALS.doors.target) * 100}
+                className="h-2"
+              />
+            </div>
+
+            {/* Leads */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="flex items-center gap-1">
+                  <Flame className="h-4 w-4 text-orange-500" />
+                  {DAILY_GOALS.leads.label}
+                </span>
+                <span className="font-medium">
+                  {todayLeads}/{DAILY_GOALS.leads.target}
+                </span>
+              </div>
+              <Progress
+                value={(todayLeads / DAILY_GOALS.leads.target) * 100}
+                className="h-2"
+              />
+            </div>
+
+            {/* Estimates */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="flex items-center gap-1">
+                  <FileText className="h-4 w-4 text-muted-foreground" />
+                  {DAILY_GOALS.estimates.label}
+                </span>
+                <span className="font-medium">
+                  {todayEstimates}/{DAILY_GOALS.estimates.target}
+                </span>
+              </div>
+              <Progress
+                value={(todayEstimates / DAILY_GOALS.estimates.target) * 100}
+                className="h-2"
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Quick Navigation for Field Sales */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <Button variant="outline" className="h-auto py-3 flex-col" asChild>
+          <Link to="/sales/routes">
+            <MapPin className="h-5 w-5 mb-1 text-blue-600" />
+            <span className="text-xs">Route Planner</span>
+          </Link>
+        </Button>
+        <Button variant="outline" className="h-auto py-3 flex-col" asChild>
+          <Link to="/sales/field-leads">
+            <Flame className="h-5 w-5 mb-1 text-orange-500" />
+            <span className="text-xs">Field Leads</span>
+          </Link>
+        </Button>
+        <Button variant="outline" className="h-auto py-3 flex-col" asChild>
+          <Link to="/sales/scripts">
+            <FileText className="h-5 w-5 mb-1 text-green-600" />
+            <span className="text-xs">Scripts</span>
+          </Link>
+        </Button>
+        <Button variant="outline" className="h-auto py-3 flex-col" asChild>
+          <Link to="/sales/competitors">
+            <Users className="h-5 w-5 mb-1 text-purple-600" />
+            <span className="text-xs">Competitors</span>
+          </Link>
+        </Button>
+      </div>
 
       {/* Key Metrics */}
       <div className="grid gap-4 md:grid-cols-4">

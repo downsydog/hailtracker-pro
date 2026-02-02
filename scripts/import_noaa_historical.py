@@ -14,9 +14,10 @@ This script:
 5. Inserts into hail_events table
 
 Usage:
-    python scripts/import_noaa_historical.py --years 2020,2021,2022,2023,2024
+    python scripts/import_noaa_historical.py --years 2023,2024
     python scripts/import_noaa_historical.py --years 2024 --state TX
-    python scripts/import_noaa_historical.py --all  # Import 2020-2024
+    python scripts/import_noaa_historical.py --recent  # Import 2020-present
+    python scripts/import_noaa_historical.py --all     # Import 2011-present (FULL HISTORY)
 """
 
 import os
@@ -560,15 +561,18 @@ def main():
 Examples:
     python scripts/import_noaa_historical.py --years 2024
     python scripts/import_noaa_historical.py --years 2023,2024 --state TX
-    python scripts/import_noaa_historical.py --all
-    python scripts/import_noaa_historical.py --all --state OK
+    python scripts/import_noaa_historical.py --recent            # 2020-present
+    python scripts/import_noaa_historical.py --all               # 2011-present (FULL history)
+    python scripts/import_noaa_historical.py --all --state OK    # Full history for Oklahoma
         """
     )
 
     parser.add_argument('--years', type=str,
                        help='Comma-separated list of years (e.g., 2023,2024)')
     parser.add_argument('--all', action='store_true',
-                       help='Import all years 2020-2024')
+                       help='Import all years 2011-present (full historical)')
+    parser.add_argument('--recent', action='store_true',
+                       help='Import recent years 2020-present')
     parser.add_argument('--state', type=str,
                        help='Filter by state abbreviation (e.g., TX, OK)')
     parser.add_argument('--db', type=str, default='data/hailtracker_crm.db',
@@ -578,13 +582,19 @@ Examples:
 
     args = parser.parse_args()
 
+    # Get current year
+    current_year = datetime.now().year
+
     # Determine years to import
     if args.all:
-        years = [2020, 2021, 2022, 2023, 2024]
+        # Full historical data since 2011
+        years = list(range(2011, current_year + 1))
+    elif args.recent:
+        years = list(range(2020, current_year + 1))
     elif args.years:
         years = [int(y.strip()) for y in args.years.split(',')]
     else:
-        print("Error: Specify --years or --all")
+        print("Error: Specify --years, --recent, or --all")
         parser.print_help()
         return 1
 

@@ -10,6 +10,9 @@ Setup:
 2. Create a project and enable Places API
 3. Create API key with Places API permissions
 4. Set environment variable: GOOGLE_PLACES_API_KEY=your_key_here
+
+COMPREHENSIVE PDR FLEET PROSPECTING KEYWORDS
+Updated with full list of service businesses that have work vehicles.
 """
 
 import requests
@@ -40,6 +43,103 @@ class GooglePlacesAPI:
         'moving_company', 'storage',
         'general_contractor', 'electrician', 'plumber', 'roofing_contractor',
         'painter', 'locksmith',
+    ]
+
+    # ==========================================================================
+    # COMPREHENSIVE SEARCH KEYWORDS FOR PDR FLEET PROSPECTING
+    # ==========================================================================
+
+    # DISTRIBUTION/DELIVERY
+    DISTRIBUTION_KEYWORDS = [
+        'beverage distributor',
+        'beer distributor',
+        'food distributor',
+        'linen service',
+        'vending machine company',
+    ]
+
+    # TRADES/SERVICE COMPANIES
+    TRADES_KEYWORDS = [
+        'hvac contractor',
+        'plumbing contractor',
+        'electrical contractor',
+        'pest control',
+        'landscaping company',
+        'lawn care',
+        'tree service',
+        'roofing contractor',
+        'fence company',
+        'pool service',
+        'garage door repair',
+        'locksmith',
+        'painting contractor',
+        'concrete contractor',
+        'pressure washing',
+        'carpet cleaning',
+        'water damage restoration',
+        'septic service',
+    ]
+
+    # CONSTRUCTION/INDUSTRIAL
+    CONSTRUCTION_KEYWORDS = [
+        'general contractor',
+        'excavation',
+        'equipment rental',
+    ]
+
+    # AUTOMOTIVE
+    AUTOMOTIVE_KEYWORDS = [
+        'towing service',
+        'auto glass',
+        'mobile mechanic',
+        'auto body shop',
+        'car dealer',
+    ]
+
+    # PROPERTY/FACILITIES
+    PROPERTY_KEYWORDS = [
+        'property management',
+        'janitorial service',
+        'courier service',
+    ]
+
+    # OTHER
+    OTHER_KEYWORDS = [
+        'sign company',
+        'funeral home',
+    ]
+
+    # COMBINED FULL KEYWORD LIST
+    KEYWORDS = (
+        DISTRIBUTION_KEYWORDS +
+        TRADES_KEYWORDS +
+        CONSTRUCTION_KEYWORDS +
+        AUTOMOTIVE_KEYWORDS +
+        PROPERTY_KEYWORDS +
+        OTHER_KEYWORDS
+    )
+
+    # Priority keywords for quick searches (highest vehicle density)
+    PRIORITY_KEYWORDS = [
+        'hvac contractor', 'plumbing contractor', 'electrical contractor',
+        'pest control', 'landscaping company', 'roofing contractor',
+        'tree service', 'towing service', 'general contractor',
+        'pool service', 'fence company', 'concrete contractor',
+        'property management', 'janitorial service', 'sign company',
+        'car dealer', 'auto body shop',
+    ]
+
+    # Tile-based search keywords (for complete swath coverage)
+    TILE_KEYWORDS = [
+        'car dealer', 'auto dealer',
+        'auto body', 'body shop',
+        'landscaping', 'lawn care',
+        'hvac', 'plumber', 'electrician',
+        'roofing', 'contractor',
+        'pest control', 'tree service',
+        'pool service', 'fence', 'concrete',
+        'towing', 'auto glass',
+        'property management', 'janitorial',
     ]
 
     def __init__(self, api_key: str = None):
@@ -125,24 +225,11 @@ class GooglePlacesAPI:
             return []
 
     def search_all_categories(self, lat: float, lon: float, radius_meters: int = 5000) -> List[Dict]:
-        """Search all relevant place types."""
+        """Search all comprehensive keywords."""
         all_results = []
         seen_ids = set()
 
-        # Keywords that work well with Google Places
-        keywords = [
-            'landscaping', 'lawn care',
-            'hvac', 'air conditioning',
-            'plumber', 'plumbing',
-            'electrician',
-            'pest control',
-            'roofing',
-            'contractor',
-            'auto body', 'car dealer',
-            'towing',
-        ]
-
-        for keyword in keywords:
+        for keyword in self.KEYWORDS:
             results = self.search_radius(lat, lon, radius_meters, keyword=keyword)
 
             for biz in results:
@@ -150,7 +237,89 @@ class GooglePlacesAPI:
                     seen_ids.add(biz.get('google_id'))
                     all_results.append(biz)
 
+        logger.info(f"[Google] Found {len(all_results)} unique businesses across all keywords")
         return all_results
+
+    def search_priority_categories(
+        self,
+        lat: float,
+        lon: float,
+        radius_meters: int = 5000,
+        enrich_contacts: bool = False,
+        enrich_limit: int = 50
+    ) -> List[Dict]:
+        """
+        Search priority/high-value keywords only.
+
+        Args:
+            lat, lon: Center point
+            radius_meters: Search radius
+            enrich_contacts: If True, fetch Place Details for phone/website (costs extra)
+            enrich_limit: Max businesses to enrich (to control API costs)
+        """
+        all_results = []
+        seen_ids = set()
+
+        for keyword in self.PRIORITY_KEYWORDS:
+            results = self.search_radius(lat, lon, radius_meters, keyword=keyword)
+
+            for biz in results:
+                if biz.get('google_id') not in seen_ids:
+                    seen_ids.add(biz.get('google_id'))
+                    all_results.append(biz)
+
+        logger.info(f"[Google] Found {len(all_results)} unique businesses from priority keywords")
+
+        # Enrich with contact details if requested
+        if enrich_contacts and all_results:
+            all_results = self.enrich_with_details(all_results, limit=enrich_limit)
+
+        return all_results
+
+    def enrich_with_details(self, businesses: List[Dict], limit: int = 50) -> List[Dict]:
+        """
+        Enrich businesses with phone/website from Place Details API.
+
+        Note: Each call costs extra - use sparingly.
+
+        Args:
+            businesses: List of businesses to enrich
+            limit: Max number to enrich (to control costs)
+
+        Returns:
+            Enriched business list
+        """
+        if not self.api_key:
+            return businesses
+
+        enriched_count = 0
+        for biz in businesses:
+            if enriched_count >= limit:
+                break
+
+            place_id = biz.get('google_id')
+            if not place_id:
+                continue
+
+            # Only enrich if missing phone
+            if biz.get('phone'):
+                continue
+
+            details = self.get_place_details(place_id)
+            if details:
+                if details.get('phone'):
+                    biz['phone'] = details['phone']
+                if details.get('website'):
+                    biz['website'] = details['website']
+                if details.get('address') and not biz.get('address'):
+                    biz['address'] = details['address']
+                enriched_count += 1
+
+            # Small delay to respect rate limits
+            time.sleep(0.1)
+
+        logger.info(f"[Google] Enriched {enriched_count} businesses with contact details")
+        return businesses
 
     def search_tiles(
         self,
@@ -166,7 +335,7 @@ class GooglePlacesAPI:
 
         Args:
             tiles: List of tile dicts with center_lat, center_lon, search_radius_miles
-            keywords: Keywords to search (defaults to fleet-relevant terms)
+            keywords: Keywords to search (defaults to TILE_KEYWORDS)
             progress_callback: Optional callback(tiles_done, total_tiles, results_count)
 
         Returns:
@@ -177,13 +346,7 @@ class GooglePlacesAPI:
             return []
 
         if keywords is None:
-            keywords = [
-                'car dealer', 'auto dealer',
-                'auto body', 'body shop',
-                'landscaping', 'lawn care',
-                'hvac', 'plumber', 'electrician',
-                'roofing', 'contractor',
-            ]
+            keywords = self.TILE_KEYWORDS
 
         all_results = []
         seen_ids = set()

@@ -2357,6 +2357,11 @@ def create_app(config=None):
     app.register_blueprint(fleet_locations_api_bp)
     logger.info("Fleet Locations API routes registered at /api/fleet-locations")
 
+    # Fleet Leads CRM API Routes
+    from src.web.routes.fleet_leads_api import fleet_leads_bp
+    app.register_blueprint(fleet_leads_bp)
+    logger.info("Fleet Leads CRM API routes registered at /api/fleet-leads")
+
     # Portal API Routes (customer portal frontend)
     from src.web.routes.portal_api import portal_api_bp
     app.register_blueprint(portal_api_bp)
@@ -2366,6 +2371,11 @@ def create_app(config=None):
     from src.web.routes.territory_alerts_api import territory_alerts_api_bp
     app.register_blueprint(territory_alerts_api_bp)
     logger.info("Territory Alerts API routes registered at /api/territory-alerts")
+
+    # Real-Time Weather Monitoring API Routes
+    from src.web.routes.realtime_api import bp as realtime_api_bp
+    app.register_blueprint(realtime_api_bp)
+    logger.info("Real-Time Weather API routes registered at /api/realtime")
 
     # ====================
     # Unified App Routes (Main Application)

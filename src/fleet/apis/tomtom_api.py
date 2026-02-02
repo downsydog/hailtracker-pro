@@ -8,6 +8,9 @@ Setup:
 1. Sign up at https://developer.tomtom.com
 2. Create an app and get API key
 3. Set environment variable: TOMTOM_API_KEY=your_key_here
+
+COMPREHENSIVE PDR FLEET PROSPECTING SEARCH TERMS
+Updated with full list of service businesses that have work vehicles.
 """
 
 import requests
@@ -25,6 +28,121 @@ class TomTomAPI:
     """
 
     BASE_URL = "https://api.tomtom.com/search/2"
+
+    # ==========================================================================
+    # COMPREHENSIVE SEARCH TERMS FOR PDR FLEET PROSPECTING
+    # ==========================================================================
+
+    # DISTRIBUTION/DELIVERY
+    DISTRIBUTION_TERMS = [
+        'beverage distributor',
+        'beer distributor',
+        'food distributor',
+        'linen service',
+        'vending machine',
+        'propane delivery',
+    ]
+
+    # TRADES/SERVICE COMPANIES
+    TRADES_TERMS = [
+        'hvac',
+        'heating cooling',
+        'plumber',
+        'electrician',
+        'pest control',
+        'landscaping',
+        'lawn care',
+        'tree service',
+        'roofing',
+        'siding',
+        'gutter',
+        'fence contractor',
+        'pool service',
+        'irrigation',
+        'garage door',
+        'locksmith',
+        'painting contractor',
+        'flooring',
+        'carpet cleaning',
+        'concrete',
+        'paving',
+        'pressure washing',
+        'restoration',
+        'septic',
+    ]
+
+    # CONSTRUCTION/INDUSTRIAL
+    CONSTRUCTION_TERMS = [
+        'general contractor',
+        'excavation',
+        'surveyor',
+        'equipment rental',
+        'lumber',
+    ]
+
+    # AUTOMOTIVE
+    AUTOMOTIVE_TERMS = [
+        'towing',
+        'auto glass',
+        'mobile mechanic',
+    ]
+
+    # MEDICAL/HEALTH
+    MEDICAL_TERMS = [
+        'home health',
+        'medical transport',
+        'hospice',
+    ]
+
+    # TELECOM/TECH
+    TELECOM_TERMS = [
+        'cable installer',
+        'satellite',
+        'security system',
+    ]
+
+    # WASTE/ENVIRONMENTAL
+    WASTE_TERMS = [
+        'waste management',
+        'dumpster',
+        'junk removal',
+    ]
+
+    # PROPERTY/FACILITIES
+    PROPERTY_TERMS = [
+        'property management',
+        'janitorial',
+        'commercial cleaning',
+    ]
+
+    # OTHER SERVICE COMPANIES
+    OTHER_TERMS = [
+        'sign company',
+        'courier',
+        'funeral home',
+    ]
+
+    # COMBINED FULL SEARCH TERM LIST
+    SEARCH_TERMS = (
+        DISTRIBUTION_TERMS +
+        TRADES_TERMS +
+        CONSTRUCTION_TERMS +
+        AUTOMOTIVE_TERMS +
+        MEDICAL_TERMS +
+        TELECOM_TERMS +
+        WASTE_TERMS +
+        PROPERTY_TERMS +
+        OTHER_TERMS
+    )
+
+    # Priority terms for quick searches (highest vehicle density)
+    PRIORITY_TERMS = [
+        'hvac', 'plumber', 'electrician', 'pest control',
+        'landscaping', 'roofing', 'tree service',
+        'towing', 'auto body', 'general contractor',
+        'pool service', 'fence contractor', 'concrete',
+        'property management', 'janitorial', 'sign company',
+    ]
 
     def __init__(self, api_key: str = None):
         self.api_key = api_key or os.getenv('TOMTOM_API_KEY')
@@ -80,18 +198,67 @@ class TomTomAPI:
             return []
 
     def search_all_categories(self, lat: float, lon: float, radius_meters: int = 5000) -> List[Dict]:
-        """Search all relevant business types."""
+        """Search all comprehensive business types."""
         all_results = []
         seen_ids = set()
 
-        search_terms = [
-            'landscaping', 'hvac', 'plumber', 'electrician',
-            'pest control', 'roofing', 'contractor',
-            'auto body', 'auto repair', 'car dealer', 'towing',
-            'moving company', 'painter', 'fence',
-        ]
+        for term in self.SEARCH_TERMS:
+            results = self.search_radius(lat, lon, radius_meters, query=term, limit=50)
 
-        for term in search_terms:
+            for biz in results:
+                if biz.get('tomtom_id') not in seen_ids:
+                    seen_ids.add(biz.get('tomtom_id'))
+                    all_results.append(biz)
+
+        logger.info(f"[TomTom] Found {len(all_results)} unique businesses across all terms")
+        return all_results
+
+    def search_priority_categories(self, lat: float, lon: float, radius_meters: int = 5000) -> List[Dict]:
+        """Search priority/high-value business types only."""
+        all_results = []
+        seen_ids = set()
+
+        for term in self.PRIORITY_TERMS:
+            results = self.search_radius(lat, lon, radius_meters, query=term, limit=50)
+
+            for biz in results:
+                if biz.get('tomtom_id') not in seen_ids:
+                    seen_ids.add(biz.get('tomtom_id'))
+                    all_results.append(biz)
+
+        logger.info(f"[TomTom] Found {len(all_results)} unique businesses from priority terms")
+        return all_results
+
+    def search_by_category_group(
+        self,
+        lat: float,
+        lon: float,
+        radius_meters: int = 5000,
+        group: str = 'trades'
+    ) -> List[Dict]:
+        """
+        Search a specific category group.
+
+        Groups: distribution, trades, construction, automotive, medical,
+                telecom, waste, property, other
+        """
+        group_map = {
+            'distribution': self.DISTRIBUTION_TERMS,
+            'trades': self.TRADES_TERMS,
+            'construction': self.CONSTRUCTION_TERMS,
+            'automotive': self.AUTOMOTIVE_TERMS,
+            'medical': self.MEDICAL_TERMS,
+            'telecom': self.TELECOM_TERMS,
+            'waste': self.WASTE_TERMS,
+            'property': self.PROPERTY_TERMS,
+            'other': self.OTHER_TERMS,
+        }
+
+        terms = group_map.get(group.lower(), self.TRADES_TERMS)
+        all_results = []
+        seen_ids = set()
+
+        for term in terms:
             results = self.search_radius(lat, lon, radius_meters, query=term, limit=50)
 
             for biz in results:

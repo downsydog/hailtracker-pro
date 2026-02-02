@@ -53,7 +53,12 @@ import {
   PartOrdersPage,
   RIOperationsPage,
   RITimesPage,
+  PhotoAnalyzerPage,
+  VehicleDamagePage,
+  MapTestPage,
 } from "./pages"
+import SimpleHailMap from "./pages/hail-map/simple"
+import FleetLeadReportsPage from "./pages/reports/fleet-leads"
 import {
   PortalLayout,
   PortalLoginPage,
@@ -177,6 +182,7 @@ function App() {
 
               {/* Hail Map */}
               <Route path="/hail-map" element={<HailMapPage />} />
+              <Route path="/hail-map-simple" element={<SimpleHailMap />} />
 
               {/* Hail Lookup */}
               <Route path="/hail-lookup" element={<HailLookupPage />} />
@@ -189,6 +195,7 @@ function App() {
 
               {/* Reports */}
               <Route path="/reports" element={<ReportsPage />} />
+              <Route path="/reports/fleet-leads" element={<FleetLeadReportsPage />} />
 
               {/* Invoices */}
               <Route path="/invoices" element={<InvoicesPage />} />
@@ -225,6 +232,13 @@ function App() {
               {/* R&I Operations */}
               <Route path="/ri" element={<RIOperationsPage />} />
               <Route path="/ri/times" element={<RITimesPage />} />
+
+              {/* AI Tools */}
+              <Route path="/tools/photo-analyzer" element={<PhotoAnalyzerPage />} />
+              <Route path="/tools/vehicle-damage" element={<VehicleDamagePage />} />
+
+              {/* Map Test */}
+              <Route path="/map-test" element={<MapTestPage />} />
             </Route>
 
             {/* Customer Portal - separate auth context */}

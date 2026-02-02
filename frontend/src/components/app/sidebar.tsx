@@ -37,6 +37,8 @@ import {
   Monitor,
   User,
   ChevronRight,
+  Sparkles,
+  Camera,
 } from "lucide-react"
 
 interface NavItem {
@@ -74,7 +76,14 @@ const navigation: NavSection[] = [
     items: [
       { label: "Hail Map", href: "/hail-map", icon: CloudSun },
       { label: "Hail Lookup", href: "/hail-lookup", icon: Search },
-      { label: "Fleet Map", href: "/fleet", icon: Map },
+      { label: "Fleet Intelligence", href: "/fleet", icon: Target },
+    ],
+  },
+  {
+    title: "AI Tools",
+    items: [
+      { label: "Photo Analyzer", href: "/tools/photo-analyzer", icon: Camera },
+      { label: "Damage Analyzer", href: "/tools/vehicle-damage", icon: Sparkles },
     ],
   },
   {
@@ -114,6 +123,7 @@ const navigation: NavSection[] = [
     title: "Reports & Admin",
     items: [
       { label: "Reports", href: "/reports", icon: BarChart3 },
+      { label: "Fleet Reports", href: "/reports/fleet-leads", icon: Target },
       { label: "Notifications", href: "/notifications", icon: Bell },
       { label: "Users", href: "/admin/users", icon: UserCog },
       { label: "Settings", href: "/admin/settings", icon: Settings },

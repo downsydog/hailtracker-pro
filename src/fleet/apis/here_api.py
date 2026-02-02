@@ -8,6 +8,9 @@ Setup:
 1. Sign up at https://developer.here.com
 2. Create a project and get API key
 3. Set environment variable: HERE_API_KEY=your_key_here
+
+COMPREHENSIVE PDR FLEET PROSPECTING SEARCH TERMS
+Updated with full list of service businesses that have work vehicles.
 """
 
 import requests
@@ -26,20 +29,189 @@ class HereAPI:
 
     BASE_URL = "https://discover.search.hereapi.com/v1/discover"
 
-    # HERE category IDs
-    # Docs: https://developer.here.com/documentation/geocoding-search-api/dev_guide/topics/place-categories.html
-    CATEGORIES = [
-        '700-7600-0322',  # Auto Dealer
-        '700-7600-0116',  # Auto Repair
-        '700-7600-0117',  # Auto Body Shop
-        '700-7600-0119',  # Car Wash
-        '700-7600-0120',  # Towing
-        '700-7850-0000',  # Fueling Station
-        '700-7400-0000',  # Government Office
-        '700-7400-0139',  # Police
-        '700-7400-0140',  # Fire Station
-        '800-8600-0000',  # Business Services
-        '700-7100-0000',  # Shopping (includes many business types)
+    # ==========================================================================
+    # COMPREHENSIVE SEARCH TERMS FOR PDR FLEET PROSPECTING
+    # ==========================================================================
+
+    # DISTRIBUTION/DELIVERY
+    DISTRIBUTION_TERMS = [
+        'beverage distributor',
+        'beer distributor',
+        'wine distributor',
+        'food distributor',
+        'restaurant supply',
+        'linen service',
+        'uniform service',
+        'vending machine',
+        'propane delivery',
+        'office supply',
+        'janitorial supply',
+        'building materials',
+    ]
+
+    # TRADES/SERVICE COMPANIES
+    TRADES_TERMS = [
+        'hvac',
+        'heating and cooling',
+        'air conditioning contractor',
+        'plumber',
+        'plumbing contractor',
+        'electrician',
+        'electrical contractor',
+        'pest control',
+        'exterminator',
+        'landscaping',
+        'lawn care',
+        'lawn service',
+        'tree service',
+        'tree trimming',
+        'roofing contractor',
+        'roofer',
+        'siding contractor',
+        'gutter installation',
+        'fence contractor',
+        'pool service',
+        'pool cleaning',
+        'irrigation',
+        'sprinkler system',
+        'garage door repair',
+        'locksmith',
+        'painting contractor',
+        'flooring contractor',
+        'carpet cleaning',
+        'concrete contractor',
+        'paving contractor',
+        'asphalt',
+        'pressure washing',
+        'window cleaning',
+        'water damage restoration',
+        'fire restoration',
+        'mold remediation',
+        'septic service',
+        'portable toilet',
+    ]
+
+    # CONSTRUCTION/INDUSTRIAL
+    CONSTRUCTION_TERMS = [
+        'general contractor',
+        'excavation',
+        'grading',
+        'surveying company',
+        'well drilling',
+        'crane service',
+        'scaffolding',
+        'equipment rental',
+        'lumber yard',
+        'building supply',
+    ]
+
+    # AUTOMOTIVE
+    AUTOMOTIVE_TERMS = [
+        'towing',
+        'tow truck',
+        'mobile mechanic',
+        'auto glass',
+        'windshield repair',
+        'roadside assistance',
+        'oil change',
+        'mobile car wash',
+        'mobile detailing',
+    ]
+
+    # MEDICAL/HEALTH
+    MEDICAL_TERMS = [
+        'home health',
+        'home healthcare',
+        'medical transport',
+        'hospice',
+        'mobile veterinary',
+        'medical equipment',
+        'pharmacy delivery',
+    ]
+
+    # TELECOM/TECH
+    TELECOM_TERMS = [
+        'cable installer',
+        'satellite installer',
+        'IT service',
+        'copier service',
+        'telecommunications',
+        'security system',
+        'alarm company',
+    ]
+
+    # WASTE/ENVIRONMENTAL
+    WASTE_TERMS = [
+        'waste management',
+        'garbage service',
+        'recycling company',
+        'dumpster rental',
+        'junk removal',
+        'hazmat',
+    ]
+
+    # RENTAL COMPANIES
+    RENTAL_TERMS = [
+        'equipment rental',
+        'tool rental',
+        'party rental',
+        'event rental',
+        'trailer rental',
+    ]
+
+    # PROPERTY/FACILITIES
+    PROPERTY_TERMS = [
+        'property management',
+        'janitorial service',
+        'commercial cleaning',
+        'floor care',
+    ]
+
+    # TRANSPORT/LOGISTICS
+    TRANSPORT_TERMS = [
+        'courier service',
+        'delivery service',
+        'freight',
+        'trucking',
+        'charter bus',
+        'shuttle service',
+        'limousine service',
+    ]
+
+    # OTHER SERVICE COMPANIES
+    OTHER_TERMS = [
+        'sign company',
+        'sign shop',
+        'print shop',
+        'funeral home',
+        'florist',
+        'furniture delivery',
+        'appliance store',
+    ]
+
+    # COMBINED FULL SEARCH TERM LIST
+    SEARCH_TERMS = (
+        DISTRIBUTION_TERMS +
+        TRADES_TERMS +
+        CONSTRUCTION_TERMS +
+        AUTOMOTIVE_TERMS +
+        MEDICAL_TERMS +
+        TELECOM_TERMS +
+        WASTE_TERMS +
+        RENTAL_TERMS +
+        PROPERTY_TERMS +
+        TRANSPORT_TERMS +
+        OTHER_TERMS
+    )
+
+    # Priority terms for quick searches (highest vehicle density)
+    PRIORITY_TERMS = [
+        'hvac', 'plumber', 'electrician', 'pest control',
+        'landscaping', 'roofing', 'tree service', 'lawn care',
+        'towing', 'auto body', 'general contractor',
+        'pool service', 'fence contractor', 'concrete contractor',
+        'septic service', 'garage door', 'locksmith',
+        'property management', 'janitorial', 'sign company',
     ]
 
     def __init__(self, api_key: str = None):
@@ -104,28 +276,69 @@ class HereAPI:
             return []
 
     def search_all_categories(self, lat: float, lon: float, radius_meters: int = 5000) -> List[Dict]:
-        """Search all relevant business types."""
+        """Search all comprehensive business types."""
         all_results = []
         seen_ids = set()
 
-        # Search terms for service businesses
-        search_terms = [
-            'landscaping', 'lawn care', 'tree service',
-            'hvac', 'air conditioning', 'heating',
-            'plumber', 'plumbing',
-            'electrician', 'electrical contractor',
-            'pest control', 'exterminator',
-            'roofing', 'roofer',
-            'contractor', 'construction',
-            'auto body', 'auto repair', 'car dealer',
-            'towing', 'tow truck',
-            'moving company', 'movers',
-            'painting contractor',
-            'fence company',
-            'concrete contractor',
-        ]
+        for term in self.SEARCH_TERMS:
+            results = self.search_radius(lat, lon, radius_meters, query=term, limit=50)
 
-        for term in search_terms:
+            for biz in results:
+                if biz.get('here_id') not in seen_ids:
+                    seen_ids.add(biz.get('here_id'))
+                    all_results.append(biz)
+
+        logger.info(f"[HERE] Found {len(all_results)} unique businesses across all terms")
+        return all_results
+
+    def search_priority_categories(self, lat: float, lon: float, radius_meters: int = 5000) -> List[Dict]:
+        """Search priority/high-value business types only."""
+        all_results = []
+        seen_ids = set()
+
+        for term in self.PRIORITY_TERMS:
+            results = self.search_radius(lat, lon, radius_meters, query=term, limit=50)
+
+            for biz in results:
+                if biz.get('here_id') not in seen_ids:
+                    seen_ids.add(biz.get('here_id'))
+                    all_results.append(biz)
+
+        logger.info(f"[HERE] Found {len(all_results)} unique businesses from priority terms")
+        return all_results
+
+    def search_by_category_group(
+        self,
+        lat: float,
+        lon: float,
+        radius_meters: int = 5000,
+        group: str = 'trades'
+    ) -> List[Dict]:
+        """
+        Search a specific category group.
+
+        Groups: distribution, trades, construction, automotive, medical,
+                telecom, waste, rental, property, transport, other
+        """
+        group_map = {
+            'distribution': self.DISTRIBUTION_TERMS,
+            'trades': self.TRADES_TERMS,
+            'construction': self.CONSTRUCTION_TERMS,
+            'automotive': self.AUTOMOTIVE_TERMS,
+            'medical': self.MEDICAL_TERMS,
+            'telecom': self.TELECOM_TERMS,
+            'waste': self.WASTE_TERMS,
+            'rental': self.RENTAL_TERMS,
+            'property': self.PROPERTY_TERMS,
+            'transport': self.TRANSPORT_TERMS,
+            'other': self.OTHER_TERMS,
+        }
+
+        terms = group_map.get(group.lower(), self.TRADES_TERMS)
+        all_results = []
+        seen_ids = set()
+
+        for term in terms:
             results = self.search_radius(lat, lon, radius_meters, query=term, limit=50)
 
             for biz in results:

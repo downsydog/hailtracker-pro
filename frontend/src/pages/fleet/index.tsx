@@ -291,7 +291,13 @@ export function FleetMapPage() {
   // ========== BUSINESS DISCOVERY ==========
 
   const findBusinessesInSwath = async () => {
-    if (!selectedDate || hailEvents.length === 0) return
+    console.log("[Fleet] ========== findBusinessesInSwath BUTTON CLICKED ==========")
+    console.log(`[Fleet] selectedDate: ${selectedDate}, hailEvents.length: ${hailEvents.length}`)
+
+    if (!selectedDate || hailEvents.length === 0) {
+      console.log("[Fleet] Early return - no date or events")
+      return
+    }
 
     setLoadingBusinesses(true)
     setScrapeStatus("scraping")
@@ -330,15 +336,18 @@ export function FleetMapPage() {
         visibleEventIds = hailEvents.map((e) => e.id)
       }
 
-      console.log(`[Fleet] Calling tile-based discovery for ${visibleEventIds.length} events`)
+      console.log(`[Fleet] Calling FAST swath-level discovery for ${visibleEventIds.length} events`)
 
-      // Use tile-based discovery for complete swath coverage
-      // Tiles ensure we don't miss businesses in irregular-shaped swaths
-      const result = await fleetLocationsApi.tileDiscover({
+      // Use FAST swath-level discovery - ONE query per swath instead of per tile
+      // BEFORE: 28 swaths × 50 tiles = 1,373 API calls = 45+ minutes
+      // AFTER:  28 swaths × 1 query = 28 API calls = ~30 seconds
+      const result = await fleetLocationsApi.fastDiscover({
         event_ids: visibleEventIds,
-        tile_size_miles: 0.5,  // Good balance of precision vs API calls
-        sources: ['osm'],      // OSM is comprehensive and free
-        force_refresh: false   // Use tile cache if available
+        force_refresh: true,   // TEMP: Force fresh discovery
+        include_osm: true,
+        include_yp: false,     // DISABLED: Getting 403 blocked
+        include_bbb: false,    // DISABLED: Too slow for now
+        include_manta: false   // DISABLED: Too slow for now
       })
 
       if (result.success) {
@@ -351,23 +360,21 @@ export function FleetMapPage() {
         // Note: Map markers will be updated by useEffect when filteredBusinesses changes
         setScrapeStatus("done")
 
-        console.log(`[Fleet] Tile discovery complete:`)
-        console.log(`  - Tiles searched: ${result.tile_stats?.count || 0}`)
-        console.log(`  - Tile size: ${result.tile_stats?.tile_size_miles || 0.5} miles`)
-        console.log(`  - Area covered: ${result.tile_stats?.estimated_area_sq_miles?.toFixed(1) || 0} sq miles`)
-        console.log(`  - By source:`, result.stats.by_source)
-        console.log(`  - Total found: ${result.stats.total_found}`)
-        console.log(`  - Duplicates removed: ${result.stats.duplicates_removed}`)
-        console.log(`  - Tiles from cache: ${result.stats.tiles_from_cache || 0}`)
+        console.log(`[Fleet] FAST discovery complete in ${result.timing?.total_seconds || 0}s:`)
+        console.log(`  - Swaths searched: ${result.stats?.swaths_searched || 0}`)
+        console.log(`  - Cache hits: ${result.stats?.swaths_from_cache || 0}`)
+        console.log(`  - OSM queries: ${result.stats?.osm_queries || 0}`)
+        console.log(`  - Total found: ${result.stats?.total_found || 0}`)
+        console.log(`  - Duplicates removed: ${result.stats?.duplicates_removed || 0}`)
         console.log(`  - After min vehicles filter: ${vehicleFilteredBusinesses.length}`)
-        console.log(`  - Total vehicles: ${result.stats.total_vehicles}`)
-        console.log(`  - By category:`, result.stats.by_category)
+        console.log(`  - Total vehicles: ${result.stats?.total_vehicles || 0}`)
+        console.log(`  - By category:`, result.stats?.by_category)
       } else {
-        console.error("[Fleet] Tile discovery returned failure")
+        console.error("[Fleet] Fast discovery returned failure")
         setScrapeStatus("idle")
       }
     } catch (error) {
-      console.error("[Fleet] Tile discovery failed:", error)
+      console.error("[Fleet] Fast discovery failed:", error)
       setScrapeStatus("idle")
     } finally {
       setLoadingBusinesses(false)

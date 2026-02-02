@@ -8,6 +8,9 @@ Setup:
 1. Sign up at https://www.yelp.com/developers
 2. Create an app and get API key
 3. Set environment variable: YELP_API_KEY=your_key_here
+
+COMPREHENSIVE PDR FLEET PROSPECTING CATEGORIES
+Updated with full list of service businesses that have work vehicles.
 """
 
 import requests
@@ -27,30 +30,173 @@ class YelpAPI:
 
     BASE_URL = "https://api.yelp.com/v3"
 
-    # Categories relevant for PDR fleet prospecting
+    # ==========================================================================
+    # COMPREHENSIVE YELP CATEGORIES FOR PDR FLEET PROSPECTING
+    # ==========================================================================
     # Full list: https://www.yelp.com/developers/documentation/v3/all_category_list
-    CATEGORIES = [
-        'landscaping', 'lawn_services', 'tree_services',
-        'hvac', 'heating_air',
-        'plumbing', 'plumbers',
-        'electricians', 'electrical',
-        'pest_control',
-        'roofing', 'roof_inspection',
-        'contractors', 'general_contractors',
-        'auto_repair', 'body_shops', 'auto_glass',
-        'towing', 'car_dealers',
-        'movers', 'moving_companies',
-        'security_systems',
-        'painters', 'painting',
-        'fences_gates',
-        'concrete',
-        'garage_door_services',
-        'locksmiths',
-        'septic_services',
-        'dumpster_rental',
-        'flooring',
-        'gutter_services',
-        'solar_installation',
+
+    # DISTRIBUTION/DELIVERY
+    DISTRIBUTION_CATEGORIES = [
+        'beer_and_wine',           # Beer/wine distributors
+        'wholesale_stores',        # Wholesale distributors
+        'couriers',                # Courier services
+        'fooddeliveryservices',    # Food delivery
+        'medicalequipment',        # Medical supply delivery
+    ]
+
+    # TRADES/SERVICE COMPANIES
+    TRADES_CATEGORIES = [
+        'hvac',                    # HVAC contractors
+        'heating_air',             # Heating and air
+        'plumbing',                # Plumbers
+        'plumbers',                # Plumbers (alias)
+        'electricians',            # Electricians
+        'electrical',              # Electrical contractors
+        'pest_control',            # Pest control
+        'landscaping',             # Landscaping
+        'lawn_services',           # Lawn care
+        'tree_services',           # Tree service
+        'roofing',                 # Roofing contractors
+        'roof_inspection',         # Roof inspection
+        'siding',                  # Siding contractors
+        'gutter_services',         # Gutter installation
+        'fences_gates',            # Fence contractors
+        'pool_cleaners',           # Pool service
+        'irrigation',              # Irrigation/sprinkler
+        'garage_door_services',    # Garage door repair
+        'locksmiths',              # Locksmiths
+        'painters',                # Painting contractors
+        'painting',                # Painters (alias)
+        'flooring',                # Flooring contractors
+        'carpet_cleaning',         # Carpet cleaning
+        'concrete',                # Concrete contractors
+        'paving',                  # Paving/asphalt
+        'pressure_washers',        # Pressure washing
+        'window_washing',          # Window cleaning
+        'damage_restoration',      # Fire/water restoration
+        'septic_services',         # Septic service
+        'portabletoiletservices',  # Portable toilets
+    ]
+
+    # CONSTRUCTION/INDUSTRIAL
+    CONSTRUCTION_CATEGORIES = [
+        'contractors',             # General contractors
+        'general_contractors',     # General contractors (alias)
+        'excavationservices',      # Excavation/grading
+        'surveyors',               # Land surveyors
+        'equipmentrental',         # Equipment rental
+        'buildingsupplies',        # Building supply
+        'lumberyards',             # Lumber yards
+    ]
+
+    # AUTOMOTIVE
+    AUTOMOTIVE_CATEGORIES = [
+        'towing',                  # Towing service
+        'auto_repair',             # Auto repair
+        'body_shops',              # Body shops
+        'auto_glass',              # Auto glass/Safelite
+        'roadside_assistance',     # Roadside assistance
+        'oilchange',               # Oil change
+        'carwash',                 # Car wash
+        'auto_detailing',          # Mobile detailing
+        'car_dealers',             # Car dealerships
+    ]
+
+    # MEDICAL/HEALTH
+    MEDICAL_CATEGORIES = [
+        'homehealthcare',          # Home health
+        'medtransport',            # Medical transport
+        'hospice',                 # Hospice
+        'veterinarians',           # Mobile vet
+        'pharmacies',              # Pharmacy delivery
+    ]
+
+    # TELECOM/TECH
+    TELECOM_CATEGORIES = [
+        'isps',                    # Cable/internet installers
+        'itservices',              # IT service
+        'security_systems',        # Security/alarm systems
+        'telecommunications',      # Phone systems
+    ]
+
+    # WASTE/ENVIRONMENTAL
+    WASTE_CATEGORIES = [
+        'junkremovalandhauling',   # Junk removal
+        'recyclingcenter',         # Recycling
+        'dumpsterrental',          # Dumpster rental
+    ]
+
+    # RENTAL COMPANIES
+    RENTAL_CATEGORIES = [
+        'partyrental',             # Party/event rental
+        'partysupplies',           # Party supplies
+        'trailerrental',           # Trailer rental
+        'truck_rental',            # Truck rental
+    ]
+
+    # PROPERTY/FACILITIES
+    PROPERTY_CATEGORIES = [
+        'propertymanagement',      # Property management
+        'janitorial',              # Janitorial service
+        'office_cleaning',         # Commercial cleaning
+    ]
+
+    # OTHER SERVICE COMPANIES
+    OTHER_CATEGORIES = [
+        'signmaking',              # Sign companies
+        'printingservices',        # Print shops
+        'funeralservices',         # Funeral homes
+        'limos',                   # Limo/shuttle service
+        'transport',               # Transport services
+        'movers',                  # Moving companies
+        'moving_companies',        # Movers (alias)
+        'solar_installation',      # Solar installers
+    ]
+
+    # COMBINED FULL CATEGORY LIST
+    CATEGORIES = (
+        DISTRIBUTION_CATEGORIES +
+        TRADES_CATEGORIES +
+        CONSTRUCTION_CATEGORIES +
+        AUTOMOTIVE_CATEGORIES +
+        MEDICAL_CATEGORIES +
+        TELECOM_CATEGORIES +
+        WASTE_CATEGORIES +
+        RENTAL_CATEGORIES +
+        PROPERTY_CATEGORIES +
+        OTHER_CATEGORIES
+    )
+
+    # Optimized batch groups for API efficiency
+    CATEGORY_BATCHES = [
+        # Distribution/Delivery
+        'beer_and_wine,wholesale_stores,couriers,fooddeliveryservices',
+        # HVAC/Plumbing/Electrical
+        'hvac,heating_air,plumbing,electricians',
+        # Landscaping/Tree/Lawn
+        'landscaping,lawn_services,tree_services,irrigation',
+        # Roofing/Siding/Exterior
+        'roofing,siding,gutter_services,fences_gates',
+        # Pest/Pool/Cleaning
+        'pest_control,pool_cleaners,carpet_cleaning,pressure_washers',
+        # Trades misc
+        'painters,flooring,concrete,paving',
+        # Garage/Locks/Restoration
+        'garage_door_services,locksmiths,damage_restoration,septic_services',
+        # Construction
+        'contractors,excavationservices,equipmentrental,buildingsupplies',
+        # Automotive
+        'towing,auto_repair,body_shops,auto_glass,car_dealers',
+        # Medical
+        'homehealthcare,medtransport,hospice,veterinarians',
+        # Telecom/Security
+        'isps,itservices,security_systems,telecommunications',
+        # Waste/Junk
+        'junkremovalandhauling,recyclingcenter,dumpsterrental',
+        # Rental/Property
+        'partyrental,trailerrental,propertymanagement,janitorial',
+        # Other services
+        'signmaking,printingservices,funeralservices,movers,limos',
     ]
 
     def __init__(self, api_key: str = None):
@@ -145,21 +291,11 @@ class YelpAPI:
         return self.search_radius(center_lat, center_lon, radius, categories)
 
     def search_all_categories(self, lat: float, lon: float, radius_meters: int = 5000) -> List[Dict]:
-        """Search all relevant categories."""
+        """Search all comprehensive fleet-relevant categories."""
         all_results = []
         seen_ids = set()
 
-        # Batch categories to reduce API calls
-        category_batches = [
-            'landscaping,lawn_services,tree_services',
-            'hvac,plumbing,electricians',
-            'pest_control,roofing,contractors',
-            'auto_repair,body_shops,towing,car_dealers',
-            'movers,painters,fences_gates,concrete',
-            'locksmiths,garage_door_services,security_systems',
-        ]
-
-        for batch in category_batches:
+        for batch in self.CATEGORY_BATCHES:
             results = self.search_radius(lat, lon, radius_meters, categories=batch.split(','))
 
             for biz in results:
@@ -167,7 +303,37 @@ class YelpAPI:
                     seen_ids.add(biz.get('yelp_id'))
                     all_results.append(biz)
 
+        logger.info(f"[Yelp] Found {len(all_results)} unique businesses across all categories")
         return all_results
+
+    def search_by_category_group(
+        self,
+        lat: float,
+        lon: float,
+        radius_meters: int = 5000,
+        group: str = 'trades'
+    ) -> List[Dict]:
+        """
+        Search a specific category group.
+
+        Groups: distribution, trades, construction, automotive, medical,
+                telecom, waste, rental, property, other
+        """
+        group_map = {
+            'distribution': self.DISTRIBUTION_CATEGORIES,
+            'trades': self.TRADES_CATEGORIES,
+            'construction': self.CONSTRUCTION_CATEGORIES,
+            'automotive': self.AUTOMOTIVE_CATEGORIES,
+            'medical': self.MEDICAL_CATEGORIES,
+            'telecom': self.TELECOM_CATEGORIES,
+            'waste': self.WASTE_CATEGORIES,
+            'rental': self.RENTAL_CATEGORIES,
+            'property': self.PROPERTY_CATEGORIES,
+            'other': self.OTHER_CATEGORIES,
+        }
+
+        categories = group_map.get(group.lower(), self.TRADES_CATEGORIES)
+        return self.search_radius(lat, lon, radius_meters, categories=categories)
 
     def _parse_results(self, businesses: list) -> List[Dict]:
         """Parse Yelp results into standard format."""

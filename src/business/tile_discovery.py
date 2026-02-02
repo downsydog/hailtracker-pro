@@ -33,14 +33,144 @@ from .tile_system import SwathTileSystem, Tile
 logger = logging.getLogger('TileDiscovery')
 
 
+class OverpassClient:
+    """
+    Resilient Overpass API client with server rotation and retry logic.
+
+    Features:
+    - Rotates between multiple Overpass API servers
+    - Automatically retries failed requests on different servers
+    - Rate limiting to avoid 429 errors
+    - Marks temporarily failed servers to skip them
+    """
+
+    SERVERS = [
+        'https://overpass-api.de/api/interpreter',
+        'https://overpass.kumi.systems/api/interpreter',
+        'https://overpass.openstreetmap.ru/api/interpreter',
+    ]
+
+    def __init__(self):
+        self.current_server_index = 0
+        self.failed_servers = set()
+        self.last_request_time = 0
+        self.min_delay = 1.5  # Minimum seconds between requests
+
+    def get_next_server(self) -> str:
+        """Get next available server, skipping failed ones."""
+        available = [s for i, s in enumerate(self.SERVERS) if i not in self.failed_servers]
+
+        if not available:
+            # Reset failed servers and try again
+            print("[OSM] All servers failed, resetting and retrying...")
+            self.failed_servers.clear()
+            available = self.SERVERS
+
+        # Round-robin through available servers
+        server = available[self.current_server_index % len(available)]
+        self.current_server_index += 1
+        return server
+
+    def query(self, overpass_query: str, max_retries: int = 3, timeout: int = 30) -> dict:
+        """
+        Execute Overpass query with retry and server rotation.
+
+        Returns parsed JSON or empty dict on failure.
+        """
+        # Rate limiting - wait between requests
+        elapsed = time.time() - self.last_request_time
+        if elapsed < self.min_delay:
+            time.sleep(self.min_delay - elapsed)
+
+        last_error = None
+
+        for attempt in range(max_retries):
+            server = self.get_next_server()
+            server_name = server.split('/')[2][:25]
+
+            try:
+                print(f"[OSM] Attempt {attempt + 1}/{max_retries} using {server_name}...")
+
+                response = requests.post(
+                    server,
+                    data={'data': overpass_query},
+                    timeout=timeout,
+                    headers={'User-Agent': 'HailTrackerPDR/2.0'}
+                )
+
+                self.last_request_time = time.time()
+
+                if response.status_code == 200:
+                    print(f"[OSM] Success from {server_name}")
+                    return response.json()
+
+                elif response.status_code == 429:
+                    # Rate limited - mark server as failed temporarily
+                    print(f"[OSM] Rate limited (429) on {server_name}, trying next server")
+                    server_index = self.SERVERS.index(server) if server in self.SERVERS else -1
+                    if server_index >= 0:
+                        self.failed_servers.add(server_index)
+                    time.sleep(2)
+
+                elif response.status_code == 504:
+                    # Timeout - try next server
+                    print(f"[OSM] Timeout (504) on {server_name}, trying next server")
+                    server_index = self.SERVERS.index(server) if server in self.SERVERS else -1
+                    if server_index >= 0:
+                        self.failed_servers.add(server_index)
+                    time.sleep(1)
+
+                elif response.status_code == 400:
+                    # Bad query - don't retry
+                    print(f"[OSM] Bad query (400): {response.text[:200]}")
+                    return {}
+
+                else:
+                    print(f"[OSM] Error {response.status_code} on {server_name}")
+                    last_error = f"HTTP {response.status_code}"
+                    time.sleep(1)
+
+            except requests.Timeout:
+                print(f"[OSM] Request timeout on {server_name}")
+                last_error = "Timeout"
+                server_index = self.SERVERS.index(server) if server in self.SERVERS else -1
+                if server_index >= 0:
+                    self.failed_servers.add(server_index)
+                time.sleep(1)
+
+            except requests.ConnectionError as e:
+                print(f"[OSM] Connection error on {server_name}: {e}")
+                last_error = "Connection error"
+                server_index = self.SERVERS.index(server) if server in self.SERVERS else -1
+                if server_index >= 0:
+                    self.failed_servers.add(server_index)
+                time.sleep(1)
+
+            except Exception as e:
+                print(f"[OSM] Error: {e}")
+                last_error = str(e)
+                time.sleep(1)
+
+        print(f"[OSM] All {max_retries} retries failed. Last error: {last_error}")
+        return {}
+
+
+# Global overpass client instance (reused for connection pooling)
+_overpass_client = None
+
+def get_overpass_client() -> OverpassClient:
+    """Get or create the global Overpass client."""
+    global _overpass_client
+    if _overpass_client is None:
+        _overpass_client = OverpassClient()
+    return _overpass_client
+
+
 class TileBasedDiscovery:
     """
     Discover businesses using tile-based searching.
     Works with OSM, BBB, Yellow Pages, and future Google Places.
     """
-
-    # Overpass API endpoint
-    OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 
     # Nominatim endpoints
     NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search"
@@ -139,10 +269,18 @@ class TileBasedDiscovery:
         # Track reverse geocode results to avoid duplicate lookups
         location_cache = {}
 
-        # Search each tile
+        # Search each tile sequentially with progress
+        print(f"\n{'='*60}")
+        print(f"[Discovery] Starting tile-by-tile discovery...")
+        print(f"[Discovery] Total tiles: {len(tiles)}, Sources: {sources}")
+        print(f"{'='*60}\n")
+
         for i, tile in enumerate(tiles):
+            tile_num = i + 1
+            print(f"\n[Discovery] === Tile {tile_num}/{len(tiles)} === ({tile.tile_id})")
+
             if progress_callback:
-                progress_callback(i + 1, len(tiles), tile)
+                progress_callback(tile_num, len(tiles), tile)
 
             tile_businesses = []
 
@@ -152,9 +290,11 @@ class TileBasedDiscovery:
                 if cached:
                     osm_results = cached
                     stats['tiles_from_cache'] += 1
+                    print(f"[Discovery] OSM: {len(osm_results)} from CACHE")
                 else:
                     osm_results = self._search_osm_tile(tile)
                     self._cache_tile(tile.tile_id, 'osm', osm_results)
+                    print(f"[Discovery] OSM: {len(osm_results)} from API (cached)")
 
                 tile_businesses.extend(osm_results)
                 stats['by_source']['osm'] += len(osm_results)
@@ -198,6 +338,37 @@ class TileBasedDiscovery:
                 google_results = self._search_google_tile(tile)
                 tile_businesses.extend(google_results)
                 stats['by_source']['google'] += len(google_results)
+
+            # Manta (may be blocked - 403)
+            if 'manta' in sources:
+                cached = self._get_cached_tile(tile.tile_id, 'manta') if use_cache else None
+                if cached:
+                    manta_results = cached
+                    stats['tiles_from_cache'] += 1
+                else:
+                    city, state = self._get_location_for_tile(tile, location_cache)
+                    if city and state:
+                        manta_results = self._search_manta_tile(tile, city, state)
+                        self._cache_tile(tile.tile_id, 'manta', manta_results)
+                    else:
+                        manta_results = []
+
+                tile_businesses.extend(manta_results)
+                stats['by_source']['manta'] = stats['by_source'].get('manta', 0) + len(manta_results)
+
+            # Foursquare (needs API key)
+            if 'foursquare' in sources:
+                cached = self._get_cached_tile(tile.tile_id, 'foursquare') if use_cache else None
+                if cached:
+                    fs_results = cached
+                    stats['tiles_from_cache'] += 1
+                else:
+                    fs_results = self._search_foursquare_tile(tile)
+                    if fs_results:  # Only cache if we got results (API configured)
+                        self._cache_tile(tile.tile_id, 'foursquare', fs_results)
+
+                tile_businesses.extend(fs_results)
+                stats['by_source']['foursquare'] = stats['by_source'].get('foursquare', 0) + len(fs_results)
 
             all_businesses.extend(tile_businesses)
             stats['tiles_searched'] += 1
@@ -269,62 +440,40 @@ class TileBasedDiscovery:
         }
 
     def _search_osm_tile(self, tile: Tile) -> List[Dict]:
-        """Search OSM for businesses in a tile using Overpass API."""
+        """
+        Search OSM for businesses in a tile using resilient Overpass client.
+
+        Uses smaller, focused queries with server rotation and retry logic.
+        """
         try:
             radius_meters = int(tile.search_radius_miles * 1609.34)
+            lat = tile.center_lat
+            lon = tile.center_lon
 
-            query = f'''[out:json][timeout:60];
+            # Use shorter timeout for faster failover
+            # Simplified query - most important fleet categories only
+            query = f'''[out:json][timeout:25];
 (
-  // Automotive
-  node["shop"="car"](around:{radius_meters},{tile.center_lat},{tile.center_lon});
-  way["shop"="car"](around:{radius_meters},{tile.center_lat},{tile.center_lon});
-  node["amenity"="car_rental"](around:{radius_meters},{tile.center_lat},{tile.center_lon});
-  way["amenity"="car_rental"](around:{radius_meters},{tile.center_lat},{tile.center_lon});
-  node["shop"="car_repair"](around:{radius_meters},{tile.center_lat},{tile.center_lon});
-  way["shop"="car_repair"](around:{radius_meters},{tile.center_lat},{tile.center_lon});
-
-  // Service/Trades
-  node["craft"](around:{radius_meters},{tile.center_lat},{tile.center_lon});
-  way["craft"](around:{radius_meters},{tile.center_lat},{tile.center_lon});
-  node["office"="company"](around:{radius_meters},{tile.center_lat},{tile.center_lon});
-  way["office"="company"](around:{radius_meters},{tile.center_lat},{tile.center_lon});
-
-  // Medical
-  node["amenity"="hospital"](around:{radius_meters},{tile.center_lat},{tile.center_lon});
-  way["amenity"="hospital"](around:{radius_meters},{tile.center_lat},{tile.center_lon});
-  node["amenity"="clinic"](around:{radius_meters},{tile.center_lat},{tile.center_lon});
-  way["amenity"="clinic"](around:{radius_meters},{tile.center_lat},{tile.center_lon});
-
-  // Government
-  node["amenity"="police"](around:{radius_meters},{tile.center_lat},{tile.center_lon});
-  way["amenity"="police"](around:{radius_meters},{tile.center_lat},{tile.center_lon});
-  node["amenity"="fire_station"](around:{radius_meters},{tile.center_lat},{tile.center_lon});
-  way["amenity"="fire_station"](around:{radius_meters},{tile.center_lat},{tile.center_lon});
-  node["amenity"="school"](around:{radius_meters},{tile.center_lat},{tile.center_lon});
-  way["amenity"="school"](around:{radius_meters},{tile.center_lat},{tile.center_lon});
-  node["office"="government"](around:{radius_meters},{tile.center_lat},{tile.center_lon});
-  way["office"="government"](around:{radius_meters},{tile.center_lat},{tile.center_lon});
-
-  // Commercial
-  node["tourism"="hotel"](around:{radius_meters},{tile.center_lat},{tile.center_lon});
-  way["tourism"="hotel"](around:{radius_meters},{tile.center_lat},{tile.center_lon});
-  node["amenity"="place_of_worship"](around:{radius_meters},{tile.center_lat},{tile.center_lon});
-  way["amenity"="place_of_worship"](around:{radius_meters},{tile.center_lat},{tile.center_lon});
+  node["shop"~"car|car_repair|car_parts"](around:{radius_meters},{lat},{lon});
+  way["shop"~"car|car_repair"](around:{radius_meters},{lat},{lon});
+  node["amenity"~"car_rental|hospital|clinic|police|fire_station|school"](around:{radius_meters},{lat},{lon});
+  way["amenity"~"car_rental|hospital|police|fire_station|school"](around:{radius_meters},{lat},{lon});
+  node["craft"](around:{radius_meters},{lat},{lon});
+  node["office"~"company|government"](around:{radius_meters},{lat},{lon});
+  node["tourism"="hotel"](around:{radius_meters},{lat},{lon});
+  way["tourism"="hotel"](around:{radius_meters},{lat},{lon});
 );
-out center meta;'''
+out center;'''
 
-            response = requests.post(
-                self.OVERPASS_URL,
-                data={'data': query},
-                headers={'User-Agent': 'HailTrackerPDR/2.0'},
-                timeout=60
-            )
+            # Use the resilient client with server rotation
+            client = get_overpass_client()
+            data = client.query(query, max_retries=3, timeout=30)
 
-            if not response.ok:
-                logger.warning(f"OSM tile query failed: {response.status_code}")
+            if not data:
+                print(f"[OSM] No data returned for tile {tile.tile_id}")
                 return []
 
-            elements = response.json().get('elements', [])
+            elements = data.get('elements', [])
             businesses = []
 
             for elem in elements:
@@ -334,10 +483,12 @@ out center meta;'''
                     biz['tile_id'] = tile.tile_id
                     businesses.append(biz)
 
+            print(f"[OSM] Found {len(businesses)} businesses in tile {tile.tile_id}")
             return businesses
 
         except Exception as e:
             logger.error(f"OSM tile search error: {e}")
+            print(f"[OSM] Exception in tile search: {e}")
             return []
 
     def _parse_osm_element(self, elem: dict) -> Optional[Dict]:
@@ -473,44 +624,52 @@ out center meta;'''
             return []
 
     def _search_yellowpages_tile(self, tile: Tile, city: str, state: str) -> List[Dict]:
-        """Search Yellow Pages for businesses near a tile."""
+        """
+        Search Yellow Pages for businesses near a tile.
+        Uses Playwright headless browser to bypass anti-bot protection.
+        """
         try:
-            from src.fleet.scrapers.yellowpages import YellowPagesScraper
+            from src.fleet.scrapers.yellowpages_playwright import YellowPagesPlaywright
 
-            yp = YellowPagesScraper()
+            # Use context manager for clean browser handling
+            with YellowPagesPlaywright() as yp:
+                # Search priority categories only (to limit time/resources)
+                priority_cats = ['landscaping', 'hvac', 'plumbers', 'electricians',
+                               'pest-control', 'roofing-contractors']
+                results = []
 
-            search_terms = [
-                ('landscaping', 'landscaping'),
-                ('hvac', 'hvac'),
-                ('plumbing', 'plumbing'),
-            ]
+                for category in priority_cats[:3]:  # Limit to 3 categories per tile
+                    try:
+                        cat_results = yp.search(city, state, category, max_pages=1)
+                        results.extend(cat_results)
+                    except Exception as e:
+                        logger.debug(f"YP {category} failed: {e}")
 
+            # Format results
             businesses = []
-            for term, our_cat in search_terms[:2]:  # Limit searches
-                try:
-                    results = yp.search(city, state, term, max_pages=1)
-                    for biz in results:
-                        businesses.append({
-                            'name': biz.get('name', ''),
-                            'category': our_cat,
-                            'address': biz.get('address', ''),
-                            'city': biz.get('city', city),
-                            'state': biz.get('state', state),
-                            'zip': biz.get('zip', ''),
-                            'phone': biz.get('phone', ''),
-                            'website': biz.get('website', ''),
-                            'email': '',
-                            'latitude': 0,
-                            'longitude': 0,
-                            'source': 'yellowpages',
-                            'tile_id': tile.tile_id,
-                        })
-                    time.sleep(2)
-                except Exception as e:
-                    logger.debug(f"Yellow Pages term {term} failed: {e}")
+            for biz in results:
+                businesses.append({
+                    'name': biz.get('name', ''),
+                    'category': biz.get('category', 'other'),
+                    'address': biz.get('address', ''),
+                    'city': biz.get('city', city),
+                    'state': biz.get('state', state),
+                    'zip': biz.get('zip', ''),
+                    'phone': biz.get('phone', ''),
+                    'website': biz.get('website', ''),
+                    'email': '',
+                    'latitude': tile.center_lat,  # Use tile center as approx location
+                    'longitude': tile.center_lon,
+                    'source': 'yellowpages',
+                    'tile_id': tile.tile_id,
+                })
 
+            logger.info(f"Yellow Pages found {len(businesses)} businesses in {city}, {state}")
             return businesses
 
+        except ImportError as e:
+            logger.warning(f"Playwright not installed: {e}. Run: pip install playwright && playwright install chromium")
+            return []
         except Exception as e:
             logger.error(f"Yellow Pages tile search error: {e}")
             return []
@@ -531,6 +690,94 @@ out center meta;'''
         """
         # TODO: Implement when Google Places API is added
         return []
+
+    def _search_manta_tile(self, tile: Tile, city: str, state: str) -> List[Dict]:
+        """
+        Search Manta.com for businesses near a tile.
+        Uses Playwright headless browser to bypass anti-bot protection.
+        """
+        try:
+            from src.fleet.scrapers.manta_playwright import MantaPlaywright
+
+            # Use context manager for clean browser handling
+            with MantaPlaywright() as manta:
+                # Search priority categories
+                priority_cats = ['landscaping', 'hvac', 'plumbing-contractors',
+                               'electrical-contractors', 'pest-control-services',
+                               'roofing-contractors']
+                results = []
+
+                for category in priority_cats[:3]:  # Limit to 3 categories per tile
+                    try:
+                        cat_results = manta.search(city, state, category)
+                        results.extend(cat_results)
+                    except Exception as e:
+                        logger.debug(f"Manta {category} failed: {e}")
+
+            # Format results
+            businesses = []
+            for biz in results:
+                businesses.append({
+                    'name': biz.get('name', ''),
+                    'category': biz.get('category', 'other'),
+                    'address': biz.get('address', ''),
+                    'city': biz.get('city', city),
+                    'state': biz.get('state', state),
+                    'zip': biz.get('zip', ''),
+                    'phone': biz.get('phone', ''),
+                    'website': biz.get('website', ''),
+                    'email': '',
+                    'latitude': tile.center_lat,
+                    'longitude': tile.center_lon,
+                    'source': 'manta',
+                    'tile_id': tile.tile_id,
+                })
+
+            logger.info(f"Manta found {len(businesses)} businesses in {city}, {state}")
+            return businesses
+
+        except ImportError as e:
+            logger.warning(f"Playwright not installed: {e}. Run: pip install playwright && playwright install chromium")
+            return []
+        except Exception as e:
+            logger.error(f"Manta tile search error: {e}")
+            return []
+
+    def _search_foursquare_tile(self, tile: Tile) -> List[Dict]:
+        """
+        Search Foursquare Places API for businesses in a tile.
+        Requires FOURSQUARE_API_KEY environment variable.
+        """
+        try:
+            from src.fleet.scrapers.foursquare_api import FoursquareAPI
+            api = FoursquareAPI()
+
+            if not api.is_configured():
+                # Silently skip if not configured
+                return []
+
+            # Convert tile radius to meters
+            radius_meters = int(tile.search_radius_miles * 1609.34)
+
+            # Search all fleet-relevant categories
+            results = api.search_all_fleet_categories(
+                tile.center_lat,
+                tile.center_lon,
+                radius_meters
+            )
+
+            # Add tile_id to each result
+            for biz in results:
+                biz['tile_id'] = tile.tile_id
+
+            return results
+
+        except ImportError:
+            logger.warning("FoursquareAPI not available")
+            return []
+        except Exception as e:
+            logger.error(f"Foursquare tile search error: {e}")
+            return []
 
     def _get_location_for_tile(self, tile: Tile, cache: dict) -> Tuple[str, str]:
         """Get city/state for a tile using reverse geocoding with caching."""

@@ -43,6 +43,12 @@ export interface HailEvent {
   jobs_created?: number
   created_at?: string
   updated_at?: string
+  // Verification data
+  verification_count?: number
+  verified?: boolean
+  verification_sources?: string[]
+  verification_quality_score?: number
+  verification_quality_grade?: 'A' | 'B' | 'C' | 'D' | 'F'
 }
 
 export interface SeverityInfo {
@@ -283,6 +289,7 @@ export interface StormAlert {
 export interface CalendarDayEvent {
   id: number
   event_name: string
+  event_date: string
   hail_size: number
   severity: string
   lat: number
@@ -361,17 +368,91 @@ export interface LocationCheckResult {
   }>
 }
 
+// Storm Verification Types
+export interface StormVerification {
+  id: number
+  hail_event_id: number
+  source: 'reddit' | 'twitter' | 'instagram' | 'youtube' | 'facebook' | 'manual'
+  post_id?: string
+  post_url: string
+  author?: string
+  title?: string
+  content?: string
+  photo_url?: string
+  video_url?: string
+  thumbnail_url?: string
+  posted_at?: string
+  location_mentioned?: string
+  latitude?: number
+  longitude?: number
+  hail_size_mentioned?: string
+  hail_size_inches?: number
+  ai_analyzed: boolean
+  ai_detected_hail: boolean
+  ai_estimated_size?: number
+  ai_size_category?: string
+  ai_confidence?: number
+  ai_severity?: string
+  is_verified: boolean
+  verified_by?: string
+  verified_at?: string
+  likes?: number
+  shares?: number
+  comments?: number
+  relevance_score?: number
+  created_at: string
+  updated_at: string
+}
+
+export interface VerificationSummary {
+  count: number
+  verified: boolean
+  sources: string[]
+  avg_confidence: number
+  avg_size_inches: number | null
+  photos_analyzed: number
+  hail_detected: number
+}
+
+// Storm Photo type for the photo gallery
+export interface StormPhoto {
+  id: number
+  hail_event_id: number
+  source: string
+  post_url: string
+  photo_url: string
+  thumbnail_url?: string
+  title?: string
+  author?: string
+  posted_at?: string
+  location_mentioned?: string
+  ai_analyzed: boolean
+  ai_detected_hail: boolean
+  ai_estimated_size?: number
+  ai_size_category?: string
+  ai_confidence?: number
+  ai_severity?: string
+  likes?: number
+  comments?: number
+  created_at?: string
+}
+
 // =============================================================================
 // HAIL EVENTS API
 // =============================================================================
 
 export const hailEventsApi = {
-  // List & Search
+  // List & Search (with optional bounds and date filtering for map viewport)
   list: (params?: {
     days?: number
     severity?: string
     status?: string
     limit?: number
+    min_lat?: number
+    max_lat?: number
+    min_lon?: number
+    max_lon?: number
+    event_date?: string  // Filter to specific date (YYYY-MM-DD)
   }) =>
     api.get<{ events: HailEvent[]; count: number; stats: OverallStats }>(
       '/api/hail-events',
@@ -548,6 +629,164 @@ export const hailEventsApi = {
   // Address lookup
   checkLocation: (params: { lat: number; lon: number; years?: number; radius_miles?: number }) =>
     api.get<LocationCheckResult>('/api/hail-events/check-location', { params }),
+
+  // Storm Verifications
+  getVerifications: (id: number) =>
+    api.get<{ verifications: StormVerification[]; count: number }>(
+      `/api/hail-events/${id}/verifications`
+    ),
+
+  getVerificationSummary: (id: number) =>
+    api.get<VerificationSummary>(`/api/hail-events/${id}/verification-summary`),
+
+  addVerification: (id: number, data: {
+    source: string
+    post_url: string
+    post_id?: string
+    author?: string
+    title?: string
+    content?: string
+    photo_url?: string
+    hail_size_mentioned?: string
+    hail_size_inches?: number
+    location_mentioned?: string
+    latitude?: number
+    longitude?: number
+    posted_at?: string
+  }) =>
+    api.post<{ verification_id: number }>(
+      `/api/hail-events/${id}/verifications`,
+      data
+    ),
+
+  findSocialVerification: (id: number, params?: { location?: string; date?: string }) =>
+    api.post<{
+      posts: Array<{
+        post_id: string
+        title: string
+        content: string
+        author: string
+        url: string
+        posted_at: string
+        subreddit: string
+        relevance_score: number
+        hail_size_mentioned: string | null
+        location_text: string
+      }>
+      count: number
+    }>(`/api/hail-events/${id}/find-social-verification`, params),
+
+  analyzeVerificationPhoto: (verificationId: number) =>
+    api.post<{
+      success: boolean
+      estimated_size: number
+      size_category: string
+      confidence: number
+      severity: string
+    }>(`/api/hail-events/verifications/${verificationId}/analyze`),
+
+  deleteVerification: (verificationId: number) =>
+    api.delete<{ success: boolean }>(
+      `/api/hail-events/verifications/${verificationId}`
+    ),
+
+  // Auto-verification pipeline
+  autoVerifyStorm: (id: number, params?: {
+    search_radius_days?: number
+    max_posts?: number
+    auto_analyze?: boolean
+  }) =>
+    api.post<{
+      event_id: number
+      event_name: string
+      posts_found: number
+      verifications_added: number
+      photos_analyzed: number
+      hail_detected: number
+      errors: string[] | null
+    }>(`/api/hail-events/${id}/auto-verify`, params),
+
+  batchVerifyStorms: (params?: {
+    days_back?: number
+    max_storms?: number
+    auto_analyze?: boolean
+  }) =>
+    api.post<{
+      storms_processed: number
+      total_posts_found: number
+      total_verifications: number
+      storm_results: Array<{
+        storm_id: number
+        posts_found: number
+        verifications_added: number
+        errors: string[]
+      }>
+    }>('/api/hail-events/batch-verify', params),
+
+  // Verification statistics
+  getVerificationStats: (stormId?: number) =>
+    api.get<{
+      total_verifications: number
+      with_photos: number
+      with_videos: number
+      ai_analyzed: number
+      hail_detected: number
+      by_source: Record<string, number>
+      by_size: Record<string, number>
+      avg_confidence: number
+    }>('/api/hail-events/verification-stats', { params: { storm_id: stormId } }),
+
+  getVerificationQuality: (id: number) =>
+    api.get<{
+      event_id: number
+      score: number
+      grade: 'A' | 'B' | 'C' | 'D' | 'F'
+      breakdown: {
+        verification_count: number
+        photo_count: number
+        video_count: number
+        ai_confirmed: number
+        high_engagement: number
+        multiple_sources: number
+      }
+    }>(`/api/hail-events/${id}/verification-quality`),
+
+  getVerifiedStorms: (params?: {
+    min_score?: number
+    min_grade?: string
+    days?: number
+    limit?: number
+  }) =>
+    api.get<{
+      storms: Array<HailEvent & {
+        quality_score: number
+        quality_grade: string
+      }>
+      count: number
+    }>('/api/hail-events/verified-storms', { params }),
+
+  // Storm Photos - Auto-fetch from social media
+  getStormPhotos: (id: number) =>
+    api.get<{
+      event_id: number
+      photos: StormPhoto[]
+      count: number
+    }>(`/api/hail-events/${id}/photos`),
+
+  searchStormPhotos: (id: number, params?: {
+    search_radius_days?: number
+    max_posts?: number
+  }) =>
+    api.post<{
+      event_id: number
+      search_performed: boolean
+      posts_found: number
+      photos_analyzed: number
+      hail_detected: number
+      photos: StormPhoto[]
+      count: number
+      errors?: string[]
+    }>(`/api/hail-events/${id}/search-photos`, params || {}),
 
   // Generate PDF impact report
   generateImpactReport: async (params: {

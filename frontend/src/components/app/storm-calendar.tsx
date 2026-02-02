@@ -36,10 +36,11 @@ const SEVERITY_COLORS = {
 
 interface StormCalendarProps {
   onSelectEvent?: (event: CalendarDayEvent) => void
+  onSelectDate?: (date: string) => void
   className?: string
 }
 
-export function StormCalendar({ onSelectEvent, className }: StormCalendarProps) {
+export function StormCalendar({ onSelectEvent, onSelectDate, className }: StormCalendarProps) {
   const now = new Date()
   const [year, setYear] = useState(now.getFullYear())
   const [month, setMonth] = useState(now.getMonth() + 1) // 1-indexed
@@ -115,6 +116,8 @@ export function StormCalendar({ onSelectEvent, className }: StormCalendarProps) 
     if (days[dateStr]) {
       setSelectedDate(dateStr)
       setSheetOpen(true)
+      // Notify parent of date selection so they can load events for this date
+      onSelectDate?.(dateStr)
     }
   }
 

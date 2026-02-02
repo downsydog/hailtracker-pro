@@ -1,7 +1,11 @@
 const API_BASE_URL = '/api'
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type ParamValue = string | number | boolean | string[] | undefined
+export type ApiParams = Record<string, ParamValue>
+
 interface FetchOptions extends RequestInit {
-  params?: Record<string, string | number | boolean | undefined>
+  params?: ApiParams
 }
 
 async function fetchApi<T>(endpoint: string, options: FetchOptions = {}): Promise<T> {
@@ -13,7 +17,11 @@ async function fetchApi<T>(endpoint: string, options: FetchOptions = {}): Promis
     const searchParams = new URLSearchParams()
     Object.entries(params).forEach(([key, value]) => {
       if (value !== undefined) {
-        searchParams.append(key, String(value))
+        if (Array.isArray(value)) {
+          value.forEach(v => searchParams.append(key, String(v)))
+        } else {
+          searchParams.append(key, String(value))
+        }
       }
     })
     const queryString = searchParams.toString()
@@ -44,11 +52,15 @@ async function fetchApi<T>(endpoint: string, options: FetchOptions = {}): Promis
     return {} as T
   }
 
-  return JSON.parse(text)
+  try {
+    return JSON.parse(text)
+  } catch {
+    throw new Error(`Invalid JSON response: ${text.slice(0, 100)}`)
+  }
 }
 
 export const apiClient = {
-  get: <T>(endpoint: string, params?: Record<string, string | number | boolean | undefined>) =>
+  get: <T>(endpoint: string, params?: ApiParams) =>
     fetchApi<T>(endpoint, { method: 'GET', params }),
 
   post: <T>(endpoint: string, data?: unknown) =>
@@ -74,7 +86,7 @@ export const apiClient = {
 }
 
 // Named exports for convenience
-export function apiGet<T>(endpoint: string, options?: { params?: Record<string, string | number | boolean | undefined> }): Promise<T> {
+export function apiGet<T>(endpoint: string, options?: { params?: ApiParams; responseType?: string }): Promise<T> {
   return fetchApi<T>(endpoint, { method: 'GET', params: options?.params })
 }
 

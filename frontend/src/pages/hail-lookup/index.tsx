@@ -66,7 +66,7 @@ export function HailLookupPage() {
     enabled: searchTriggered && !!lat && !!lon,
   })
 
-  const locationData = result?.data as LocationCheckResult | undefined
+  const locationData = result as LocationCheckResult | undefined
 
   // PDF generation mutation
   const generateReportMutation = useMutation({
@@ -457,7 +457,7 @@ export function HailLookupPage() {
           </Card>
 
           {/* Event List */}
-          {locationData && locationData.events.length > 0 && (
+          {locationData?.events && locationData.events.length > 0 && (
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">

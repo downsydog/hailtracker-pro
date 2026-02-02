@@ -372,15 +372,17 @@ export function HailMapPage() {
 
     if (!layers.swaths) return
 
-    // Filter swaths by selected date if one is chosen
+    // Only show swaths when a date is selected from the calendar
+    // Note: swaths use start_time (ISO timestamp), not event_date
     const filteredSwaths = selectedDate
       ? swaths.filter((s) => {
-          const swathDate = s.properties.event_date
+          // Use start_time or event_date (fallback for compatibility)
+          const swathDate = s.properties.event_date || s.properties.start_time
           if (!swathDate) return false
           // Compare just the date part (YYYY-MM-DD)
           return swathDate.substring(0, 10) === selectedDate.substring(0, 10)
         })
-      : swaths
+      : [] // Show NO swaths until a date is selected
 
     // First try to use real GeoJSON swaths
     if (filteredSwaths.length > 0) {
@@ -419,7 +421,7 @@ export function HailMapPage() {
       })
     }
 
-    // Filter events by selected date if one is chosen
+    // Only show events when a date is selected from the calendar
     const filteredEvents = selectedDate
       ? events.filter((e) => {
           const eventDate = e.event_date
@@ -427,7 +429,7 @@ export function HailMapPage() {
           // Compare just the date part (YYYY-MM-DD)
           return eventDate.substring(0, 10) === selectedDate.substring(0, 10)
         })
-      : events
+      : [] // Show NO events until a date is selected
 
     // Render events - use swath_polygon if available, otherwise fall back to circle
     filteredEvents.forEach((event) => {

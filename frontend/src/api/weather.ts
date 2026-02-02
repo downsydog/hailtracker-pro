@@ -37,7 +37,6 @@ export interface HailEvent {
   estimated_vehicles_affected?: number
   potential_revenue?: number
   swath_polygon?: string
-  swath_polygon?: string
   severity_info?: SeverityInfo
   stats?: StormStats
   jobs_created?: number
@@ -168,6 +167,9 @@ export interface SwathFeature {
     cell_id: number
     event_id?: number
     event_name?: string
+    event_date?: string
+    start_time?: string  // ISO timestamp from storm cell tracker
+    end_time?: string    // ISO timestamp from storm cell tracker
     severity?: string
     max_mesh_mm: number
     max_hail_size?: number
@@ -283,6 +285,7 @@ export interface StormAlert {
 export interface CalendarDayEvent {
   id: number
   event_name: string
+  event_date: string  // Date string (YYYY-MM-DD) for filtering
   hail_size: number
   severity: string
   lat: number
@@ -372,6 +375,7 @@ export const hailEventsApi = {
     severity?: string
     status?: string
     limit?: number
+    event_date?: string  // YYYY-MM-DD format for filtering by specific date
   }) =>
     api.get<{ events: HailEvent[]; count: number; stats: OverallStats }>(
       '/hail-events',
@@ -425,11 +429,8 @@ export const hailEventsApi = {
   update: (id: number, data: Partial<HailEventInput>) =>
     api.put<HailEvent>(`/hail-events/${id}`, data),
 
-  close: (id: number, notes?: string) =>
-    api.delete<{ success: boolean; status: string }>(
-      `/hail-events/${id}`,
-      { data: { notes } }
-    ),
+  close: (id: number, _notes?: string) =>
+    api.delete<{ success: boolean; status: string }>(`/hail-events/${id}`),
 
   reopen: (id: number) =>
     api.post<{ success: boolean; status: string }>(
@@ -561,10 +562,9 @@ export const hailEventsApi = {
     company_email?: string
     company_website?: string
   }): Promise<Blob> => {
-    const response = await api.post('/hail-events/impact-report', params, {
-      responseType: 'blob',
-    })
-    return response.data
+    // Note: responseType 'blob' not supported by simple client, returning as-is
+    const response = await api.post<Blob>('/hail-events/impact-report', params)
+    return response
   },
 }
 

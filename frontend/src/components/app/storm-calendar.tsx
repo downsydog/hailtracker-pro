@@ -34,12 +34,13 @@ const SEVERITY_COLORS = {
   MINOR: { bg: "bg-yellow-500", text: "text-black", border: "border-yellow-600" },
 }
 
-interface StormCalendarProps {
+export interface StormCalendarProps {
   onSelectEvent?: (event: CalendarDayEvent) => void
+  onSelectDate?: (date: string) => void
   className?: string
 }
 
-export function StormCalendar({ onSelectEvent, className }: StormCalendarProps) {
+export function StormCalendar({ onSelectEvent, onSelectDate: _onSelectDate, className }: StormCalendarProps) {
   const now = new Date()
   const [year, setYear] = useState(now.getFullYear())
   const [month, setMonth] = useState(now.getMonth() + 1) // 1-indexed
@@ -61,10 +62,13 @@ export function StormCalendar({ onSelectEvent, className }: StormCalendarProps) 
     enabled: viewMode === "year",
   })
 
-  const days = calendarData?.data?.days || {}
-  const monthStats = calendarData?.data?.month_stats
-  const months = yearData?.data?.months || {}
-  const yearStats = yearData?.data?.year_stats
+  // Handle both wrapped (API returns {data: {...}}) and unwrapped responses
+  const calendarPayload = (calendarData as any)?.data || calendarData
+  const days = calendarPayload?.days || {}
+  const monthStats = calendarPayload?.month_stats
+  const yearPayload = (yearData as any)?.data || yearData
+  const months = yearPayload?.months || {}
+  const yearStats = yearPayload?.year_stats
 
   // Generate calendar grid for month view
   const calendarGrid = useMemo(() => {
@@ -404,7 +408,7 @@ export function StormCalendar({ onSelectEvent, className }: StormCalendarProps) 
                     key={event.id}
                     className="p-3 rounded-lg border hover:border-primary cursor-pointer transition-colors"
                     onClick={() => {
-                      onSelectEvent?.(event)
+                      onSelectEvent?.({ ...event, event_date: selectedDate! })
                       setSheetOpen(false)
                     }}
                   >
@@ -441,7 +445,7 @@ export function StormCalendar({ onSelectEvent, className }: StormCalendarProps) 
                         className="w-full"
                         onClick={(e) => {
                           e.stopPropagation()
-                          onSelectEvent?.(event)
+                          onSelectEvent?.({ ...event, event_date: selectedDate! })
                           setSheetOpen(false)
                         }}
                       >

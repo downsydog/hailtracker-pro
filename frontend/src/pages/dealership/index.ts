@@ -1,0 +1,6 @@
+export { DealershipLayout } from './layout'
+export { DealershipDashboardPage } from './dashboard'
+export { DealershipVehiclesPage } from './vehicles'
+export { DealershipUploadPage } from './upload'
+export { DealershipLocationsPage } from './locations'
+export { DealershipApiPage } from './api'

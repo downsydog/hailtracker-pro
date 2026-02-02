@@ -107,8 +107,6 @@ build/
 
 # tooling folders
 .claude/
- HEAD
-
 
 # --- LOCAL MESS (keep out of git) ---
 backend/
@@ -146,67 +144,10 @@ static/
 
 # legacy standalone tests
 test_*.py
- HEAD
- dd34778 (Ignore demo, example, and legacy test scripts)
-
-# local junk / secrets
-cookies*.txt
-cookies_ui.txt
-*.log
-*.sqlite
-*.db
-*.env
-.env*
-__pycache__/
-*.pyc
-
-# data / outputs
-data/
-database/
-exports/
-frontend/coverage/
-*.png
-*.html
-*.pdf
-events_test.json
-hail_check.json
-
-# python / node
-.venv/
-venv/
-node_modules/
-dist/
-build/
-
-# tooling folders
-.claude/
-
-# demo / example scripts
-example_*.py
-demo_*.py
-visualize_*.py
-create_*.py
-export_*.py
-run_*hail*.py
-seed_crm_demo.py
-query_alerts.py
-generate_training_data.py
-
-# legacy static assets
-static/
-
-# legacy standalone tests
-test_*.py
-
-
- d18d976 (Ignore local run scripts and test artifacts)
 # local run / utility scripts
 run_*.py
 *.sh
 
 # local test artifacts
 test_*.txt
- HEAD
-
 cookies*.txt
- d18d976 (Ignore local run scripts and test artifacts)

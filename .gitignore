@@ -76,3 +76,34 @@ node_modules/
 
 # Jupyter
 .ipynb_checkpoints/
+# local junk / secrets
+cookies*.txt
+cookies_ui.txt
+*.log
+*.sqlite
+*.db
+*.env
+.env*
+__pycache__/
+*.pyc
+
+# data / outputs
+data/
+database/
+exports/
+frontend/coverage/
+*.png
+*.html
+*.pdf
+events_test.json
+hail_check.json
+
+# python / node
+.venv/
+venv/
+node_modules/
+dist/
+build/
+
+# tooling folders
+.claude/

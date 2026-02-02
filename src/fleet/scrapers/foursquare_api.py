@@ -20,6 +20,24 @@ from typing import List, Dict, Optional
 logger = logging.getLogger('FoursquareAPI')
 
 
+def _get_taxonomy_foursquare_categories() -> List[str]:
+    """Get all unique Foursquare category names from the taxonomy (104 categories)."""
+    try:
+        from src.business.category_taxonomy import CATEGORIES
+        all_cats = set()
+        for cat_key, cat_data in CATEGORIES.items():
+            fs_cats = cat_data.get('foursquare_categories', [])
+            all_cats.update(fs_cats)
+        return list(all_cats)
+    except ImportError:
+        # Fallback if taxonomy not available
+        return [
+            'car dealer', 'auto body shop', 'auto repair shop', 'car rental agency',
+            'landscaper', 'plumber', 'electrician', 'hvac', 'roofing contractor',
+            'general contractor', 'hospital', 'parking garage',
+        ]
+
+
 class FoursquareAPI:
     """
     Foursquare Places API client.
@@ -60,7 +78,7 @@ class FoursquareAPI:
         'school': '12077',              # School
 
         # Parking (high vehicle density)
-        'parking': '19020',             # Parking Lot
+        'parking_structure': '19020',             # Parking Lot
 
         # Corporate
         'office': '11000',              # Office
@@ -71,7 +89,7 @@ class FoursquareAPI:
         'car_dealership': ['10006'],
         'car_rental': ['10005'],
         'body_shop': ['10001', '10007'],
-        'parking': ['19020'],
+        'parking_structure': ['19020'],
         'hotel': ['19014'],
         'hospital': ['15014'],
         'school': ['12077'],
@@ -191,7 +209,7 @@ class FoursquareAPI:
         radius_meters: int = 1000
     ) -> List[Dict]:
         """
-        Search for all fleet-relevant business categories.
+        Search for all fleet-relevant business categories using taxonomy.
 
         Args:
             lat: Latitude
@@ -199,16 +217,94 @@ class FoursquareAPI:
             radius_meters: Search radius in meters
 
         Returns:
-            Combined list of businesses
+            Combined list of businesses (deduplicated)
         """
-        # Key categories for fleet/PDR targets
-        target_categories = [
-            'car_dealer', 'auto_body', 'auto_repair', 'car_rental',
-            'parking', 'hotel', 'hospital', 'school',
-            'landscaping', 'hvac', 'plumbing', 'contractor'
-        ]
+        # Get all Foursquare category names from taxonomy (108 unique terms)
+        taxonomy_categories = _get_taxonomy_foursquare_categories()
 
-        return self.search_radius(lat, lon, radius_meters, target_categories)
+        all_results = []
+        seen_ids = set()
+
+        # Search by query for each category name
+        for category_name in taxonomy_categories:
+            results = self.search_by_query(lat, lon, radius_meters, query=category_name)
+            for biz in results:
+                fsq_id = biz.get('foursquare_id')
+                if fsq_id and fsq_id not in seen_ids:
+                    seen_ids.add(fsq_id)
+                    all_results.append(biz)
+
+        logger.info(f"Foursquare found {len(all_results)} unique businesses using {len(taxonomy_categories)} category searches")
+        return all_results
+
+    def search_by_query(
+        self,
+        lat: float,
+        lon: float,
+        radius_meters: int = 1000,
+        query: str = None,
+        limit: int = 50
+    ) -> List[Dict]:
+        """
+        Search for businesses by text query within radius.
+
+        Args:
+            lat: Latitude
+            lon: Longitude
+            radius_meters: Search radius in meters (max 100,000)
+            query: Text search query (e.g., "plumber", "car dealer")
+            limit: Max results per request (max 50)
+
+        Returns:
+            List of business dictionaries
+        """
+        if not self.api_key:
+            logger.warning("Foursquare API key not set")
+            return []
+
+        params = {
+            'll': f"{lat},{lon}",
+            'radius': min(radius_meters, 100000),
+            'limit': min(limit, 50),
+        }
+
+        if query:
+            params['query'] = query
+
+        try:
+            response = self.session.get(
+                self.BASE_URL,
+                params=params,
+                timeout=15
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                return self._parse_results(data.get('results', []))
+            elif response.status_code == 401:
+                logger.error("Foursquare: Invalid API key (401)")
+            elif response.status_code == 429:
+                logger.error("Foursquare: Rate limit exceeded (429)")
+            else:
+                logger.debug(f"Foursquare query '{query}' returned {response.status_code}")
+            return []
+
+        except requests.Timeout:
+            logger.error("Foursquare request timed out")
+            return []
+        except Exception as e:
+            logger.error(f"Foursquare error: {e}")
+            return []
+
+    # Backwards compatible alias
+    def search_all_categories(
+        self,
+        lat: float,
+        lon: float,
+        radius_meters: int = 1000
+    ) -> List[Dict]:
+        """Alias for search_all_fleet_categories for API consistency."""
+        return self.search_all_fleet_categories(lat, lon, radius_meters)
 
     def _parse_results(self, results: List[Dict]) -> List[Dict]:
         """Parse Foursquare results into standard format."""
@@ -216,13 +312,19 @@ class FoursquareAPI:
 
         for place in results:
             location = place.get('location', {})
+
+            # Handle both old and new API response formats
+            # New API: lat/lon directly on place
+            # Old API: geocodes.main.latitude/longitude
             geocodes = place.get('geocodes', {})
             main_geo = geocodes.get('main', {})
+            lat = place.get('latitude') or main_geo.get('latitude')
+            lon = place.get('longitude') or main_geo.get('longitude')
 
             # Get primary category
             categories = place.get('categories', [])
             category_name = categories[0].get('name', '') if categories else ''
-            category_id = categories[0].get('id', '') if categories else ''
+            category_id = categories[0].get('fsq_category_id', '') or categories[0].get('id', '') if categories else ''
 
             # Map to our internal category
             internal_category = self._map_category(category_id, category_name)
@@ -235,13 +337,13 @@ class FoursquareAPI:
                 'zip': location.get('postcode', ''),
                 'phone': place.get('tel', ''),
                 'website': place.get('website', ''),
-                'email': '',
-                'latitude': main_geo.get('latitude'),
-                'longitude': main_geo.get('longitude'),
+                'email': place.get('email', ''),  # New API provides email directly
+                'latitude': lat,
+                'longitude': lon,
                 'category': internal_category,
                 'foursquare_category': category_name,
                 'source': 'foursquare',
-                'foursquare_id': place.get('fsq_id', ''),
+                'foursquare_id': place.get('fsq_place_id', '') or place.get('fsq_id', ''),
             })
 
         return businesses
@@ -262,7 +364,7 @@ class FoursquareAPI:
         elif 'rental' in name_lower:
             return 'car_rental'
         elif 'parking' in name_lower:
-            return 'parking'
+            return 'parking_structure'
         elif 'hotel' in name_lower or 'motel' in name_lower:
             return 'hotel'
         elif 'hospital' in name_lower or 'medical' in name_lower:

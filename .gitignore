@@ -107,3 +107,24 @@ build/
 
 # tooling folders
 .claude/
+
+# --- LOCAL MESS (keep out of git) ---
+backend/
+config/
+data/
+database/
+exports/
+docs/
+scripts/data_collection/
+*.png
+*.pdf
+*.html
+*.sqlite
+*.db
+*.log
+*.json
+project_summary.txt
+project_inventory.txt
+PROJECT_HANDOFF.md
+PROJECT_INVENTORY.md
+

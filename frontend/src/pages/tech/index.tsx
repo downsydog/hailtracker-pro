@@ -1,7 +1,5 @@
 import { PageHeader } from "@/components/app/page-header"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
 import { Wrench, Calendar, Clock, CheckCircle } from "lucide-react"
 
 export function TechDashboardPage() {

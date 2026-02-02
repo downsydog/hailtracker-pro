@@ -60,7 +60,7 @@ export function SalesRoutesPage() {
   const { user } = useAuth();
 
   // Get the current user's ID for the salesperson ID
-  const salespersonId = user?.id || 0;
+  const salespersonId = typeof user?.id === 'number' ? user.id : Number(user?.id) || 0;
 
   const [route, setRoute] = useState<CanvassingRoute | null>(null);
   const [currentStopIndex, setCurrentStopIndex] = useState(0);
@@ -82,7 +82,7 @@ export function SalesRoutesPage() {
     queryFn: () => hailEventsApi.list({ days: 30 }),
   });
 
-  const recentStorms: HailEvent[] = eventsData?.data?.events || [];
+  const recentStorms: HailEvent[] = eventsData?.events || [];
 
   // Generate route mutation
   const generateRouteMutation = useMutation({

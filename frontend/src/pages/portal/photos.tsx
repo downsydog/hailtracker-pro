@@ -159,9 +159,9 @@ export function PortalPhotosPage() {
                 />
               </div>
               <Badge
-                className={`absolute top-2 left-2 text-xs ${photoTypeColors[photo.type] || "bg-gray-100"}`}
+                className={`absolute top-2 left-2 text-xs ${photoTypeColors[photo.type ?? 'other'] || "bg-gray-100"}`}
               >
-                {photoTypeLabels[photo.type] || photo.type}
+                {photoTypeLabels[photo.type ?? 'other'] || photo.type}
               </Badge>
               <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors rounded-lg" />
             </div>
@@ -222,15 +222,15 @@ export function PortalPhotosPage() {
             <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4">
               <div className="flex items-center justify-between text-white">
                 <div>
-                  <Badge className={photoTypeColors[filteredPhotos[currentPhotoIndex]?.type] || ""}>
-                    {photoTypeLabels[filteredPhotos[currentPhotoIndex]?.type] ||
+                  <Badge className={photoTypeColors[filteredPhotos[currentPhotoIndex]?.type ?? 'other'] || ""}>
+                    {photoTypeLabels[filteredPhotos[currentPhotoIndex]?.type ?? 'other'] ||
                       filteredPhotos[currentPhotoIndex]?.type}
                   </Badge>
                   <p className="mt-2 text-sm">
                     {filteredPhotos[currentPhotoIndex]?.description}
                   </p>
                   <p className="text-xs text-white/70 mt-1">
-                    {new Date(filteredPhotos[currentPhotoIndex]?.uploaded_at).toLocaleDateString()}
+                    {filteredPhotos[currentPhotoIndex]?.uploaded_at ? new Date(filteredPhotos[currentPhotoIndex]?.uploaded_at).toLocaleDateString() : ''}
                   </p>
                 </div>
                 <p className="text-sm">

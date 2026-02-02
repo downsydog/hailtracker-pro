@@ -128,7 +128,7 @@ export function PortalJobDetailPage() {
           </div>
           <p className="text-muted-foreground mt-1">
             Job #{job.job_number} • {job.vehicle_color}
-            {job.vehicle_vin && ` • VIN: ${job.vehicle_vin.slice(-6)}`}
+            {job.vehicle_vin && ` • VIN: ${(job.vehicle_vin ?? '').slice(-6)}`}
           </p>
         </div>
       </div>
@@ -187,9 +187,9 @@ export function PortalJobDetailPage() {
               <CardTitle className="text-base">Job Timeline</CardTitle>
             </CardHeader>
             <CardContent>
-              {job.timeline.length > 0 ? (
+              {(job.timeline?.length ?? 0) > 0 ? (
                 <div className="space-y-0">
-                  {job.timeline.map((event) => (
+                  {job.timeline?.map((event) => (
                     <TimelineItem key={event.id} event={event} />
                   ))}
                 </div>
@@ -205,15 +205,15 @@ export function PortalJobDetailPage() {
         <TabsContent value="photos" className="mt-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="text-base">Photos ({job.photos.length})</CardTitle>
+              <CardTitle className="text-base">Photos ({job.photos?.length ?? 0})</CardTitle>
               <Button variant="outline" size="sm" asChild>
                 <Link to={`/portal/jobs/${id}/photos`}>View All</Link>
               </Button>
             </CardHeader>
             <CardContent>
-              {job.photos.length > 0 ? (
+              {(job.photos?.length ?? 0) > 0 ? (
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                  {job.photos.slice(0, 6).map((photo) => (
+                  {job.photos?.slice(0, 6).map((photo) => (
                     <div key={photo.id} className="relative group">
                       <div className="aspect-square rounded-lg overflow-hidden bg-gray-100 border">
                         <img
@@ -247,12 +247,12 @@ export function PortalJobDetailPage() {
         <TabsContent value="documents" className="mt-4">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Documents ({job.documents.length})</CardTitle>
+              <CardTitle className="text-base">Documents ({job.documents?.length ?? 0})</CardTitle>
             </CardHeader>
             <CardContent>
-              {job.documents.length > 0 ? (
+              {(job.documents?.length ?? 0) > 0 ? (
                 <div className="space-y-3">
-                  {job.documents.map((doc) => (
+                  {job.documents?.map((doc) => (
                     <div
                       key={doc.id}
                       className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
@@ -294,7 +294,7 @@ export function PortalJobDetailPage() {
                 <div>
                   <CardTitle className="text-base">Estimate #{job.estimate.estimate_number}</CardTitle>
                   <p className="text-sm text-muted-foreground mt-1">
-                    Created {new Date(job.estimate.created_at).toLocaleDateString()}
+                    Created {job.estimate.created_at ? new Date(job.estimate.created_at).toLocaleDateString() : 'N/A'}
                   </p>
                 </div>
                 <Badge className={
@@ -307,7 +307,7 @@ export function PortalJobDetailPage() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  {job.estimate.items.map((item) => (
+                  {job.estimate.items?.map((item) => (
                     <div key={item.id} className="flex justify-between py-2 border-b last:border-0">
                       <div>
                         <p className="font-medium">{item.description}</p>
@@ -315,7 +315,7 @@ export function PortalJobDetailPage() {
                           {item.service_type} • Qty: {item.quantity}
                         </p>
                       </div>
-                      <p className="font-medium">${item.total.toFixed(2)}</p>
+                      <p className="font-medium">${(item.total ?? 0).toFixed(2)}</p>
                     </div>
                   ))}
                 </div>
@@ -323,15 +323,15 @@ export function PortalJobDetailPage() {
                 <div className="mt-4 pt-4 border-t space-y-2">
                   <div className="flex justify-between text-sm">
                     <span>Subtotal</span>
-                    <span>${job.estimate.subtotal.toFixed(2)}</span>
+                    <span>${(job.estimate.subtotal ?? 0).toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between text-sm">
                     <span>Tax</span>
-                    <span>${job.estimate.tax.toFixed(2)}</span>
+                    <span>${(job.estimate.tax ?? 0).toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between font-bold text-lg pt-2">
                     <span>Total</span>
-                    <span>${job.estimate.total.toFixed(2)}</span>
+                    <span>${(job.estimate.total ?? 0).toFixed(2)}</span>
                   </div>
                 </div>
 

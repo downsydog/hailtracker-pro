@@ -1,8 +1,7 @@
 import { PageHeader } from "@/components/app/page-header"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { Link, Plus, Copy, Trash2 } from "lucide-react"
+import { Plus } from "lucide-react"
 
 export function SchedulingTokensPage() {
   return (

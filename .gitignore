@@ -108,7 +108,7 @@ build/
 # tooling folders
 .claude/
  HEAD
-=======
+
 
 # --- LOCAL MESS (keep out of git) ---
 backend/
@@ -146,6 +146,7 @@ static/
 
 # legacy standalone tests
 test_*.py
+ HEAD
  dd34778 (Ignore demo, example, and legacy test scripts)
 
 # local junk / secrets
@@ -197,9 +198,15 @@ static/
 # legacy standalone tests
 test_*.py
 
+
+ d18d976 (Ignore local run scripts and test artifacts)
 # local run / utility scripts
 run_*.py
 *.sh
 
 # local test artifacts
 test_*.txt
+ HEAD
+
+cookies*.txt
+ d18d976 (Ignore local run scripts and test artifacts)

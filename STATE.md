@@ -1,5 +1,5 @@
 # HAILTRACKER PRO - MULTI-TENANT CONVERSION STATE
-Last updated: 2026-02-03 17:20
+Last updated: 2026-02-03 17:45
 
 ## Architecture
 - Frontend: frontend/ (React + TypeScript + Vite) - port 5179
@@ -9,41 +9,40 @@ Last updated: 2026-02-03 17:20
 - Reference code (DO NOT USE directly): backend/
 
 ## Current Database Tables (PostgreSQL hailtracker_master)
-- storms: 147,280 rows (SHARED - no tenant scoping needed)
-- swaths: 147,280 rows (SHARED - no tenant scoping needed)
-- tenants: 2 rows
-- users: 2 rows (test@example.com tenant 1, kyle@test.com tenant 2)
-- subscriptions: 0 rows
-- api_usage: 0 rows
-- leads: 0 rows
-- contacts: 0 rows
-- calls: 0 rows
-- jobs: 0 rows
-- estimates: 0 rows
-- businesses: 0 rows
+
+### SHARED Tables (no tenant_id, all tenants see same data)
+- storms: 147,280 rows
+- swaths: 147,280 rows
+- tenants: 4 rows
 - storm_businesses: 0 rows
 
-## Existing src/ Structure
-- src/auth/ - SQLite-based auth (auth_manager.py, decorators.py, user_model.py) - uses flask_login
-- src/api_killswitch.py - API cost protection (KEEP ENABLED)
-- src/business/, src/fleet/, src/crm/, src/db/, src/core/, etc.
-
-## Current Backend (scripts/test_api_server.py)
-- Has MOCK auth endpoints (login returns fake token, any credentials accepted)
-- Connects to PostgreSQL for storms/swaths
-- Connects to SQLite for CRM data
-- Running on http://localhost:5000
+### TENANT-SCOPED Tables (have tenant_id column)
+- users: 4 rows (already had tenant_id)
+- subscriptions: 0 rows (already had tenant_id)
+- leads: 0 rows (tenant_id added)
+- contacts: 0 rows (tenant_id added)
+- calls: 0 rows (tenant_id added)
+- jobs: 0 rows (tenant_id added)
+- estimates: 0 rows (tenant_id added)
+- businesses: 0 rows (tenant_id added)
+- api_usage: 0 rows (tenant_id added)
 
 ## Completed Tasks
-(none yet)
+
+### Task 1: JWT Authentication - Backend [COMPLETE]
+- Git commit: cf6443f
+
+### Task 2: JWT Authentication - Frontend [COMPLETE]
+- Git commit: b81fe77
+
+### Task 3: Tenant Scoping - Database [COMPLETE]
+- Added tenant_id column to: leads, contacts, calls, jobs, estimates, businesses, api_usage
+- All columns have DEFAULT 1 so existing data gets tenant_id=1
+- Verified: storms still returns 147,280
+- Git commit: (pending)
 
 ## Current Task
-Task 1: JWT Authentication - Backend
+Task 4: Tenant Scoping - Backend Queries
 
 ## Errors/Blockers
-(none yet)
-
-## Notes
-- Users table already has: id, tenant_id, email, password_hash (bcrypt), name, phone, role, is_active, last_login, created_at
-- Existing users have proper bcrypt hashes
-- Need to create REAL JWT auth to replace mock auth in test_api_server.py
+(none)

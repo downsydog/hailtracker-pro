@@ -1,38 +1,38 @@
 # HAILTRACKER PRO - MULTI-TENANT CONVERSION
 # RULE: ALL work in src/. NEVER touch backend/. App must work after every change.
 
-## Task 1: JWT Authentication - Backend
-- [ ] Create src/auth/ folder with: jwt_utils.py, auth_routes.py, auth_middleware.py
-- [ ] JWT utils: generate_token(), verify_token(), refresh_token()
-- [ ] Auth routes: POST /api/auth/login, POST /api/auth/register, POST /api/auth/refresh, GET /api/auth/me
-- [ ] Auth middleware: decorator that checks JWT token on protected routes
-- [ ] Add DEV_MODE=true bypass so app works without login during development
-- [ ] Register auth routes in scripts/test_api_server.py
-- [ ] Hash passwords with bcrypt
-- [ ] Test: register, login, /me, storms still work, health still returns ok
-- [ ] Git commit
-- [ ] Update STATE.md
+## Task 1: JWT Authentication - Backend [COMPLETE]
+- [x] Create src/auth/ folder with: jwt_utils.py, auth_routes.py, auth_middleware.py
+- [x] JWT utils: generate_token(), verify_token(), refresh_token()
+- [x] Auth routes: POST /api/auth/login, POST /api/auth/register, POST /api/auth/refresh, GET /api/auth/me
+- [x] Auth middleware: decorator that checks JWT token on protected routes
+- [x] Add DEV_MODE=true bypass so app works without login during development
+- [x] Register auth routes in scripts/test_api_server.py
+- [x] Hash passwords with bcrypt
+- [x] Test: register, login, /me, storms still work, health still returns ok
+- [x] Git commit
+- [x] Update STATE.md
 
-## Task 2: JWT Authentication - Frontend
-- [ ] Create login page at frontend/src/pages/auth/login.tsx
-- [ ] Create register page at frontend/src/pages/auth/register.tsx
-- [ ] Create auth context/provider that stores JWT token
-- [ ] Add token to all API requests via interceptor
-- [ ] Route protection: redirect to login if no token
-- [ ] DEV_MODE bypass on frontend (auto-login as dev user)
-- [ ] Logout button in sidebar/topbar
-- [ ] Test: register, login, existing pages still work, logout works, DEV_MODE skips login
-- [ ] Git commit
-- [ ] Update STATE.md
+## Task 2: JWT Authentication - Frontend [COMPLETE]
+- [x] Create login page at frontend/src/pages/auth/login.tsx (already existed)
+- [x] Create register page at frontend/src/pages/auth/register.tsx (already existed)
+- [x] Create auth context/provider that stores JWT token
+- [x] Add token to all API requests via interceptor (already in client.ts)
+- [x] Route protection: redirect to login if no token (ProtectedRoute.tsx)
+- [x] DEV_MODE bypass on frontend (auto-login as dev user)
+- [x] Logout button in sidebar/topbar (UserMenu.tsx)
+- [x] Test: register, login, existing pages still work, logout works, DEV_MODE skips login
+- [x] Git commit
+- [x] Update STATE.md
 
-## Task 3: Tenant Scoping - Database
-- [ ] Add tenant_id column to tables that need it: leads, contacts, calls, jobs, estimates, businesses
-- [ ] Tables that are SHARED (no tenant_id): storms, swaths
-- [ ] Set tenant_id = 1 for all existing data
-- [ ] DO NOT drop or recreate any tables. Only ALTER existing ones.
-- [ ] Verify: storms still returns 147,280, all data preserved
-- [ ] Git commit
-- [ ] Update STATE.md
+## Task 3: Tenant Scoping - Database [COMPLETE]
+- [x] Add tenant_id column to tables that need it: leads, contacts, calls, jobs, estimates, businesses, api_usage
+- [x] Tables that are SHARED (no tenant_id): storms, swaths
+- [x] Set tenant_id = 1 for all existing data (DEFAULT 1 on column)
+- [x] DO NOT drop or recreate any tables. Only ALTER existing ones.
+- [x] Verify: storms still returns 147,280, all data preserved
+- [x] Git commit
+- [x] Update STATE.md
 
 ## Task 4: Tenant Scoping - Backend Queries
 - [ ] Create src/auth/tenant_context.py - gets current tenant from JWT

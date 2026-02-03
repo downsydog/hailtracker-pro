@@ -34,13 +34,13 @@
 - [x] Git commit
 - [x] Update STATE.md
 
-## Task 4: Tenant Scoping - Backend Queries
-- [ ] Create src/auth/tenant_context.py - gets current tenant from JWT
-- [ ] Modify queries: shared data (storms, swaths) = no filter, private data (leads, jobs) = filter by tenant_id
-- [ ] In DEV_MODE default to tenant_id = 1
-- [ ] Test: storms returns all, leads returns only tenant 1, app works end to end
-- [ ] Git commit
-- [ ] Update STATE.md
+## Task 4: Tenant Scoping - Backend Queries [COMPLETE]
+- [x] Create src/auth/tenant_context.py - gets current tenant from JWT
+- [x] Modify queries: shared data (storms, swaths) = no filter, private data (leads, jobs) = filter by tenant_id
+- [x] In DEV_MODE default to tenant_id = 1
+- [x] Test: storms returns all, leads returns only tenant 1, app works end to end
+- [x] Git commit
+- [x] Update STATE.md
 
 ## Task 5: Role-Based Access Control
 - [ ] Add role column to users: admin, manager, technician, viewer

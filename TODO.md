@@ -82,11 +82,13 @@
 - [x] Git commit
 - [x] Update STATE.md
 
-## Task 9: Final Integration Test
-- [ ] Start backend and frontend
-- [ ] Register new user, login, verify storms show on map
-- [ ] Verify tenant scoping, admin portal, role-based access
-- [ ] npm run build compiles clean
-- [ ] Create scripts/test_multitenancy.py that tests everything
-- [ ] Git commit "Multi-tenant conversion complete"
-- [ ] Update STATE.md with final status
+## Task 9: Final Integration Test [COMPLETE]
+- [x] Start backend and frontend
+- [x] Register new user, login, verify storms show on map
+- [x] Verify tenant scoping, admin portal, role-based access
+- [x] npm run build compiles clean
+- [x] Create scripts/test_multitenancy.py that tests everything
+- [x] Git commit "Multi-tenant conversion complete"
+- [x] Update STATE.md with final status
+
+## MULTI-TENANT CONVERSION COMPLETE

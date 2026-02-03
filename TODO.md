@@ -42,24 +42,24 @@
 - [x] Git commit
 - [x] Update STATE.md
 
-## Task 5: Role-Based Access Control
-- [ ] Add role column to users: admin, manager, technician, viewer
-- [ ] Kyle = admin
-- [ ] Create src/auth/permissions.py with @require_role decorator
-- [ ] Admin: full access. Manager: leads/jobs/estimates. Technician: assigned jobs. Viewer: read-only.
-- [ ] DEV_MODE defaults to admin
-- [ ] Test: admin accesses all, technician blocked from admin routes, DEV_MODE works
-- [ ] Git commit
-- [ ] Update STATE.md
+## Task 5: Role-Based Access Control [COMPLETE]
+- [x] Add role column to users: admin, manager, technician, viewer
+- [x] Kyle = admin
+- [x] Create src/auth/permissions.py with @require_role decorator
+- [x] Admin: full access. Manager: leads/jobs/estimates. Technician: assigned jobs. Viewer: read-only.
+- [x] DEV_MODE defaults to admin
+- [x] Test: admin accesses all, technician blocked from admin routes, DEV_MODE works
+- [x] Git commit
+- [x] Update STATE.md
 
-## Task 6: Admin Portal Backend
-- [ ] Create src/admin/admin_routes.py
-- [ ] Routes: GET/POST /api/admin/tenants, GET/PUT /api/admin/tenants/:id, GET/POST /api/admin/users, GET /api/admin/stats, GET /api/admin/api-usage
-- [ ] All require @require_role('admin')
-- [ ] Register in scripts/test_api_server.py
-- [ ] Test: each endpoint with admin token, non-admin gets 403
-- [ ] Git commit
-- [ ] Update STATE.md
+## Task 6: Admin Portal Backend [COMPLETE]
+- [x] Create src/admin/admin_routes.py
+- [x] Routes: GET/POST /api/admin/tenants, GET/PUT /api/admin/tenants/:id, GET/POST /api/admin/users, GET /api/admin/stats, GET /api/admin/api-usage
+- [x] All require @require_role('admin')
+- [x] Register in scripts/test_api_server.py
+- [x] Test: each endpoint with admin token, non-admin gets 403
+- [x] Git commit
+- [x] Update STATE.md
 
 ## Task 7: Admin Portal Frontend
 - [ ] Review existing frontend/src/apps/admin/ pages - keep what works, fix what's broken

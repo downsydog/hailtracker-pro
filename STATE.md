@@ -24,8 +24,24 @@ Last updated: 2026-02-03 17:55
 - Storms/swaths remain SHARED (no filter)
 - Git commit: 8fd70e8
 
+### Task 5: Role-Based Access Control [COMPLETE]
+- Created src/auth/permissions.py with RBAC system
+- Role hierarchy: viewer(1), technician(2), manager(3), owner(4), admin(5)
+- @can_access decorator for resource/action checks
+- @require_role_level decorator for role hierarchy checks
+- Kyle set as admin in database
+- Git commit: 7c76016
+
+### Task 6: Admin Portal Backend [COMPLETE]
+- Created src/admin/admin_routes.py with @require_admin decorator
+- Routes: GET/POST /api/admin/tenants, GET/PUT /api/admin/tenants/:id
+- Routes: GET/POST /api/admin/users, GET/PUT /api/admin/users/:id
+- Routes: GET /api/admin/stats, GET /api/admin/api-usage
+- All endpoints working with DEV_MODE admin access
+- Git commit: pending
+
 ## Current Task
-Task 5: Role-Based Access Control
+Task 7: Admin Portal Frontend
 
 ## Verified Working
 - Backend: http://localhost:5000/api/health returns ok

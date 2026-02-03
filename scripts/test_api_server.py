@@ -61,6 +61,10 @@ def health():
 from auth.auth_routes import auth_bp
 app.register_blueprint(auth_bp)
 
+# Import and register admin blueprint (requires admin role)
+from admin.admin_routes import admin_bp
+app.register_blueprint(admin_bp)
+
 # Logout endpoint (simple, no state needed)
 @app.route('/api/auth/logout', methods=['POST'])
 def logout():

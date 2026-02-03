@@ -1,7 +1,7 @@
 """Storm model - represents a hail storm event."""
 
 from datetime import datetime, timedelta
-from backend.app.extensions import db
+from app.extensions import db
 
 
 class Storm(db.Model):

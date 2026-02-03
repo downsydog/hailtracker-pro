@@ -1,7 +1,7 @@
 """Swath model - represents a hail swath polygon."""
 
 from datetime import datetime
-from backend.app.extensions import db
+from app.extensions import db
 
 
 class Swath(db.Model):

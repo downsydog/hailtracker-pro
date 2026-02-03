@@ -1,7 +1,7 @@
 """Tenant and Subscription models - multi-tenant support."""
 
 from datetime import datetime
-from backend.app.extensions import db
+from app.extensions import db
 
 
 class Tenant(db.Model):

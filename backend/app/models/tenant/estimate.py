@@ -1,7 +1,7 @@
 """Estimate model - quotes for PDR work."""
 
 from datetime import datetime
-from backend.app.extensions import db
+from app.extensions import db
 
 
 class Estimate(db.Model):

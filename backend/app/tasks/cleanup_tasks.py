@@ -5,10 +5,10 @@ Background tasks for cleaning up expired data.
 """
 
 from datetime import datetime
-from backend.app.celery_app import celery_app
-from backend.app.extensions import db
-from backend.app.models.master.storm import Storm
-from backend.app.models.master.business import StormBusiness
+from app.celery_app import celery_app
+from app.extensions import db
+from app.models.master.storm import Storm
+from app.models.master.business import StormBusiness
 
 
 @celery_app.task
@@ -20,7 +20,7 @@ def cleanup_expired_storms():
     Returns:
         Dictionary with cleanup stats
     """
-    from backend.app import create_app
+    from app import create_app
     app = create_app()
 
     with app.app_context():
@@ -58,8 +58,8 @@ def cleanup_orphaned_businesses():
     Returns:
         Dictionary with deletion count
     """
-    from backend.app import create_app
-    from backend.app.models.master.business import Business
+    from app import create_app
+    from app.models.master.business import Business
     from sqlalchemy import not_, exists
 
     app = create_app()
@@ -89,8 +89,8 @@ def cleanup_old_api_usage():
         Dictionary with deletion count
     """
     from datetime import timedelta
-    from backend.app import create_app
-    from backend.app.models.master.api_usage import ApiUsage
+    from app import create_app
+    from app.models.master.api_usage import ApiUsage
 
     app = create_app()
 

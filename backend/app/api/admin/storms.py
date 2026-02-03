@@ -6,11 +6,11 @@ Endpoints for managing storm processing (owner only).
 
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity
-from backend.app.api.middleware import admin_required
-from backend.app.models.master.storm import Storm
-from backend.app.models.master.swath import Swath
-from backend.app.extensions import db
-from backend.app.tasks.storm_tasks import process_storm, reprocess_storm
+from app.api.middleware import admin_required
+from app.models.master.storm import Storm
+from app.models.master.swath import Swath
+from app.extensions import db
+from app.tasks.storm_tasks import process_storm, reprocess_storm
 from celery.result import AsyncResult
 
 admin_storms_bp = Blueprint('admin_storms', __name__)

@@ -7,9 +7,9 @@ Handles user registration, login, and team management.
 from datetime import datetime
 from flask import current_app
 from flask_jwt_extended import create_access_token, create_refresh_token
-from backend.app.extensions import db
-from backend.app.models.master.user import User
-from backend.app.models.master.tenant import Tenant
+from app.extensions import db
+from app.models.master.user import User
+from app.models.master.tenant import Tenant
 
 
 class AuthService:

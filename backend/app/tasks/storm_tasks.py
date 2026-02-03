@@ -6,12 +6,12 @@ Background tasks for discovering businesses in storm swaths.
 
 import os
 from datetime import datetime, timedelta
-from backend.app.celery_app import celery_app
-from backend.app.extensions import db
-from backend.app.models.master.storm import Storm
-from backend.app.models.master.swath import Swath
-from backend.app.models.master.business import Business, StormBusiness
-from backend.app.services.usage_service import UsageService
+from app.celery_app import celery_app
+from app.extensions import db
+from app.models.master.storm import Storm
+from app.models.master.swath import Swath
+from app.models.master.business import Business, StormBusiness
+from app.services.usage_service import UsageService
 
 
 @celery_app.task(bind=True, max_retries=3)
@@ -26,7 +26,7 @@ def process_storm(self, storm_id):
     Returns:
         Result dictionary with processing stats
     """
-    from backend.app import create_app
+    from app import create_app
     app = create_app()
 
     with app.app_context():
@@ -121,7 +121,7 @@ def discover_businesses_for_swaths(swath_data, task=None):
     Returns:
         List of discovered businesses
     """
-    from backend.app import create_app
+    from app import create_app
     app = create_app()
 
     all_businesses = []
@@ -493,7 +493,7 @@ def deduplicate_businesses(businesses):
 
 def save_businesses_to_db(storm_id, businesses):
     """Save discovered businesses to database."""
-    from backend.app import create_app
+    from app import create_app
     app = create_app()
 
     saved = 0
@@ -559,7 +559,7 @@ def reprocess_storm(self, storm_id):
     Returns:
         Result from process_storm
     """
-    from backend.app import create_app
+    from app import create_app
     app = create_app()
 
     with app.app_context():

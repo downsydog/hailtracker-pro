@@ -6,18 +6,18 @@ Platform administration and owner-only features.
 
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity
-from backend.app.api.middleware import admin_required
-from backend.app.models.master.tenant import Tenant
-from backend.app.models.master.user import User
-from backend.app.models.master.storm import Storm
-from backend.app.services.usage_service import UsageService
-from backend.app.extensions import db
+from app.api.middleware import admin_required
+from app.models.master.tenant import Tenant
+from app.models.master.user import User
+from app.models.master.storm import Storm
+from app.services.usage_service import UsageService
+from app.extensions import db
 
 admin_bp = Blueprint('admin', __name__)
 
 # Register sub-blueprints
-from backend.app.api.admin.storms import admin_storms_bp
-from backend.app.api.admin.customers import admin_customers_bp
+from app.api.admin.storms import admin_storms_bp
+from app.api.admin.customers import admin_customers_bp
 
 admin_bp.register_blueprint(admin_storms_bp)
 admin_bp.register_blueprint(admin_customers_bp)

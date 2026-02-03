@@ -6,11 +6,11 @@ Endpoints for managing tenants/customers (platform admin only).
 
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity
-from backend.app.api.middleware import admin_required
-from backend.app.models.master.tenant import Tenant
-from backend.app.models.master.user import User
-from backend.app.services.auth_service import AuthService
-from backend.app.extensions import db
+from app.api.middleware import admin_required
+from app.models.master.tenant import Tenant
+from app.models.master.user import User
+from app.services.auth_service import AuthService
+from app.extensions import db
 
 admin_customers_bp = Blueprint('admin_customers', __name__)
 

@@ -6,9 +6,9 @@ Tenant-specific operations for PDR business users.
 
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity
-from backend.app.api.middleware import login_required, roles_required
-from backend.app.services.storm_service import StormService
-from backend.app.services.lead_service import LeadService
+from app.api.middleware import login_required, roles_required
+from app.services.storm_service import StormService
+from app.services.lead_service import LeadService
 
 customer_bp = Blueprint('customer', __name__)
 
@@ -438,9 +438,9 @@ def customer_dashboard():
     """
     identity = get_jwt_identity()
 
-    from backend.app.models.master.tenant import Tenant
-    from backend.app.models.master.user import User
-    from backend.app.services.usage_service import UsageService
+    from app.models.master.tenant import Tenant
+    from app.models.master.user import User
+    from app.services.usage_service import UsageService
     from datetime import datetime, timedelta
 
     tenant = Tenant.query.get(identity['tenant_id'])
@@ -502,7 +502,7 @@ def list_team():
     """
     identity = get_jwt_identity()
 
-    from backend.app.models.master.user import User
+    from app.models.master.user import User
 
     members = User.query.filter_by(tenant_id=identity['tenant_id']).all()
 
@@ -542,7 +542,7 @@ def add_team_member():
         if not data.get(field):
             return jsonify({'error': f'{field} is required'}), 400
 
-    from backend.app.services.auth_service import AuthService
+    from app.services.auth_service import AuthService
 
     name = f"{data['first_name']} {data['last_name']}"
 
@@ -585,8 +585,8 @@ def update_team_member(user_id):
     identity = get_jwt_identity()
     data = request.get_json()
 
-    from backend.app.models.master.user import User
-    from backend.app import db
+    from app.models.master.user import User
+    from app.extensions import db
 
     user = User.query.filter_by(id=user_id, tenant_id=identity['tenant_id']).first()
 
@@ -641,8 +641,8 @@ def update_company_settings():
     if not data:
         return jsonify({'error': 'Request body required'}), 400
 
-    from backend.app.models.master.tenant import Tenant
-    from backend.app import db
+    from app.models.master.tenant import Tenant
+    from app.extensions import db
 
     tenant = Tenant.query.get(identity['tenant_id'])
 

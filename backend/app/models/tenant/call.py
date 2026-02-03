@@ -1,7 +1,7 @@
 """Call model - call log for leads."""
 
 from datetime import datetime
-from backend.app.extensions import db
+from app.extensions import db
 
 
 class Call(db.Model):

@@ -6,8 +6,8 @@ API usage tracking and limits.
 
 from datetime import date, timedelta
 from sqlalchemy import func, extract
-from backend.app.extensions import db
-from backend.app.models.master.api_usage import ApiUsage
+from app.extensions import db
+from app.models.master.api_usage import ApiUsage
 
 
 class UsageService:

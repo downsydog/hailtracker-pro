@@ -1,7 +1,7 @@
 """Contact model - people at a business."""
 
 from datetime import datetime
-from backend.app.extensions import db
+from app.extensions import db
 
 
 class Contact(db.Model):

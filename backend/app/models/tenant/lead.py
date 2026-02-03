@@ -1,7 +1,7 @@
 """Lead model - business opportunities for PDR work."""
 
 from datetime import datetime
-from backend.app.extensions import db
+from app.extensions import db
 
 
 class Lead(db.Model):

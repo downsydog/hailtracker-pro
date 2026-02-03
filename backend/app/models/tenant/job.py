@@ -1,7 +1,7 @@
 """Job model - scheduled/completed PDR work."""
 
 from datetime import datetime
-from backend.app.extensions import db
+from app.extensions import db
 
 
 class Job(db.Model):

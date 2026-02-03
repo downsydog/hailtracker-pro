@@ -77,7 +77,7 @@ def test_flask_app():
     print("=" * 60)
 
     try:
-        from backend.app import create_app
+        from app import create_app
 
         app = create_app('development')
 
@@ -106,7 +106,7 @@ def test_models():
     print("=" * 60)
 
     try:
-        from backend.app.models import (
+        from app.models import (
             Storm, Swath, Business, StormBusiness,
             Tenant, Subscription, User, ApiUsage
         )
@@ -117,7 +117,7 @@ def test_models():
         for model in models:
             print(f"  - {model.__name__}: {model.__tablename__}")
 
-        from backend.app.models.tenant import Lead, Contact, Call, Job, Estimate
+        from app.models.tenant import Lead, Contact, Call, Job, Estimate
 
         tenant_models = [Lead, Contact, Call, Job, Estimate]
 
@@ -141,8 +141,8 @@ def test_create_tables():
     print("=" * 60)
 
     try:
-        from backend.app import create_app
-        from backend.app.extensions import db
+        from app import create_app
+        from app.extensions import db
 
         app = create_app('development')
 

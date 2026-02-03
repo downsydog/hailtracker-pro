@@ -6,8 +6,8 @@ Handles registration, login, and team management.
 
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity, create_access_token
-from backend.app.services.auth_service import AuthService
-from backend.app.api.middleware import login_required, manager_required, admin_required
+from app.services.auth_service import AuthService
+from app.api.middleware import login_required, manager_required, admin_required
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -152,8 +152,8 @@ def get_current_user():
     """
     identity = get_jwt_identity()
 
-    from backend.app.models.master.user import User
-    from backend.app.models.master.tenant import Tenant
+    from app.models.master.user import User
+    from app.models.master.tenant import Tenant
 
     user = User.query.get(identity['user_id'])
     tenant = Tenant.query.get(identity['tenant_id'])
@@ -190,8 +190,8 @@ def update_profile():
     if not data:
         return jsonify({'error': 'Request body required'}), 400
 
-    from backend.app.models.master.user import User
-    from backend.app import db
+    from app.models.master.user import User
+    from app.extensions import db
 
     user = User.query.get(identity['user_id'])
 
@@ -391,7 +391,7 @@ def get_team_member(user_id):
     """
     identity = get_jwt_identity()
 
-    from backend.app.models.master.user import User
+    from app.models.master.user import User
 
     user = User.query.filter_by(id=user_id, tenant_id=identity['tenant_id']).first()
 
@@ -543,7 +543,7 @@ def get_roles():
     Returns:
         200: List of roles
     """
-    from backend.app.models.master.user import User
+    from app.models.master.user import User
 
     roles = [
         {

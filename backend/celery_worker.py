@@ -16,8 +16,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 load_dotenv()
 
-from backend.app import create_app
-from backend.app.celery_app import celery_app
+from app import create_app
+from app.celery_app import celery_app
 
 # Create Flask app and push context
 app = create_app()

@@ -6,10 +6,10 @@ Operations for querying storms and businesses from the master database.
 
 from datetime import datetime, timedelta
 from sqlalchemy import func
-from backend.app.extensions import db
-from backend.app.models.master.storm import Storm
-from backend.app.models.master.swath import Swath
-from backend.app.models.master.business import Business, StormBusiness
+from app.extensions import db
+from app.models.master.storm import Storm
+from app.models.master.swath import Swath
+from app.models.master.business import Business, StormBusiness
 
 
 class StormService:

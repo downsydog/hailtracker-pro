@@ -6,11 +6,11 @@ Each tenant has their own leads table.
 """
 
 from datetime import datetime
-from backend.app.extensions import db
-from backend.app.models.tenant.lead import Lead
-from backend.app.models.tenant.contact import Contact
-from backend.app.models.tenant.call import Call
-from backend.app.models.master.business import Business
+from app.extensions import db
+from app.models.tenant.lead import Lead
+from app.models.tenant.contact import Contact
+from app.models.tenant.call import Call
+from app.models.master.business import Business
 
 
 class LeadService:

@@ -1,7 +1,7 @@
 """User model - team members within a tenant."""
 
 from datetime import datetime
-from backend.app.extensions import db
+from app.extensions import db
 import bcrypt
 
 

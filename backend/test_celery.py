@@ -16,11 +16,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 load_dotenv()
 
-from backend.app import create_app
-from backend.app.celery_app import celery_app
-from backend.app.tasks.storm_tasks import process_storm
-from backend.app.models.master.storm import Storm
-from backend.app.extensions import db
+from app import create_app
+from app.celery_app import celery_app
+from app.tasks.storm_tasks import process_storm
+from app.models.master.storm import Storm
+from app.extensions import db
 
 
 def test_celery():

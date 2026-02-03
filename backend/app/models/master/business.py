@@ -1,7 +1,7 @@
 """Business models - discovered businesses and storm associations."""
 
 from datetime import datetime
-from backend.app.extensions import db
+from app.extensions import db
 
 
 class Business(db.Model):

@@ -5,7 +5,7 @@ Background task processing for storm discovery and cleanup.
 """
 
 from celery import Celery
-from backend.app.config import Config
+from app.config import Config
 
 
 def create_celery_app(app=None):

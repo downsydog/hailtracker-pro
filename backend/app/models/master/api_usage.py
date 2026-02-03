@@ -1,7 +1,7 @@
 """API Usage tracking model."""
 
 from datetime import datetime, date
-from backend.app.extensions import db
+from app.extensions import db
 
 
 class ApiUsage(db.Model):

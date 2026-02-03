@@ -14,6 +14,10 @@ import psycopg2.extras
 import sqlite3
 import json
 import os
+import sys
+
+# Add src to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'src'))
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend
@@ -50,83 +54,14 @@ def health():
 
 
 # =============================================================================
-# MOCK AUTH ENDPOINTS (for frontend testing)
+# JWT AUTH ENDPOINTS (real authentication with PostgreSQL)
 # =============================================================================
 
-@app.route('/api/auth/login', methods=['POST'])
-def login():
-    """Mock login endpoint - accepts any credentials for testing."""
-    data = request.get_json() or {}
-    email = data.get('email', 'demo@hailtrackerpro.com')
+# Import and register auth blueprint
+from auth.auth_routes import auth_bp
+app.register_blueprint(auth_bp)
 
-    # Return a mock user and token
-    return jsonify({
-        "success": True,
-        "token": "mock_jwt_token_for_testing_12345",
-        "refresh_token": "mock_refresh_token_67890",
-        "user": {
-            "id": 1,
-            "email": email,
-            "first_name": "Demo",
-            "last_name": "User",
-            "role": "owner",
-            "role_name": "Owner",
-            "organization_id": 1,
-            "account_id": 1,
-            "permissions": [
-                "dashboard:view", "dashboard:manage",
-                "jobs:view", "jobs:create", "jobs:edit", "jobs:delete", "jobs:assign", "jobs:status", "jobs:complete",
-                "customers:view", "customers:create", "customers:edit", "customers:delete", "customers:import",
-                "vehicles:view", "vehicles:create", "vehicles:edit",
-                "estimates:view", "estimates:create", "estimates:edit", "estimates:delete", "estimates:send", "estimates:approve", "estimates:convert",
-                "invoices:view", "invoices:create", "invoices:edit", "invoices:send",
-                "leads:view", "leads:create", "leads:edit", "leads:delete", "leads:convert", "leads:assign",
-                "claims:view", "claims:create", "claims:edit",
-                "schedule:view", "schedule:manage",
-                "technicians:view", "technicians:manage",
-                "reports:view", "reports:export",
-                "hail:view", "hail:create", "hail:manage",
-                "communications:view", "communications:send",
-                "documents:view", "documents:upload", "documents:delete",
-                "admin:users", "admin:settings", "admin:billing", "admin:roles", "admin:logs", "admin:backup",
-                "billing:view", "billing:manage"
-            ]
-        }
-    })
-
-
-@app.route('/api/auth/me', methods=['GET'])
-def get_me():
-    """Get current user info."""
-    return jsonify({
-        "id": 1,
-        "email": "demo@hailtrackerpro.com",
-        "first_name": "Demo",
-        "last_name": "User",
-        "role": "owner",
-        "role_name": "Owner",
-        "organization_id": 1,
-        "account_id": 1,
-        "phone": "(555) 123-4567",
-        "permissions": [
-            "dashboard:view", "dashboard:manage",
-            "jobs:view", "jobs:create", "jobs:edit", "jobs:delete",
-            "customers:view", "customers:create", "customers:edit",
-            "admin:users", "admin:settings"
-        ]
-    })
-
-
-@app.route('/api/auth/refresh', methods=['POST'])
-def refresh_token():
-    """Refresh authentication token."""
-    return jsonify({
-        "success": True,
-        "token": "mock_jwt_token_refreshed_12345",
-        "refresh_token": "mock_refresh_token_new_67890"
-    })
-
-
+# Logout endpoint (simple, no state needed)
 @app.route('/api/auth/logout', methods=['POST'])
 def logout():
     """Logout endpoint."""

@@ -24,9 +24,25 @@ export default function UserMenu() {
     navigate('/app/login');
   };
 
-  const initials = user
-    ? `${user.first_name?.[0] || ''}${user.last_name?.[0] || ''}`.toUpperCase() || user.email[0].toUpperCase()
-    : '?';
+  // Get initials from name (single field) or first_name/last_name
+  const getInitials = () => {
+    if (!user) return '?';
+    if (user.name) {
+      const parts = user.name.split(' ');
+      return parts.length > 1
+        ? `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase()
+        : user.name[0].toUpperCase();
+    }
+    if (user.first_name || user.last_name) {
+      return `${user.first_name?.[0] || ''}${user.last_name?.[0] || ''}`.toUpperCase();
+    }
+    return user.email[0].toUpperCase();
+  };
+
+  const initials = getInitials();
+
+  // Get display name
+  const displayName = user?.name || `${user?.first_name || ''} ${user?.last_name || ''}`.trim() || user?.email;
 
   const roleColors: Record<string, string> = {
     owner: 'bg-purple-500',
@@ -47,7 +63,7 @@ export default function UserMenu() {
         </div>
         <div className="text-left hidden sm:block">
           <div className="text-sm font-medium text-white">
-            {user?.first_name} {user?.last_name}
+            {displayName}
           </div>
           <div className="text-xs text-gray-400">{tenant?.name}</div>
         </div>

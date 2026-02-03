@@ -4,6 +4,8 @@ import adminApi from './api/adminApi';
 import Sidebar from './components/Sidebar';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
+import Tenants from './pages/Tenants';
+import Users from './pages/Users';
 import Storms from './pages/Storms';
 import Customers from './pages/Customers';
 import ApiUsage from './pages/ApiUsage';
@@ -38,8 +40,8 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
     try {
       const data = await adminApi.getMe();
 
-      // Only allow owners
-      if (data.user?.role !== 'owner') {
+      // Only allow admins (system admins)
+      if (data.user?.role !== 'admin') {
         adminApi.logout();
         setLoading(false);
         return;
@@ -76,6 +78,18 @@ export default function AdminApp() {
       <Route path="/" element={
         <ProtectedRoute>
           <Dashboard />
+        </ProtectedRoute>
+      } />
+
+      <Route path="/tenants" element={
+        <ProtectedRoute>
+          <Tenants />
+        </ProtectedRoute>
+      } />
+
+      <Route path="/users" element={
+        <ProtectedRoute>
+          <Users />
         </ProtectedRoute>
       } />
 

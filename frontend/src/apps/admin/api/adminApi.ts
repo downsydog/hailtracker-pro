@@ -81,21 +81,94 @@ class AdminApi {
     this.clearToken();
   }
 
-  // ============ Dashboard ============
+  // ============ Dashboard / Stats ============
 
   async getDashboard() {
-    return this.request('/admin/dashboard');
+    // Use the new /admin/stats endpoint
+    return this.request('/admin/stats');
   }
 
-  // ============ Customers ============
+  async getStats() {
+    return this.request('/admin/stats');
+  }
 
-  async getCustomers(status?: string) {
-    const params = status ? `?status=${status}` : '';
-    return this.request(`/admin/customers${params}`);
+  // ============ Tenants ============
+
+  async getTenants() {
+    return this.request('/admin/tenants');
+  }
+
+  async getTenant(id: number) {
+    return this.request(`/admin/tenants/${id}`);
+  }
+
+  async createTenant(data: {
+    company_name: string;
+    owner_email: string;
+    plan?: string;
+    max_users?: number;
+  }) {
+    return this.request('/admin/tenants', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateTenant(id: number, data: { company_name?: string; plan?: string; status?: string; max_users?: number }) {
+    return this.request(`/admin/tenants/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async suspendTenant(id: number) {
+    return this.updateTenant(id, { status: 'suspended' });
+  }
+
+  async activateTenant(id: number) {
+    return this.updateTenant(id, { status: 'active' });
+  }
+
+  // ============ Users ============
+
+  async getUsers(tenantId?: number) {
+    const params = tenantId ? `?tenant_id=${tenantId}` : '';
+    return this.request(`/admin/users${params}`);
+  }
+
+  async getUser(id: number) {
+    return this.request(`/admin/users/${id}`);
+  }
+
+  async createUser(data: {
+    email: string;
+    password: string;
+    name: string;
+    tenant_id: number;
+    role?: string;
+    phone?: string;
+  }) {
+    return this.request('/admin/users', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateUser(id: number, data: { name?: string; role?: string; is_active?: boolean; tenant_id?: number }) {
+    return this.request(`/admin/users/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // Legacy aliases for backwards compatibility
+  async getCustomers(_status?: string) {
+    // Redirect to tenants (status filter not used in new API)
+    return this.getTenants();
   }
 
   async getCustomer(id: number) {
-    return this.request(`/admin/customers/${id}`);
+    return this.getTenant(id);
   }
 
   async createCustomer(data: {
@@ -105,29 +178,27 @@ class AdminApi {
     password: string;
     plan?: string;
   }) {
-    return this.request('/admin/customers', {
-      method: 'POST',
-      body: JSON.stringify(data),
+    return this.createTenant({
+      company_name: data.company_name,
+      owner_email: data.owner_email,
+      plan: data.plan,
     });
   }
 
   async updateCustomer(id: number, data: { status?: string; plan?: string; max_users?: number }) {
-    return this.request(`/admin/customers/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(data),
-    });
+    return this.updateTenant(id, data);
   }
 
   async suspendCustomer(id: number) {
-    return this.updateCustomer(id, { status: 'suspended' });
+    return this.suspendTenant(id);
   }
 
   async activateCustomer(id: number) {
-    return this.updateCustomer(id, { status: 'active' });
+    return this.activateTenant(id);
   }
 
   async getCustomerStats() {
-    return this.request('/admin/customers/stats');
+    return this.getStats();
   }
 
   // ============ Storms ============
@@ -173,8 +244,11 @@ class AdminApi {
 
   // ============ API Usage ============
 
-  async getApiUsage() {
-    return this.request('/admin/usage');
+  async getApiUsage(days: number = 30, tenantId?: number) {
+    const params = new URLSearchParams();
+    params.append('days', days.toString());
+    if (tenantId) params.append('tenant_id', tenantId.toString());
+    return this.request(`/admin/api-usage?${params}`);
   }
 }
 

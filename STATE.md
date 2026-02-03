@@ -38,10 +38,20 @@ Last updated: 2026-02-03 17:55
 - Routes: GET/POST /api/admin/users, GET/PUT /api/admin/users/:id
 - Routes: GET /api/admin/stats, GET /api/admin/api-usage
 - All endpoints working with DEV_MODE admin access
+- Git commit: 5193174
+
+### Task 7: Admin Portal Frontend [COMPLETE]
+- Updated adminApi.ts with tenant/user management methods
+- Updated Dashboard.tsx to show system stats (tenants, users, storms, leads, jobs)
+- Created Tenants.tsx page for tenant management (list, create, edit plan/status)
+- Created Users.tsx page for user management (list, create, assign role/tenant)
+- Updated Sidebar.tsx with Tenants and Users links
+- Updated App.tsx routes and changed auth check to admin role
+- npm run build compiles clean
 - Git commit: pending
 
 ## Current Task
-Task 7: Admin Portal Frontend
+Task 8: Subscription Plans and Limits
 
 ## Verified Working
 - Backend: http://localhost:5000/api/health returns ok

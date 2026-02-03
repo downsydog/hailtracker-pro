@@ -61,16 +61,16 @@
 - [x] Git commit
 - [x] Update STATE.md
 
-## Task 7: Admin Portal Frontend
-- [ ] Review existing frontend/src/apps/admin/ pages - keep what works, fix what's broken
-- [ ] Dashboard: tenant count, user count, storm count, system health
-- [ ] Tenant management: list, create/edit, set plan
-- [ ] User management: list, create, assign role and tenant
-- [ ] Connect to src/admin/ routes
-- [ ] Only visible to admin role
-- [ ] Test: login as admin, see real data, original pages still work
-- [ ] Git commit
-- [ ] Update STATE.md
+## Task 7: Admin Portal Frontend [COMPLETE]
+- [x] Review existing frontend/src/apps/admin/ pages - keep what works, fix what's broken
+- [x] Dashboard: tenant count, user count, storm count, system health
+- [x] Tenant management: list, create/edit, set plan
+- [x] User management: list, create, assign role and tenant
+- [x] Connect to src/admin/ routes
+- [x] Only visible to admin role
+- [x] Test: login as admin, see real data, original pages still work
+- [x] Git commit
+- [x] Update STATE.md
 
 ## Task 8: Subscription Plans and Limits
 - [ ] Create src/billing/plans.py: free (2 users, 3 storms/mo), pro (8 users, 50 storms/mo, $99), enterprise (100 users, unlimited, $299)

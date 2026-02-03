@@ -954,11 +954,93 @@ def get_hail_calendar_year():
 # Mock endpoints for other frontend API calls
 @app.route('/api/jobs')
 def get_jobs():
-    return jsonify({"jobs": [], "stats": {"total": 0, "in_progress": 0, "total_revenue": 0}, "total": 0})
+    """
+    Get jobs for the current tenant.
+    Tenant-scoped: filters by tenant_id from JWT.
+    """
+    from auth.tenant_context import get_current_tenant_id
+
+    try:
+        tenant_id = get_current_tenant_id()
+
+        conn = get_db()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # Get jobs filtered by tenant_id
+        cursor.execute("""
+            SELECT * FROM jobs
+            WHERE tenant_id = %s
+            ORDER BY created_at DESC
+            LIMIT 100
+        """, (tenant_id,))
+        jobs = cursor.fetchall()
+
+        # Get stats for this tenant
+        cursor.execute("""
+            SELECT
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE status = 'in_progress') as in_progress,
+                COALESCE(SUM(total_amount), 0) as total_revenue
+            FROM jobs WHERE tenant_id = %s
+        """, (tenant_id,))
+        stats = cursor.fetchone()
+
+        conn.close()
+
+        return jsonify({
+            "jobs": [dict(j) for j in jobs],
+            "stats": {
+                "total": stats['total'],
+                "in_progress": stats['in_progress'],
+                "total_revenue": float(stats['total_revenue'])
+            },
+            "total": stats['total'],
+            "tenant_id": tenant_id
+        })
+    except Exception as e:
+        return jsonify({"jobs": [], "stats": {"total": 0, "in_progress": 0, "total_revenue": 0}, "total": 0, "error": str(e)})
 
 @app.route('/api/leads')
 def get_leads():
-    return jsonify({"leads": [], "total": 0})
+    """
+    Get leads for the current tenant.
+    Tenant-scoped: filters by tenant_id from JWT.
+    """
+    from auth.tenant_context import get_current_tenant_id
+
+    try:
+        tenant_id = get_current_tenant_id()
+        per_page = request.args.get('per_page', 100, type=int)
+        page = request.args.get('page', 1, type=int)
+        offset = (page - 1) * per_page
+
+        conn = get_db()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # Get leads filtered by tenant_id
+        cursor.execute("""
+            SELECT * FROM leads
+            WHERE tenant_id = %s
+            ORDER BY created_at DESC
+            LIMIT %s OFFSET %s
+        """, (tenant_id, per_page, offset))
+        leads = cursor.fetchall()
+
+        # Get total count for this tenant
+        cursor.execute("SELECT COUNT(*) FROM leads WHERE tenant_id = %s", (tenant_id,))
+        total = cursor.fetchone()['count']
+
+        conn.close()
+
+        return jsonify({
+            "leads": [dict(l) for l in leads],
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "tenant_id": tenant_id
+        })
+    except Exception as e:
+        return jsonify({"leads": [], "total": 0, "error": str(e)})
 
 @app.route('/api/estimates')
 def get_estimates():

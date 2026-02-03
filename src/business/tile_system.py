@@ -9,10 +9,10 @@ Why tiles are better than center + radius:
 - Large radius = hits API limits (Google: 60 results max)
 - Tiles ensure complete coverage of actual swath shape
 
-Tile sizes:
-- 0.25 miles = very precise, more API calls
-- 0.5 miles = good balance (RECOMMENDED)
-- 1.0 miles = fewer calls, might hit limits
+Tile sizes (LINEAR dimension, not area):
+- 0.25 mi linear = 0.0625 sq mi tiles (very granular, most API calls)
+- 0.5 mi linear = 0.25 sq mi tiles (RECOMMENDED - Kyle's proven config)
+- 1.0 mi linear = 1.0 sq mi tiles (fewer calls, might hit limits)
 """
 
 import math
@@ -69,7 +69,9 @@ class SwathTileSystem:
         Initialize tile system.
 
         Args:
-            tile_size_miles: Size of each tile in miles (0.25, 0.5, or 1.0 recommended)
+            tile_size_miles: LINEAR size of each tile in miles (width and height).
+                            0.5 = 0.25 sq mile tiles (Kyle's proven config, RECOMMENDED)
+                            0.25 = 0.0625 sq mile tiles (4x more API calls)
         """
         self.tile_size_miles = tile_size_miles
         self.tile_size_lat = tile_size_miles / self.MILES_PER_DEG_LAT
@@ -131,7 +133,10 @@ class SwathTileSystem:
                         min_lon=tile_min_lon,
                         max_lat=tile_max_lat,
                         max_lon=tile_max_lon,
-                        search_radius_miles=self.tile_size_miles * 0.75,  # Overlap slightly
+                        # Search radius larger than tile to ensure coverage + overlap
+                        # This causes same business to appear in adjacent tiles
+                        # which is why cross-tile deduplication is critical
+                        search_radius_miles=self.tile_size_miles * 2.0,
                     ))
 
                 lon += self.tile_size_lon

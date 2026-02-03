@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Users, Phone, Mail, MapPin, Plus, Search, Briefcase } from 'lucide-react'
+import { Phone, Mail, Plus, Search, Briefcase } from 'lucide-react'
 
 const mockCustomers = [
   { id: 1, name: 'John Smith', email: 'john@email.com', phone: '555-0101', address: '123 Oak St, Dallas, TX', jobsCount: 2, totalSpent: 25400 },

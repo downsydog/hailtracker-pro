@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPut, apiDelete } from './client'
+import { apiGet, apiPost, apiPut, apiDelete, ApiParams } from './client'
 import { Lead } from '@/types'
 
 export interface LeadsQueryParams {
@@ -22,7 +22,7 @@ interface LeadsResponse {
 }
 
 export const leadsApi = {
-  list: (filters?: LeadsQueryParams) => apiGet<LeadsResponse>('/leads', { params: filters }),
+  list: (filters?: LeadsQueryParams) => apiGet<LeadsResponse>('/leads', { params: filters as ApiParams }),
   get: (id: number) => apiGet<Lead>(`/leads/${id}`),
   create: (data: CreateLeadData) => apiPost<Lead>('/leads', data),
   update: (id: number, data: UpdateLeadData) => apiPut<Lead>(`/leads/${id}`, data),

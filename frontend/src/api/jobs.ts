@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPut, apiDelete } from './client'
+import { apiGet, apiPost, apiPut, apiDelete, ApiParams } from './client'
 import { Job, JobStats } from '@/types'
 
 export interface JobsQueryParams {
@@ -31,7 +31,7 @@ interface CreateJobResponse {
 }
 
 export const jobsApi = {
-  list: (filters?: JobsQueryParams) => apiGet<JobsResponse>('/jobs', { params: filters }),
+  list: (filters?: JobsQueryParams) => apiGet<JobsResponse>('/jobs', { params: filters as ApiParams }),
   get: (id: number) => apiGet<Job>(`/jobs/${id}`),
   create: (data: CreateJobData) => apiPost<CreateJobResponse>('/jobs', data),
   update: (id: number, data: UpdateJobData) => apiPut<Job>(`/jobs/${id}`, data),

@@ -1,4 +1,4 @@
-import { apiGet } from './client'
+import { apiGet, ApiParams } from './client'
 
 // Report filter options
 export interface ReportFilters {
@@ -185,29 +185,29 @@ export interface EstimatesReport {
 // API functions
 export const reportsApi = {
   dashboard: (filters?: ReportFilters) =>
-    apiGet<DashboardStats>('/reports/dashboard', { params: filters }),
+    apiGet<DashboardStats>('/reports/dashboard', { params: filters as ApiParams }),
 
   revenue: (filters?: ReportFilters) =>
-    apiGet<RevenueReport>('/reports/revenue', { params: filters }),
+    apiGet<RevenueReport>('/reports/revenue', { params: filters as ApiParams }),
 
   jobs: (filters?: ReportFilters) =>
-    apiGet<JobsReport>('/reports/jobs', { params: filters }),
+    apiGet<JobsReport>('/reports/jobs', { params: filters as ApiParams }),
 
   jobsByStatus: () =>
     apiGet<JobsByStatus>('/reports/jobs/by-status'),
 
   leads: (filters?: ReportFilters) =>
-    apiGet<LeadsReport>('/reports/leads', { params: filters }),
+    apiGet<LeadsReport>('/reports/leads', { params: filters as ApiParams }),
 
   leadSources: () =>
     apiGet<LeadSources>('/reports/leads/sources'),
 
   techs: (filters?: ReportFilters) =>
-    apiGet<TechPerformance>('/reports/techs', { params: filters }),
+    apiGet<TechPerformance>('/reports/techs', { params: filters as ApiParams }),
 
   techDetail: (techId: number, filters?: ReportFilters) =>
-    apiGet<TechDetail>(`/reports/techs/${techId}`, { params: filters }),
+    apiGet<TechDetail>(`/reports/techs/${techId}`, { params: filters as ApiParams }),
 
   estimates: (filters?: ReportFilters) =>
-    apiGet<EstimatesReport>('/reports/estimates', { params: filters }),
+    apiGet<EstimatesReport>('/reports/estimates', { params: filters as ApiParams }),
 }

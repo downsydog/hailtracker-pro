@@ -1,13 +1,13 @@
 export interface User {
   id: number
-  username: string
+  username?: string
   email: string
   name: string
   first_name?: string
   last_name?: string
   phone?: string
   role: string
-  permissions: string[]
+  permissions?: string[]
   is_active: boolean
   created_at?: string
 }

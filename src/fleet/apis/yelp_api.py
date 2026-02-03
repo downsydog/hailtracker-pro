@@ -16,6 +16,12 @@ import os
 import logging
 from math import radians, cos, sqrt
 
+# KILL SWITCH - Added after billing incidents
+try:
+    from src.api_killswitch import check_before_api_call
+except ImportError:
+    def check_before_api_call(name): return os.environ.get('API_CALLS_ENABLED', 'false').lower() == 'true'
+
 logger = logging.getLogger('YelpAPI')
 
 
@@ -74,6 +80,10 @@ class YelpAPI:
             categories: List of Yelp categories to search
             limit: Max results (max 50 per request)
         """
+        # KILL SWITCH CHECK
+        if not check_before_api_call('Yelp'):
+            return []
+
         if not self.api_key:
             logger.warning("[Yelp] API key not configured")
             return []

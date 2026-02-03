@@ -51,7 +51,7 @@ export function RadarReplay({
     queryFn: () => stormMonitorApi.getAvailableRadars(),
   })
 
-  const radars: RadarSite[] = radarsData?.data?.radars || []
+  const radars: RadarSite[] = radarsData?.radars || []
 
   // Fetch radar history
   const {
@@ -67,7 +67,7 @@ export function RadarReplay({
     enabled: !!selectedRadar,
   })
 
-  const frames = historyData?.data?.frames || []
+  const frames = historyData?.frames || []
   const frameCount = frames.length
 
   // Handle playback
@@ -254,10 +254,10 @@ export function RadarReplay({
           </div>
 
           {/* Time Range */}
-          {historyData?.data && (
+          {historyData && (
             <div className="text-xs text-center text-muted-foreground">
-              {new Date(historyData.data.start_time).toLocaleString()} -{" "}
-              {new Date(historyData.data.end_time).toLocaleString()}
+              {new Date(historyData.start_time).toLocaleString()} -{" "}
+              {new Date(historyData.end_time).toLocaleString()}
             </div>
           )}
         </div>

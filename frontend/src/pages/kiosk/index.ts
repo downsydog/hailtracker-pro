@@ -1,0 +1,5 @@
+export { KioskLayout } from './layout'
+export { KioskWelcomePage } from './welcome'
+export { KioskCheckInPage } from './check-in'
+export { KioskConfirmationPage } from './confirmation'
+export { KioskQueuePage } from './queue'

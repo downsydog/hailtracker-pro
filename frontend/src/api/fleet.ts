@@ -593,13 +593,14 @@ export const fleetLocationsApi = {
     ),
 
   // Tile-based discovery - complete coverage of irregular swath shapes
-  // Uses small geographic tiles to ensure no businesses are missed
-  // NOTE: This is SLOW (1373 tiles = 45+ min). Use fastDiscover instead!
+  // Uses 0.25 sq mile tiles to ensure maximum business coverage
+  // Smart default: 200 tiles prioritizing dense urban areas
   tileDiscover: (params: {
     event_ids: number[]
-    tile_size_miles?: number  // 0.25, 0.5 (default), or 1.0
-    sources?: ('osm' | 'bbb' | 'yellowpages' | 'google')[]
+    tile_size_miles?: number  // 0.25 (default), 0.5, or 1.0
+    sources?: ('osm' | 'yelp' | 'foursquare' | 'here' | 'tomtom' | 'google' | 'bbb' | 'yellowpages')[]
     force_refresh?: boolean
+    max_tiles?: number  // Limit tiles searched (default 200, 0 = unlimited)
   }) =>
     apiPost<{
       success: boolean

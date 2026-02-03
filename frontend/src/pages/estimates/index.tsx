@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { FileText, DollarSign, Calendar, User, Plus, Search, Check, X } from 'lucide-react'
+import { FileText, Plus, Search } from 'lucide-react'
 
 const mockEstimates = [
   { id: 1, number: 'EST-001', customer: 'John Smith', total: 12500, status: 'approved', date: '2024-01-15' },

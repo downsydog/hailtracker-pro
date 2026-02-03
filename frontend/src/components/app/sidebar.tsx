@@ -156,7 +156,7 @@ export function SidebarContent({ onItemClick }: SidebarContentProps) {
 
     // Check permission match
     if (section.permissions && user.permissions) {
-      return section.permissions.some((p) => user.permissions.includes(p))
+      return section.permissions.some((p) => user.permissions?.includes(p))
     }
 
     return false

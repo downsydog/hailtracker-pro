@@ -2,7 +2,6 @@ import { useParams, useNavigate, Link } from "react-router-dom"
 import { PageHeader } from "@/components/app/page-header"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
 import { ArrowLeft, User, Car, FileText, DollarSign } from "lucide-react"
 
 export function EstimateDetailPage() {

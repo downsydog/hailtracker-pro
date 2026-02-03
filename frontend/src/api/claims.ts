@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPut, apiDelete } from './client'
+import { apiGet, apiPost, apiPut, apiDelete, ApiParams } from './client'
 
 export interface InsuranceClaim {
   id: number
@@ -69,7 +69,7 @@ export interface ClaimFilters {
 export const claimsApi = {
   // List claims with filters
   getClaims: (filters?: ClaimFilters) =>
-    apiGet<{ claims: InsuranceClaim[]; total: number; page: number }>('/claims', { params: filters }),
+    apiGet<{ claims: InsuranceClaim[]; total: number; page: number }>('/claims', { params: filters as ApiParams }),
 
   // Get single claim with timeline
   getClaim: (id: number) =>

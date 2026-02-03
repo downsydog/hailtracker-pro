@@ -2,8 +2,7 @@ import { useParams, useNavigate, Link } from "react-router-dom"
 import { PageHeader } from "@/components/app/page-header"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { ArrowLeft, User, Phone, Mail, MapPin, Car, Briefcase } from "lucide-react"
+import { ArrowLeft, User, Car, Briefcase } from "lucide-react"
 
 export function CustomerDetailPage() {
   const { id } = useParams<{ id: string }>()

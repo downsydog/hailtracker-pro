@@ -4,6 +4,9 @@ Simple test API server for HailTracker frontend testing.
 Serves storm data from PostgreSQL and fleet data from SQLite.
 """
 
+from dotenv import load_dotenv
+load_dotenv()  # Load .env file before other imports
+
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 import psycopg2
@@ -24,8 +27,8 @@ PG_CONFIG = {
     "password": "hailtracker_dev_2024"
 }
 
-# SQLite for fleet/CRM data
-SQLITE_DB = r'C:\Users\xtxll\Desktop\HailTracker\hailtracker-pro\data\hailtracker_crm.db'
+# SQLite for fleet/CRM data (use OneDrive path - the active database)
+SQLITE_DB = r'C:\Users\xtxll\OneDrive\Desktop\HailTracker\hailtracker-pro\data\hailtracker_crm.db'
 
 
 def get_db():
@@ -44,6 +47,90 @@ def get_sqlite_db():
 def health():
     """Health check endpoint."""
     return jsonify({"status": "ok", "service": "hailtracker-test-api"})
+
+
+# =============================================================================
+# MOCK AUTH ENDPOINTS (for frontend testing)
+# =============================================================================
+
+@app.route('/api/auth/login', methods=['POST'])
+def login():
+    """Mock login endpoint - accepts any credentials for testing."""
+    data = request.get_json() or {}
+    email = data.get('email', 'demo@hailtrackerpro.com')
+
+    # Return a mock user and token
+    return jsonify({
+        "success": True,
+        "token": "mock_jwt_token_for_testing_12345",
+        "refresh_token": "mock_refresh_token_67890",
+        "user": {
+            "id": 1,
+            "email": email,
+            "first_name": "Demo",
+            "last_name": "User",
+            "role": "owner",
+            "role_name": "Owner",
+            "organization_id": 1,
+            "account_id": 1,
+            "permissions": [
+                "dashboard:view", "dashboard:manage",
+                "jobs:view", "jobs:create", "jobs:edit", "jobs:delete", "jobs:assign", "jobs:status", "jobs:complete",
+                "customers:view", "customers:create", "customers:edit", "customers:delete", "customers:import",
+                "vehicles:view", "vehicles:create", "vehicles:edit",
+                "estimates:view", "estimates:create", "estimates:edit", "estimates:delete", "estimates:send", "estimates:approve", "estimates:convert",
+                "invoices:view", "invoices:create", "invoices:edit", "invoices:send",
+                "leads:view", "leads:create", "leads:edit", "leads:delete", "leads:convert", "leads:assign",
+                "claims:view", "claims:create", "claims:edit",
+                "schedule:view", "schedule:manage",
+                "technicians:view", "technicians:manage",
+                "reports:view", "reports:export",
+                "hail:view", "hail:create", "hail:manage",
+                "communications:view", "communications:send",
+                "documents:view", "documents:upload", "documents:delete",
+                "admin:users", "admin:settings", "admin:billing", "admin:roles", "admin:logs", "admin:backup",
+                "billing:view", "billing:manage"
+            ]
+        }
+    })
+
+
+@app.route('/api/auth/me', methods=['GET'])
+def get_me():
+    """Get current user info."""
+    return jsonify({
+        "id": 1,
+        "email": "demo@hailtrackerpro.com",
+        "first_name": "Demo",
+        "last_name": "User",
+        "role": "owner",
+        "role_name": "Owner",
+        "organization_id": 1,
+        "account_id": 1,
+        "phone": "(555) 123-4567",
+        "permissions": [
+            "dashboard:view", "dashboard:manage",
+            "jobs:view", "jobs:create", "jobs:edit", "jobs:delete",
+            "customers:view", "customers:create", "customers:edit",
+            "admin:users", "admin:settings"
+        ]
+    })
+
+
+@app.route('/api/auth/refresh', methods=['POST'])
+def refresh_token():
+    """Refresh authentication token."""
+    return jsonify({
+        "success": True,
+        "token": "mock_jwt_token_refreshed_12345",
+        "refresh_token": "mock_refresh_token_new_67890"
+    })
+
+
+@app.route('/api/auth/logout', methods=['POST'])
+def logout():
+    """Logout endpoint."""
+    return jsonify({"success": True, "message": "Logged out successfully"})
 
 
 @app.route('/api/storms')
@@ -287,6 +374,7 @@ def get_hail_events():
 
         limit = request.args.get('limit', 500, type=int)
         days = request.args.get('days', type=int)
+        event_date = request.args.get('event_date')  # YYYY-MM-DD format for filtering
 
         query = """
             SELECT
@@ -309,7 +397,11 @@ def get_hail_events():
         """
         params = []
 
-        if days:
+        # Filter by specific date if provided
+        if event_date:
+            query += " AND DATE(st.event_date) = %s"
+            params.append(event_date)
+        elif days:
             query += " AND st.event_date >= CURRENT_DATE - INTERVAL '%s days'"
             params.append(days)
 
@@ -722,7 +814,8 @@ def get_storm_cell_swaths():
         swaths = cursor.fetchall()
         conn.close()
 
-        result = []
+        # Convert to GeoJSON FeatureCollection format that frontend expects
+        features = []
         for swath in swaths:
             hail_size = float(swath['max_hail_size']) if swath.get('max_hail_size') else 0
             if hail_size >= 2.0:
@@ -732,35 +825,45 @@ def get_storm_cell_swaths():
             else:
                 severity = "MINOR"
 
-            item = {
-                "id": swath['id'],
-                "storm_id": swath['storm_id'],
-                "city": swath['city'],
-                "state": swath['state'],
-                "max_hail_size": hail_size,
-                "area_sq_miles": float(swath['area_sq_miles']) if swath.get('area_sq_miles') else None,
-                "center_lat": float(swath['center_lat']) if swath.get('center_lat') else None,
-                "center_lon": float(swath['center_lon']) if swath.get('center_lon') else None,
-                "event_date": swath['event_date'].isoformat() if swath.get('event_date') else None,
-                "noaa_id": swath['noaa_id'],
-                "severity": severity
-            }
-
-            # Parse polygon
+            # Parse polygon geometry
+            geometry = None
             if swath.get('polygon'):
                 try:
                     if isinstance(swath['polygon'], str):
-                        item['polygon'] = json.loads(swath['polygon'])
+                        geometry = json.loads(swath['polygon'])
                     else:
-                        item['polygon'] = swath['polygon']
+                        geometry = swath['polygon']
                 except:
                     pass
 
-            result.append(item)
+            # Build GeoJSON Feature
+            feature = {
+                "type": "Feature",
+                "geometry": geometry,
+                "properties": {
+                    "id": swath['id'],
+                    "cell_id": swath['storm_id'],
+                    "event_id": swath['id'],
+                    "event_name": swath['city'],
+                    "city": swath['city'],
+                    "state": swath['state'],
+                    "max_hail_size": hail_size,
+                    "area_sq_miles": float(swath['area_sq_miles']) if swath.get('area_sq_miles') else None,
+                    "center_lat": float(swath['center_lat']) if swath.get('center_lat') else None,
+                    "center_lon": float(swath['center_lon']) if swath.get('center_lon') else None,
+                    "event_date": swath['event_date'].isoformat() if swath.get('event_date') else None,
+                    "noaa_id": swath['noaa_id'],
+                    "severity": severity
+                }
+            }
 
+            features.append(feature)
+
+        # Return GeoJSON FeatureCollection format
         return jsonify({
-            "swaths": result,
-            "count": len(result)
+            "type": "FeatureCollection",
+            "features": features,
+            "count": len(features)
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -936,6 +1039,177 @@ def get_customers():
 
 
 # =============================================================================
+# SCHEDULE ENDPOINTS
+# =============================================================================
+
+@app.route('/api/schedule')
+def get_schedule():
+    """Get schedule slots for a date or date range."""
+    date = request.args.get('date')
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    tech_id = request.args.get('tech_id', type=int)
+
+    # Generate realistic schedule slots for the requested date
+    from datetime import datetime, timedelta
+
+    if date:
+        target_date = datetime.strptime(date, '%Y-%m-%d')
+    else:
+        target_date = datetime.now()
+
+    slots = []
+    slot_id = 1
+
+    # Generate time slots from 8 AM to 5 PM
+    for hour in range(8, 17):
+        for minute in [0, 30]:
+            time_str = f"{hour:02d}:{minute:02d}"
+
+            # Randomly assign status based on time
+            if hour < 10:
+                status = 'booked'
+                job_num = f"JOB-{2025}{target_date.month:02d}{slot_id:04d}"
+                customer = ['John Smith', 'Sarah Johnson', 'Mike Williams', 'Emily Davis'][slot_id % 4]
+                vehicle = ['2022 Toyota Camry', '2021 Honda Accord', '2023 Ford F-150', '2020 Chevy Silverado'][slot_id % 4]
+                tech = ['Mike Rodriguez', 'James Wilson', 'David Brown'][slot_id % 3]
+            elif hour == 12:
+                status = 'blocked'  # Lunch break
+                job_num = None
+                customer = None
+                vehicle = None
+                tech = None
+            elif hour > 15:
+                status = 'available'
+                job_num = None
+                customer = None
+                vehicle = None
+                tech = None
+            else:
+                # Mix of available and booked
+                if slot_id % 3 == 0:
+                    status = 'booked'
+                    job_num = f"JOB-{2025}{target_date.month:02d}{slot_id:04d}"
+                    customer = ['Robert Taylor', 'Jennifer Martinez', 'Chris Anderson'][slot_id % 3]
+                    vehicle = ['2023 Tesla Model 3', '2022 BMW X5', '2021 Audi Q7'][slot_id % 3]
+                    tech = ['Mike Rodriguez', 'James Wilson'][slot_id % 2]
+                else:
+                    status = 'available'
+                    job_num = None
+                    customer = None
+                    vehicle = None
+                    tech = None
+
+            slot = {
+                "id": slot_id,
+                "date": target_date.strftime('%Y-%m-%d'),
+                "time": time_str,
+                "status": status,
+                "duration_minutes": 30,
+                "tech_id": (slot_id % 3) + 1 if tech else None,
+                "tech_name": tech,
+                "job_id": slot_id if job_num else None,
+                "job_number": job_num,
+                "customer_name": customer,
+                "vehicle_name": vehicle
+            }
+
+            # Filter by tech_id if specified
+            if tech_id and slot.get('tech_id') != tech_id:
+                if status == 'booked':
+                    slot_id += 1
+                    continue
+
+            slots.append(slot)
+            slot_id += 1
+
+    return jsonify({"slots": slots})
+
+
+@app.route('/api/schedule/available')
+def get_available_slots():
+    """Get available slots for a specific date and appointment type."""
+    date = request.args.get('date')
+    appointment_type = request.args.get('appointment_type', 'inspection')
+
+    from datetime import datetime
+
+    if date:
+        target_date = datetime.strptime(date, '%Y-%m-%d')
+    else:
+        target_date = datetime.now()
+
+    # Generate available slots
+    slots = []
+    slot_id = 1
+
+    for hour in range(9, 16):  # 9 AM to 4 PM for appointments
+        if hour != 12:  # Skip lunch
+            for minute in [0, 30]:
+                # Only show some as available
+                if slot_id % 2 == 0:
+                    slots.append({
+                        "id": slot_id,
+                        "date": target_date.strftime('%Y-%m-%d'),
+                        "time": f"{hour:02d}:{minute:02d}",
+                        "status": "available",
+                        "duration_minutes": 30 if appointment_type == 'inspection' else 60,
+                        "tech_id": None,
+                        "tech_name": None
+                    })
+                slot_id += 1
+
+    return jsonify({"slots": slots})
+
+
+@app.route('/api/schedule/slots/<int:slot_id>/book', methods=['POST'])
+def book_slot(slot_id):
+    """Book a schedule slot."""
+    data = request.get_json() or {}
+    job_id = data.get('job_id')
+
+    return jsonify({
+        "id": slot_id,
+        "date": "2025-01-15",
+        "time": "10:00",
+        "status": "booked",
+        "duration_minutes": 30,
+        "job_id": job_id,
+        "job_number": f"JOB-{job_id}",
+        "tech_id": 1,
+        "tech_name": "Mike Rodriguez"
+    })
+
+
+@app.route('/api/schedule/tokens')
+def get_scheduling_tokens():
+    """Get scheduling tokens."""
+    return jsonify({"tokens": []})
+
+
+@app.route('/api/schedule/tokens', methods=['POST'])
+def create_scheduling_token():
+    """Create a new scheduling token."""
+    data = request.get_json() or {}
+    return jsonify({
+        "id": 1,
+        "token": "abc123",
+        "appointment_type": data.get('appointment_type', 'inspection'),
+        "expires_at": "2025-02-01T00:00:00Z",
+        "max_uses": data.get('max_uses', 10),
+        "uses": 0,
+        "is_active": True,
+        "created_at": "2025-01-15T12:00:00Z"
+    })
+
+
+@app.route('/api/schedule/tokens/<int:token_id>', methods=['DELETE'])
+def revoke_scheduling_token(token_id):
+    """Revoke a scheduling token."""
+    return jsonify({"success": True})
+
+
+# =============================================================================
 # FLEET LOCATIONS ENDPOINTS (Using real SQLite data)
 # =============================================================================
 
@@ -1039,49 +1313,118 @@ def query_fleet_locations(bounds=None, limit=500):
 
 @app.route('/api/fleet-locations/tile-discover', methods=['POST'])
 def tile_discover():
-    """Tile-based business discovery within swath polygons."""
+    """
+    REAL tile-based business discovery using all 6 APIs.
+    Uses TileBasedDiscovery service for actual API calls.
+    """
     try:
+        from src.business.tile_discovery import TileBasedDiscovery
+
         data = request.get_json() or {}
         event_ids = data.get('event_ids', [])
+        tile_size = data.get('tile_size_miles', 0.5)
+        sources = data.get('sources', ['osm', 'yelp', 'foursquare', 'here', 'tomtom', 'google'])
+        force_refresh = data.get('force_refresh', False)
+        max_tiles = data.get('max_tiles', 200)
 
-        # Get bounds from swath polygons
-        bounds = get_swath_bounds(event_ids) if event_ids else None
+        if not event_ids:
+            return jsonify({'error': 'event_ids is required'}), 400
 
-        # Query real fleet locations
-        businesses = query_fleet_locations(bounds, limit=500)
+        # Validate sources
+        valid_sources = ['osm', 'yelp', 'foursquare', 'here', 'tomtom', 'google', 'bbb', 'yellowpages']
+        sources = [s for s in sources if s in valid_sources]
+        if not sources:
+            sources = ['osm']
 
-        # Calculate stats
-        by_category = {}
-        by_source = {}
-        total_vehicles = 0
-        for b in businesses:
-            cat = b.get('category', 'other')
-            src = b.get('source', 'database')
-            by_category[cat] = by_category.get(cat, 0) + 1
-            by_source[src] = by_source.get(src, 0) + 1
-            total_vehicles += b.get('estimated_vehicles', 0)
+        print(f"[TILE-DISCOVER] Events: {len(event_ids)}, Sources: {sources}, MaxTiles: {max_tiles}")
+
+        # Load swath polygons from database
+        swaths = []
+        conn = get_sqlite_db()
+        placeholders = ','.join('?' * len(event_ids))
+        cursor = conn.execute(f'''
+            SELECT id, event_name, event_date, swath_polygon, max_hail_size
+            FROM hail_events
+            WHERE id IN ({placeholders})
+            AND swath_polygon IS NOT NULL
+        ''', event_ids)
+
+        for row in cursor:
+            try:
+                polygon = json.loads(row['swath_polygon'])
+                swaths.append({
+                    'event_id': row['id'],
+                    'event_name': row['event_name'],
+                    'event_date': row['event_date'],
+                    'max_hail_size': row['max_hail_size'],
+                    'polygon': polygon,
+                    **polygon
+                })
+            except Exception as e:
+                print(f"Skip invalid swath for event {row['id']}: {e}")
+
+        conn.close()
+
+        if not swaths:
+            return jsonify({
+                'success': True,
+                'businesses': [],
+                'stats': {'total_found': 0, 'message': 'No valid swath polygons found'},
+            })
+
+        print(f"[TILE-DISCOVER] Found {len(swaths)} swaths")
+
+        # Use REAL tile-based discovery with actual API calls
+        discovery = TileBasedDiscovery(tile_size_miles=tile_size)
+
+        if force_refresh:
+            discovery.clear_tile_cache()
+
+        result = discovery.discover_for_swaths(
+            swaths=swaths,
+            sources=sources,
+            use_cache=not force_refresh,
+            max_tiles=max_tiles
+        )
+
+        # Format businesses for frontend
+        businesses = []
+        for biz in result.get('businesses', []):
+            businesses.append({
+                'id': biz.get('id') or abs(hash(biz.get('name', '') + biz.get('address', ''))) % 1000000,
+                'name': biz.get('name', ''),
+                'address': biz.get('address', ''),
+                'city': biz.get('city', ''),
+                'state': biz.get('state', ''),
+                'zip': biz.get('zip', ''),
+                'phone': biz.get('phone', ''),
+                'website': biz.get('website', ''),
+                'email': biz.get('email', ''),
+                'category': biz.get('category', 'other'),
+                'subcategory': '',
+                'estimated_vehicles': biz.get('estimated_vehicles', 10),
+                'tier': biz.get('tier', 3),
+                'latitude': biz.get('latitude'),
+                'longitude': biz.get('longitude'),
+                'source': biz.get('source', 'osm'),
+                'osm_id': biz.get('osm_id', ''),
+                'tile_id': biz.get('tile_id', ''),
+                'added_to_crm': False,
+            })
+
+        print(f"[TILE-DISCOVER] Complete: {len(businesses)} businesses from {result.get('stats', {}).get('by_source', {})}")
 
         return jsonify({
-            "success": True,
-            "businesses": businesses,
-            "stats": {
-                "tiles_total": len(event_ids) * 10 if event_ids else 1,
-                "tiles_searched": len(event_ids) * 10 if event_ids else 1,
-                "tiles_from_cache": 0,
-                "by_source": by_source,
-                "total_found": len(businesses),
-                "duplicates_removed": 0,
-                "geocoded": len(businesses),
-                "total_vehicles": total_vehicles,
-                "by_category": by_category
-            },
-            "tile_stats": {
-                "count": len(event_ids) * 10 if event_ids else 1,
-                "tile_size_miles": 0.5,
-                "estimated_area_sq_miles": len(event_ids) * 25 if event_ids else 100
-            }
+            'success': True,
+            'businesses': businesses,
+            'stats': result.get('stats', {}),
+            'tile_stats': result.get('tile_stats', {}),
         })
+
     except Exception as e:
+        import traceback
+        print(f"[TILE-DISCOVER] Error: {e}")
+        traceback.print_exc()
         return jsonify({"success": False, "error": str(e), "businesses": []}), 500
 
 
@@ -1467,17 +1810,227 @@ def get_recent_significant_v2():
         return jsonify({"error": str(e)}), 500
 
 
+# =============================================================================
+# REAL SCRAPING ENDPOINTS (Using SwathDiscoveryService with APIs)
+# =============================================================================
+
+# Add project root to path for imports
+import sys
+from pathlib import Path
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+# Import the real discovery service (lazy import to avoid startup errors)
+_discovery_service = None
+
+def get_discovery_service():
+    """Get or create the SwathDiscoveryService instance."""
+    global _discovery_service
+    if _discovery_service is None:
+        try:
+            from src.business.swath_discovery import SwathDiscoveryService
+            _discovery_service = SwathDiscoveryService(
+                crm_db_path=SQLITE_DB
+            )
+            print("[SwathDiscoveryService] Initialized successfully")
+        except Exception as e:
+            print(f"[SwathDiscoveryService] Failed to initialize: {e}")
+            return None
+    return _discovery_service
+
+
+@app.route('/api/fleet-locations/real-scrape-swaths', methods=['POST'])
+def real_scrape_swaths():
+    """
+    REAL swath-based business discovery using multiple data sources.
+
+    Uses:
+    - OSM Overpass API (free, unlimited)
+    - Foursquare Places API (100k/month)
+    - Yelp Fusion API (5k/day)
+    - HERE Places API (250k/month)
+    - TomTom Search API (2.5k/day)
+    - Google Places API ($200/month credit)
+    - Yellow Pages (web scraping)
+    - BBB (web scraping)
+
+    Request body:
+    {
+        "event_ids": [1, 2, 3],           // Required: swath event IDs to search
+        "sources": ["osm", "foursquare"], // Optional: which sources to use
+        "buffer_miles": 1.0,              // Optional: buffer around swaths
+        "force_refresh": false            // Optional: ignore cache
+    }
+    """
+    try:
+        data = request.get_json() or {}
+        event_ids = data.get('event_ids', [])
+        sources = data.get('sources')  # None means use defaults
+        buffer_miles = data.get('buffer_miles', 1.0)
+        force_refresh = data.get('force_refresh', False)
+
+        if not event_ids:
+            return jsonify({
+                "success": False,
+                "error": "event_ids required",
+                "businesses": []
+            }), 400
+
+        # Get the discovery service
+        service = get_discovery_service()
+        if service is None:
+            return jsonify({
+                "success": False,
+                "error": "Discovery service not available",
+                "businesses": []
+            }), 500
+
+        # Run the real discovery
+        print(f"[RealScrape] Starting discovery for {len(event_ids)} events, sources={sources}")
+
+        result = service.discover_for_events(
+            event_ids=event_ids,
+            buffer_miles=buffer_miles,
+            force_refresh=force_refresh,
+            sources=sources
+        )
+
+        businesses = result.get('businesses', [])
+        stats = result.get('stats', {})
+
+        print(f"[RealScrape] Found {len(businesses)} businesses")
+        print(f"[RealScrape] Stats: {stats}")
+
+        # Format response for frontend
+        formatted_businesses = []
+        for b in businesses:
+            formatted_businesses.append({
+                "id": b.get('osm_id') or f"biz_{len(formatted_businesses)}",
+                "name": b.get('name', 'Unknown'),
+                "category": b.get('category', 'other'),
+                "address": b.get('address', ''),
+                "city": b.get('city', ''),
+                "state": b.get('state', ''),
+                "zip": b.get('zip', ''),
+                "phone": b.get('phone', ''),
+                "website": b.get('website', ''),
+                "email": b.get('email', ''),
+                "latitude": b.get('latitude'),
+                "longitude": b.get('longitude'),
+                "estimated_vehicles": b.get('estimated_vehicles', 10),
+                "tier": b.get('tier', 3),
+                "source": b.get('source', 'unknown'),
+                "added_to_crm": b.get('added_to_crm', False),
+                "event_id": b.get('event_id'),
+                "hail_date": b.get('hail_date'),
+                "hail_size": b.get('hail_size')
+            })
+
+        return jsonify({
+            "success": True,
+            "businesses": formatted_businesses,
+            "stats": stats,
+            "api_status": service.get_api_status() if service else {}
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "businesses": []
+        }), 500
+
+
+@app.route('/api/fleet-locations/api-status')
+def get_api_status():
+    """Get the status of all configured APIs."""
+    service = get_discovery_service()
+    if service is None:
+        return jsonify({
+            "success": False,
+            "error": "Discovery service not available",
+            "apis": {}
+        }), 500
+
+    return jsonify({
+        "success": True,
+        "apis": service.get_api_status()
+    })
+
+
+@app.route('/api/fleet-locations/search-osm', methods=['POST'])
+def search_osm_directly():
+    """
+    Direct OSM search for testing.
+
+    Request body:
+    {
+        "lat": 35.4676,
+        "lon": -97.5164,
+        "radius_miles": 5.0
+    }
+    """
+    try:
+        data = request.get_json() or {}
+        lat = data.get('lat')
+        lon = data.get('lon')
+        radius_miles = data.get('radius_miles', 5.0)
+
+        if lat is None or lon is None:
+            return jsonify({
+                "success": False,
+                "error": "lat and lon required",
+                "businesses": []
+            }), 400
+
+        service = get_discovery_service()
+        if service is None:
+            return jsonify({
+                "success": False,
+                "error": "Discovery service not available",
+                "businesses": []
+            }), 500
+
+        businesses = service.search_osm_comprehensive(lat, lon, radius_miles)
+
+        return jsonify({
+            "success": True,
+            "businesses": businesses,
+            "count": len(businesses),
+            "search": {
+                "lat": lat,
+                "lon": lon,
+                "radius_miles": radius_miles
+            }
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "businesses": []
+        }), 500
+
+
 if __name__ == '__main__':
     print("=" * 60)
     print("HailTracker Test API Server")
     print("=" * 60)
     print("\nEndpoints:")
-    print("  GET /api/health       - Health check")
-    print("  GET /api/stats        - Storm statistics")
-    print("  GET /api/storms       - List storms")
-    print("  GET /api/storms/<id>  - Get storm details")
-    print("  GET /api/swaths       - Get swaths for map")
-    print("  GET /api/hail-events  - Get hail events for map")
+    print("  GET  /api/health                    - Health check")
+    print("  GET  /api/stats                     - Storm statistics")
+    print("  GET  /api/storms                    - List storms")
+    print("  GET  /api/storms/<id>               - Get storm details")
+    print("  GET  /api/swaths                    - Get swaths for map")
+    print("  GET  /api/hail-events               - Get hail events for map")
+    print("\n  FLEET DISCOVERY (Real Scraping):")
+    print("  POST /api/fleet-locations/real-scrape-swaths  - REAL multi-source discovery")
+    print("  GET  /api/fleet-locations/api-status          - Check API keys status")
+    print("  POST /api/fleet-locations/search-osm          - Direct OSM search")
     print("\nStarting server on http://localhost:5000")
     print("=" * 60)
 

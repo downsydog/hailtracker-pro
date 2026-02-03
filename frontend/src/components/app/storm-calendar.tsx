@@ -403,7 +403,8 @@ export function StormCalendar({ onSelectEvent, onSelectDate: _onSelectDate, clas
 
               {/* Event List */}
               <div className="space-y-3">
-                {selectedDayData.events.map((event) => (
+                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                {selectedDayData.events.map((event: any) => (
                   <div
                     key={event.id}
                     className="p-3 rounded-lg border hover:border-primary cursor-pointer transition-colors"

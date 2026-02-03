@@ -79,9 +79,9 @@ export function TerritoryAlerts({ className = "" }: TerritoryAlertsProps) {
     queryFn: () => territoryAlertsApi.getStats(),
   })
 
-  const territories = territoriesData?.data?.territories || []
-  const alerts = alertsData?.data?.alerts || []
-  const stats = statsData?.data || { territories_count: 0, unread_alerts: 0, alerts_this_week: 0 }
+  const territories = territoriesData?.territories || []
+  const alerts = alertsData?.alerts || []
+  const stats = statsData || { territories_count: 0, unread_alerts: 0, alerts_this_week: 0 }
 
   // Create territory mutation
   const createMutation = useMutation({

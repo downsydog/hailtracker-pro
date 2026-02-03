@@ -1,4 +1,4 @@
-import { BarChart3, CloudRain, Users, Briefcase, TrendingUp, DollarSign } from 'lucide-react'
+import { CloudRain, Users, Briefcase, DollarSign } from 'lucide-react'
 
 const stats = [
   { label: 'Active Leads', value: '47', icon: Users, change: '+12%' },

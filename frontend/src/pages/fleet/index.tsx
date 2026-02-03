@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
-import { Card, CardContent } from "@/components/ui/card"
+// Card components imported but only some used
+// import { CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -18,7 +19,6 @@ import {
   recentStormsApi,
   HailEvent,
   AffectedBusiness,
-  SignificantStorm,
 } from "@/api/fleet"
 import { CalendarDayEvent } from "@/api/weather"
 import { StormCalendar } from "@/components/app/storm-calendar"
@@ -28,21 +28,19 @@ import "leaflet/dist/leaflet.css"
 import {
   CloudRain,
   Loader2,
-  Phone,
-  Mail,
   ExternalLink,
   Target,
   CheckCircle2,
   Building2,
   Car,
   DollarSign,
-  ChevronRight,
   ChevronDown,
   RefreshCw,
   AlertTriangle,
   Zap,
+  Download,
+  List,
   MapPin,
-  Calendar,
 } from "lucide-react"
 
 // ============================================================================
@@ -76,7 +74,7 @@ const formatDate = (dateStr: string) => {
 }
 
 export function FleetMapPage() {
-  const queryClient = useQueryClient()
+  useQueryClient() // Keep hook call but don't store result
 
   // Map refs
   const mapRef = useRef<HTMLDivElement>(null)
@@ -111,8 +109,19 @@ export function FleetMapPage() {
   const [minVehicles, setMinVehicles] = useState(5)
   const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set())
 
+  // Scan depth: controls how many tiles to search
+  // With 0.5 mi tiles (0.25 sq mile each), OKC storm has ~700 tiles total
+  // 200 = Quick (~800 businesses, ~50 sq mi coverage)
+  // 500 = Full (~2,000 businesses, ~125 sq mi coverage)
+  // 0 = Deep/All tiles (~3,500+ businesses, full swath coverage)
+  const [scanDepth, setScanDepth] = useState<number>(500)
+
   // UI: Calendar vs Quick Picks toggle
   const [showQuickPicks, setShowQuickPicks] = useState(false)
+
+  // Swath selection state
+  const [selectedSwathIds, setSelectedSwathIds] = useState<Set<number>>(new Set())
+  const [showSwathSelector, setShowSwathSelector] = useState(false)
 
   // ========== DATA LOADING ==========
 
@@ -173,7 +182,7 @@ export function FleetMapPage() {
       console.log(`  - swathLayerRef.current:`, !!swathLayerRef.current)
 
       setHailEvents(events)
-      renderSwaths(events)
+      // Note: renderSwaths is called automatically via useEffect when hailEvents changes
     } catch (error) {
       console.error("[Fleet] Failed to load swath:", error)
       if (error instanceof Error) {
@@ -185,8 +194,8 @@ export function FleetMapPage() {
     }
   }
 
-  // Render hail swaths on map
-  const renderSwaths = useCallback((events: HailEvent[]) => {
+  // Render hail swaths on map with numbering and selection highlighting
+  const renderSwaths = useCallback((events: HailEvent[], selectedIds: Set<number>, bizCounts: Record<number, number>) => {
     console.log(`[Fleet] renderSwaths called with ${events.length} events`)
 
     if (!mapInstanceRef.current || !swathLayerRef.current) {
@@ -202,11 +211,21 @@ export function FleetMapPage() {
       return
     }
 
+    // Sort by hail size (largest first) to assign swath numbers
+    const sortedEvents = [...events]
+      .filter(e => e.swath_polygon)
+      .sort((a, b) => b.max_hail_size - a.max_hail_size)
+
+    // Create swath number map
+    const swathNumberMap = new Map<number, number>()
+    sortedEvents.forEach((e, i) => swathNumberMap.set(e.id, i + 1))
+
     const bounds: L.LatLngBounds[] = []
     let swathCount = 0
     let markerCount = 0
+    const totalSwaths = sortedEvents.length
 
-    events.forEach((event, index) => {
+    events.forEach((event) => {
       // Add swath polygon if available
       if (event.swath_polygon) {
         try {
@@ -214,26 +233,64 @@ export function FleetMapPage() {
             ? JSON.parse(event.swath_polygon)
             : event.swath_polygon
 
-          const color = event.max_hail_size >= 2 ? "#ef4444" : event.max_hail_size >= 1.5 ? "#f97316" : "#eab308"
+          const swathNum = swathNumberMap.get(event.id) || 0
+          const isSelected = selectedIds.has(event.id)
+          const bizCount = bizCounts[event.id] || 0
+
+          // Color based on hail size
+          const baseColor = event.max_hail_size >= 2 ? "#ef4444" : event.max_hail_size >= 1.5 ? "#f97316" : "#eab308"
 
           const layer = L.geoJSON(geojson, {
             style: {
-              fillColor: color,
-              fillOpacity: 0.35,
-              color: color,
-              weight: 2,
-              opacity: 0.9,
+              fillColor: baseColor,
+              fillOpacity: isSelected ? 0.45 : 0.2,
+              color: isSelected ? baseColor : "#666",
+              weight: isSelected ? 3 : 1,
+              opacity: isSelected ? 1.0 : 0.5,
+              dashArray: isSelected ? undefined : "5, 5",
             },
           })
 
+          // Enhanced popup with swath number, NOAA ID, business count
+          const severity = event.max_hail_size >= 2 ? "SEVERE" : event.max_hail_size >= 1.5 ? "SIGNIFICANT" : "MODERATE"
+          const severityColor = event.max_hail_size >= 2 ? "#ef4444" : event.max_hail_size >= 1.5 ? "#f97316" : "#eab308"
+
           layer.bindPopup(`
-            <div class="p-2">
-              <div class="font-bold text-lg">🌨️ ${event.event_name || "Hail Event"}</div>
-              <div class="text-sm mt-1">${event.city || "Unknown location"}</div>
-              <div class="text-sm mt-2">
-                <strong>Max Hail:</strong> ${event.max_hail_size}" diameter
+            <div style="min-width: 220px;">
+              <div style="background: ${severityColor}; color: white; padding: 8px 12px; margin: -10px -10px 10px -10px; border-radius: 4px 4px 0 0;">
+                <div style="font-size: 18px; font-weight: bold;">Swath ${swathNum} of ${totalSwaths}</div>
+                <div style="font-size: 12px; opacity: 0.9;">${severity}</div>
               </div>
-              ${event.area_sq_miles ? `<div class="text-sm"><strong>Area:</strong> ${event.area_sq_miles.toFixed(1)} sq mi</div>` : ""}
+              <div style="padding: 4px;">
+                <div style="margin-bottom: 8px;">
+                  <div style="font-weight: bold; font-size: 14px;">${event.city || "Unknown location"}</div>
+                  <div style="color: #666; font-size: 12px;">${event.event_name || ""}</div>
+                </div>
+                <table style="width: 100%; font-size: 12px; border-collapse: collapse;">
+                  <tr>
+                    <td style="padding: 4px 0; color: #666;">NOAA ID:</td>
+                    <td style="padding: 4px 0; font-weight: 500;">${event.id}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 4px 0; color: #666;">Max Hail:</td>
+                    <td style="padding: 4px 0; font-weight: bold; color: ${severityColor};">${event.max_hail_size}" diameter</td>
+                  </tr>
+                  ${event.area_sq_miles ? `
+                  <tr>
+                    <td style="padding: 4px 0; color: #666;">Area:</td>
+                    <td style="padding: 4px 0;">${event.area_sq_miles.toFixed(1)} sq mi</td>
+                  </tr>
+                  ` : ""}
+                  <tr>
+                    <td style="padding: 4px 0; color: #666;">Date:</td>
+                    <td style="padding: 4px 0;">${event.event_date}</td>
+                  </tr>
+                  <tr style="border-top: 1px solid #eee;">
+                    <td style="padding: 8px 0 4px; color: #666;">Businesses:</td>
+                    <td style="padding: 8px 0 4px; font-weight: bold; color: #2563eb;">${bizCount > 0 ? bizCount : "—"}</td>
+                  </tr>
+                </table>
+              </div>
             </div>
           `)
 
@@ -278,15 +335,6 @@ export function FleetMapPage() {
       console.log(`[Fleet] Map fitted to bounds covering ${bounds.length} items`)
     }
   }, [])
-
-  // Re-render swaths when hailEvents changes (backup in case map wasn't ready on initial call)
-  useEffect(() => {
-    console.log(`[Fleet] hailEvents useEffect triggered, count: ${hailEvents.length}`)
-    if (hailEvents.length > 0 && mapInstanceRef.current && swathLayerRef.current) {
-      console.log(`[Fleet] Re-rendering swaths via useEffect`)
-      renderSwaths(hailEvents)
-    }
-  }, [hailEvents, renderSwaths])
 
   // ========== BUSINESS DISCOVERY ==========
 
@@ -333,12 +381,14 @@ export function FleetMapPage() {
       console.log(`[Fleet] Calling tile-based discovery for ${visibleEventIds.length} events`)
 
       // Use tile-based discovery for complete swath coverage
-      // Tiles ensure we don't miss businesses in irregular-shaped swaths
+      // All 6 APIs for maximum business coverage
+      // tile_size_miles is LINEAR (0.5 mi = 0.25 sq mile tiles - Kyle's proven config)
       const result = await fleetLocationsApi.tileDiscover({
         event_ids: visibleEventIds,
-        tile_size_miles: 0.5,  // Good balance of precision vs API calls
-        sources: ['osm'],      // OSM is comprehensive and free
-        force_refresh: false   // Use tile cache if available
+        tile_size_miles: 0.5,   // 0.5 mi linear = 0.25 sq mile tiles (Kyle's proven config)
+        sources: ['yelp', 'foursquare', 'here', 'tomtom', 'google', 'osm'],  // All 6 APIs
+        force_refresh: false,   // Use tile cache if available
+        max_tiles: scanDepth,   // User-selected scan depth
       })
 
       if (result.success) {
@@ -374,16 +424,40 @@ export function FleetMapPage() {
     }
   }
 
-  // Render business markers on map
-  const renderBusinessMarkers = useCallback((businessList: AffectedBusiness[]) => {
+  // Render business markers on map with swath info
+  const renderBusinessMarkers = useCallback((
+    businessList: AffectedBusiness[],
+    swaths: Array<HailEvent & { swathNumber: number }>
+  ) => {
     if (!mapInstanceRef.current || !markersLayerRef.current) return
 
     markersLayerRef.current.clearLayers()
+
+    // Helper to find closest swath for a business
+    const getSwathForBusiness = (biz: AffectedBusiness) => {
+      if (!biz.latitude || !biz.longitude || swaths.length === 0) return null
+      let closestSwath = swaths[0]
+      let minDist = Infinity
+      swaths.forEach(swath => {
+        if (swath.center_lat && swath.center_lon) {
+          const dist = Math.sqrt(
+            Math.pow(biz.latitude - swath.center_lat, 2) +
+            Math.pow(biz.longitude - swath.center_lon, 2)
+          )
+          if (dist < minDist) {
+            minDist = dist
+            closestSwath = swath
+          }
+        }
+      })
+      return closestSwath
+    }
 
     businessList.forEach((biz) => {
       if (!biz.latitude || !biz.longitude) return
 
       const color = getTierColor(biz.tier)
+      const swath = getSwathForBusiness(biz)
 
       const icon = L.divIcon({
         html: `
@@ -418,17 +492,31 @@ export function FleetMapPage() {
 
       const marker = L.marker([biz.latitude, biz.longitude], { icon })
 
+      // Build swath info for popup
+      const swathInfo = swath ? `
+        <div style="font-size: 11px; color: #666; margin-bottom: 4px;">
+          Swath ${swath.swathNumber} of ${swaths.length} · ${swath.max_hail_size}" hail · ${swath.city || 'Unknown'}
+        </div>
+      ` : ''
+
+      const severityColor = swath && swath.max_hail_size >= 2 ? "#ef4444" : swath && swath.max_hail_size >= 1.5 ? "#f97316" : "#eab308"
+
       marker.bindPopup(`
-        <div style="min-width: 200px;">
-          <div style="font-weight: bold; font-size: 14px; padding: 8px; background: #fef2f2; border-bottom: 1px solid #fecaca;">
+        <div style="min-width: 220px;">
+          <div style="font-weight: bold; font-size: 14px; padding: 8px; background: ${severityColor}; color: white; border-bottom: 1px solid ${severityColor};">
             ⚠️ HAIL AFFECTED
           </div>
           <div style="padding: 12px;">
+            ${swathInfo}
             <div style="font-weight: bold; font-size: 14px;">${biz.name}</div>
             <div style="color: #6b7280; font-size: 12px; margin-top: 4px;">${biz.address || ""}</div>
             <div style="color: #6b7280; font-size: 12px;">${biz.city}, ${biz.state}</div>
             <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e5e7eb;">
               <div style="display: flex; justify-content: space-between;">
+                <span style="color: #6b7280;">Category:</span>
+                <span style="font-weight: 500;">${biz.category || 'Other'}</span>
+              </div>
+              <div style="display: flex; justify-content: space-between; margin-top: 4px;">
                 <span style="color: #6b7280;">Vehicles:</span>
                 <span style="font-weight: bold; color: #2563eb;">~${biz.estimated_vehicles}</span>
               </div>
@@ -436,6 +524,12 @@ export function FleetMapPage() {
                 <span style="color: #6b7280;">Potential:</span>
                 <span style="font-weight: bold; color: #16a34a;">$${((biz.estimated_vehicles * 500) / 1000).toFixed(0)}K</span>
               </div>
+              ${biz.phone ? `
+              <div style="display: flex; justify-content: space-between; margin-top: 4px;">
+                <span style="color: #6b7280;">Phone:</span>
+                <a href="tel:${biz.phone}" style="color: #2563eb;">${biz.phone}</a>
+              </div>
+              ` : ''}
             </div>
           </div>
         </div>
@@ -606,6 +700,188 @@ export function FleetMapPage() {
     }
   }, [filteredBusinesses, businesses])
 
+  // ========== NUMBERED SWATHS (sorted by hail size) ==========
+
+  // Create numbered swaths sorted by max_hail_size (largest first)
+  const numberedSwaths = useMemo(() => {
+    return [...hailEvents]
+      .filter(e => e.swath_polygon)
+      .sort((a, b) => b.max_hail_size - a.max_hail_size)
+      .map((event, index) => ({
+        ...event,
+        swathNumber: index + 1,
+      }))
+  }, [hailEvents])
+
+  // Count businesses per swath (based on location inside polygon)
+  const businessesBySwath = useMemo(() => {
+    const counts: Record<number, number> = {}
+    numberedSwaths.forEach(s => { counts[s.id] = 0 })
+
+    // For now, distribute businesses evenly or by proximity
+    // In a real implementation, this would use point-in-polygon
+    if (businesses.length > 0 && numberedSwaths.length > 0) {
+      businesses.forEach(biz => {
+        // Find closest swath center for this business
+        let closestSwathId = numberedSwaths[0]?.id
+        let minDist = Infinity
+
+        numberedSwaths.forEach(swath => {
+          if (biz.latitude && biz.longitude && swath.center_lat && swath.center_lon) {
+            const dist = Math.sqrt(
+              Math.pow(biz.latitude - swath.center_lat, 2) +
+              Math.pow(biz.longitude - swath.center_lon, 2)
+            )
+            if (dist < minDist) {
+              minDist = dist
+              closestSwathId = swath.id
+            }
+          }
+        })
+
+        if (closestSwathId !== undefined) {
+          counts[closestSwathId] = (counts[closestSwathId] || 0) + 1
+        }
+      })
+    }
+
+    return counts
+  }, [businesses, numberedSwaths])
+
+  // Re-render swaths when hailEvents, selection, or business counts change
+  useEffect(() => {
+    console.log(`[Fleet] hailEvents useEffect triggered, count: ${hailEvents.length}`)
+    if (hailEvents.length > 0 && mapInstanceRef.current && swathLayerRef.current) {
+      console.log(`[Fleet] Re-rendering swaths via useEffect`)
+      renderSwaths(hailEvents, selectedSwathIds, businessesBySwath)
+    }
+  }, [hailEvents, selectedSwathIds, businessesBySwath, renderSwaths])
+
+  // Select all swaths when hailEvents loads
+  useEffect(() => {
+    if (hailEvents.length > 0) {
+      setSelectedSwathIds(new Set(hailEvents.filter(e => e.swath_polygon).map(e => e.id)))
+    }
+  }, [hailEvents])
+
+  // Swath selection helpers
+  const toggleSwathSelection = useCallback((eventId: number) => {
+    setSelectedSwathIds(prev => {
+      const next = new Set(prev)
+      if (next.has(eventId)) {
+        next.delete(eventId)
+      } else {
+        next.add(eventId)
+      }
+      return next
+    })
+  }, [])
+
+  const selectAllSwaths = useCallback(() => {
+    setSelectedSwathIds(new Set(numberedSwaths.map(s => s.id)))
+  }, [numberedSwaths])
+
+  const clearAllSwaths = useCallback(() => {
+    setSelectedSwathIds(new Set())
+  }, [])
+
+  // Filter businesses by selected swaths
+  const businessesInSelectedSwaths = useMemo(() => {
+    if (selectedSwathIds.size === 0) return []
+    if (selectedSwathIds.size === numberedSwaths.length) return filteredBusinesses
+
+    // Filter businesses to only those in selected swaths
+    return filteredBusinesses.filter(biz => {
+      // Find which swath this business belongs to
+      let closestSwathId: number | undefined
+      let minDist = Infinity
+
+      numberedSwaths.forEach(swath => {
+        if (biz.latitude && biz.longitude && swath.center_lat && swath.center_lon) {
+          const dist = Math.sqrt(
+            Math.pow(biz.latitude - swath.center_lat, 2) +
+            Math.pow(biz.longitude - swath.center_lon, 2)
+          )
+          if (dist < minDist) {
+            minDist = dist
+            closestSwathId = swath.id
+          }
+        }
+      })
+
+      return closestSwathId !== undefined && selectedSwathIds.has(closestSwathId)
+    })
+  }, [filteredBusinesses, selectedSwathIds, numberedSwaths])
+
+  // ========== CSV EXPORT ==========
+
+  const exportToCSV = useCallback(() => {
+    if (businessesInSelectedSwaths.length === 0) return
+
+    // Create CSV header
+    const headers = [
+      'Swath #',
+      'Name',
+      'Address',
+      'City',
+      'State',
+      'Zip',
+      'Phone',
+      'Email',
+      'Website',
+      'Category',
+      'Est. Vehicles',
+      'Tier',
+    ]
+
+    // Create rows
+    const rows = businessesInSelectedSwaths.map(biz => {
+      // Find swath number for this business
+      let swathNum = ''
+      let minDist = Infinity
+      numberedSwaths.forEach(swath => {
+        if (biz.latitude && biz.longitude && swath.center_lat && swath.center_lon) {
+          const dist = Math.sqrt(
+            Math.pow(biz.latitude - swath.center_lat, 2) +
+            Math.pow(biz.longitude - swath.center_lon, 2)
+          )
+          if (dist < minDist) {
+            minDist = dist
+            swathNum = String(swath.swathNumber)
+          }
+        }
+      })
+
+      return [
+        swathNum,
+        biz.name || '',
+        biz.address || '',
+        biz.city || '',
+        biz.state || '',
+        biz.zip || '',
+        biz.phone || '',
+        (biz as any).email || '',
+        biz.website || '',
+        biz.category || '',
+        String(biz.estimated_vehicles || ''),
+        String(biz.tier || ''),
+      ]
+    })
+
+    // Build CSV content
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+    ].join('\n')
+
+    // Download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const link = document.createElement('a')
+    link.href = URL.createObjectURL(blob)
+    link.download = `fleet-leads-${selectedDate || 'export'}-swaths-${selectedSwathIds.size}.csv`
+    link.click()
+  }, [businessesInSelectedSwaths, numberedSwaths, selectedDate, selectedSwathIds.size])
+
   // ========== MAP INITIALIZATION ==========
 
   useEffect(() => {
@@ -638,9 +914,9 @@ export function FleetMapPage() {
   // Update map markers when filtered businesses change
   useEffect(() => {
     if (filteredBusinesses.length > 0) {
-      renderBusinessMarkers(filteredBusinesses)
+      renderBusinessMarkers(filteredBusinesses, numberedSwaths)
     }
-  }, [filteredBusinesses, renderBusinessMarkers])
+  }, [filteredBusinesses, numberedSwaths, renderBusinessMarkers])
 
   // ========== RENDER ==========
 
@@ -818,6 +1094,105 @@ export function FleetMapPage() {
             </div>
           )}
 
+          {/* SWATH SELECTOR - Between Storm Details and Find Businesses */}
+          {numberedSwaths.length > 0 && (
+            <div className="border-b">
+              <button
+                onClick={() => setShowSwathSelector(!showSwathSelector)}
+                className="w-full p-3 flex items-center justify-between text-sm font-medium hover:bg-muted/50"
+              >
+                <span className="flex items-center gap-2">
+                  <List className="h-4 w-4 text-blue-500" />
+                  <span>Select Swaths</span>
+                  <Badge variant="secondary" className="text-xs">
+                    {selectedSwathIds.size} of {numberedSwaths.length}
+                  </Badge>
+                </span>
+                <ChevronDown className={`h-4 w-4 transition-transform ${showSwathSelector ? "rotate-180" : ""}`} />
+              </button>
+
+              {showSwathSelector && (
+                <div className="px-3 pb-3">
+                  {/* Select All / Clear All */}
+                  <div className="flex justify-between items-center mb-2 text-xs">
+                    <button
+                      onClick={selectAllSwaths}
+                      className="text-blue-600 hover:underline"
+                    >
+                      Select All
+                    </button>
+                    <button
+                      onClick={clearAllSwaths}
+                      className="text-blue-600 hover:underline"
+                    >
+                      Clear All
+                    </button>
+                  </div>
+
+                  {/* Swath List */}
+                  <div className="max-h-48 overflow-y-auto space-y-1 border rounded-lg p-1 bg-gray-50 dark:bg-gray-800/50">
+                    {numberedSwaths.map((swath) => {
+                      const isSelected = selectedSwathIds.has(swath.id)
+                      const bizCount = businessesBySwath[swath.id] || 0
+                      const severity = getSeverityStyle(swath.max_hail_size)
+
+                      return (
+                        <label
+                          key={swath.id}
+                          className={`
+                            flex items-center gap-2 p-2 rounded cursor-pointer transition-all
+                            ${isSelected
+                              ? "bg-blue-100 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-700"
+                              : "hover:bg-gray-100 dark:hover:bg-gray-700 border border-transparent"}
+                          `}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleSwathSelection(swath.id)}
+                            className="rounded text-blue-600"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-sm">#{swath.swathNumber}</span>
+                              <Badge className={`${severity.bg} text-white text-xs px-1.5`}>
+                                {swath.max_hail_size}"
+                              </Badge>
+                            </div>
+                            <div className="text-xs text-muted-foreground truncate">
+                              {swath.city || swath.event_name || "Unknown"}
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            {bizCount > 0 && (
+                              <div className="text-xs font-medium text-blue-600">
+                                {bizCount} biz
+                              </div>
+                            )}
+                          </div>
+                        </label>
+                      )
+                    })}
+                  </div>
+
+                  {/* Selection Summary */}
+                  <div className="mt-2 pt-2 border-t text-xs text-muted-foreground">
+                    <div className="flex justify-between">
+                      <span>Selected swaths:</span>
+                      <span className="font-medium">{selectedSwathIds.size}</span>
+                    </div>
+                    {businesses.length > 0 && (
+                      <div className="flex justify-between">
+                        <span>Businesses in selection:</span>
+                        <span className="font-medium text-blue-600">{businessesInSelectedSwaths.length}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* STEP 3: Find Businesses */}
           {selectedDate && hailEvents.length > 0 && (
             <div className="p-4 border-b">
@@ -845,6 +1220,52 @@ export function FleetMapPage() {
                 </Select>
               </div>
 
+              {/* Scan Depth Selector */}
+              <div className="mb-3">
+                <label className="text-sm text-muted-foreground">Scan Depth</label>
+                <div className="mt-1 space-y-1">
+                  <label className="flex items-center gap-2 p-2 rounded border cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800">
+                    <input
+                      type="radio"
+                      name="scanDepth"
+                      checked={scanDepth === 200}
+                      onChange={() => setScanDepth(200)}
+                      className="text-blue-600"
+                    />
+                    <div className="flex-1">
+                      <div className="font-medium text-sm">Quick Scan</div>
+                      <div className="text-xs text-muted-foreground">200 tiles · ~50 sq mi · ~800 businesses</div>
+                    </div>
+                  </label>
+                  <label className="flex items-center gap-2 p-2 rounded border cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 border-blue-300 bg-blue-50 dark:bg-blue-900/20">
+                    <input
+                      type="radio"
+                      name="scanDepth"
+                      checked={scanDepth === 500}
+                      onChange={() => setScanDepth(500)}
+                      className="text-blue-600"
+                    />
+                    <div className="flex-1">
+                      <div className="font-medium text-sm">Full Scan <Badge variant="secondary" className="ml-1 text-xs">Recommended</Badge></div>
+                      <div className="text-xs text-muted-foreground">500 tiles · ~125 sq mi · ~2,000 businesses</div>
+                    </div>
+                  </label>
+                  <label className="flex items-center gap-2 p-2 rounded border cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800">
+                    <input
+                      type="radio"
+                      name="scanDepth"
+                      checked={scanDepth === 0}
+                      onChange={() => setScanDepth(0)}
+                      className="text-blue-600"
+                    />
+                    <div className="flex-1">
+                      <div className="font-medium text-sm">Deep Scan</div>
+                      <div className="text-xs text-muted-foreground">All tiles · Full swath coverage · ~3,500+ businesses</div>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
               {/* Search Button */}
               <Button
                 onClick={findBusinessesInSwath}
@@ -870,9 +1291,26 @@ export function FleetMapPage() {
               </Button>
 
               {loadingBusinesses && (
-                <p className="text-xs text-muted-foreground mt-2 text-center">
-                  Searching tiles for complete coverage...
-                </p>
+                <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+                  <div className="flex items-center gap-2 text-blue-700 dark:text-blue-300 text-sm font-medium">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    {scanDepth === 200 && "Quick Scan: 200 tiles with 6 APIs..."}
+                    {scanDepth === 500 && "Full Scan: 500 tiles with 6 APIs..."}
+                    {scanDepth === 0 && "Deep Scan: All tiles with 6 APIs..."}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Searching Yelp, Foursquare, HERE, TomTom, Google, and OSM.
+                    {scanDepth === 200 && " Estimated time: 2-4 minutes."}
+                    {scanDepth === 500 && " Estimated time: 10-15 minutes."}
+                    {scanDepth === 0 && " This may take over an hour."}
+                  </p>
+                  <div className="w-full bg-blue-200 dark:bg-blue-800 rounded-full h-1.5 mt-2">
+                    <div
+                      className="bg-blue-600 h-1.5 rounded-full animate-pulse"
+                      style={{ width: '60%' }}
+                    />
+                  </div>
+                </div>
               )}
             </div>
           )}
@@ -909,42 +1347,94 @@ export function FleetMapPage() {
                   </div>
                 </div>
 
-                {/* Add All to CRM */}
-                {crmResult ? (
-                  <div className="bg-white dark:bg-gray-800 rounded-lg p-3 border border-green-300 dark:border-green-700">
-                    <div className="flex items-center gap-2 text-green-700 dark:text-green-300 font-medium">
-                      <CheckCircle2 className="h-5 w-5" />
-                      Added to CRM!
+                {/* Swath Selection Summary */}
+                {selectedSwathIds.size < numberedSwaths.length && numberedSwaths.length > 0 && (
+                  <div className="bg-blue-100 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-700 rounded-lg p-2 mb-3 text-sm">
+                    <div className="flex items-center gap-2">
+                      <MapPin className="h-4 w-4 text-blue-600" />
+                      <span>
+                        <strong>{selectedSwathIds.size}</strong> of {numberedSwaths.length} swaths selected
+                      </span>
                     </div>
-                    <div className="text-sm text-muted-foreground mt-1">
-                      {crmResult.created} new leads, {crmResult.skipped} already existed
+                    <div className="text-xs text-muted-foreground mt-1">
+                      {businessesInSelectedSwaths.length} businesses in selected swaths
                     </div>
-                    <Link
-                      to="/leads?source=FLEET_DISCOVERY&temperature=HOT"
-                      className="inline-flex items-center gap-2 mt-3 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-medium"
-                    >
-                      <ExternalLink className="h-4 w-4" />
-                      Go to Leads → Start Calling
-                    </Link>
                   </div>
-                ) : (
-                  <Button
-                    onClick={addAllToCRM}
-                    disabled={addingToCRM || filteredBusinesses.length === 0}
-                    className={`w-full ${addingToCRM ? "bg-gray-400" : "bg-red-600 hover:bg-red-700"}`}
+                )}
+
+                {/* Action Buttons Row */}
+                <div className="flex gap-2 mb-3">
+                  {/* Add All to CRM */}
+                  {crmResult ? (
+                    <div className="flex-1 bg-white dark:bg-gray-800 rounded-lg p-3 border border-green-300 dark:border-green-700">
+                      <div className="flex items-center gap-2 text-green-700 dark:text-green-300 font-medium">
+                        <CheckCircle2 className="h-5 w-5" />
+                        Added to CRM!
+                      </div>
+                      <div className="text-sm text-muted-foreground mt-1">
+                        {crmResult.created} new leads, {crmResult.skipped} already existed
+                      </div>
+                      <Link
+                        to="/leads?source=FLEET_DISCOVERY&temperature=HOT"
+                        className="inline-flex items-center gap-2 mt-3 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-medium"
+                      >
+                        <ExternalLink className="h-4 w-4" />
+                        Go to Leads → Start Calling
+                      </Link>
+                    </div>
+                  ) : (
+                    <>
+                      <Button
+                        onClick={addAllToCRM}
+                        disabled={addingToCRM || businessesInSelectedSwaths.length === 0}
+                        className={`flex-1 ${addingToCRM ? "bg-gray-400" : "bg-red-600 hover:bg-red-700"}`}
+                      >
+                        {addingToCRM ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            Adding...
+                          </>
+                        ) : (
+                          <>
+                            <AlertTriangle className="h-4 w-4 mr-2" />
+                            Add {businessesInSelectedSwaths.length} to CRM
+                          </>
+                        )}
+                      </Button>
+
+                      {/* Export CSV Button */}
+                      <Button
+                        onClick={exportToCSV}
+                        disabled={businessesInSelectedSwaths.length === 0}
+                        variant="outline"
+                        className="flex-shrink-0"
+                        title="Export selected businesses to CSV"
+                      >
+                        <Download className="h-4 w-4" />
+                      </Button>
+                    </>
+                  )}
+                </div>
+
+                {/* Export Summary when swaths are filtered */}
+                {selectedSwathIds.size < numberedSwaths.length && businessesInSelectedSwaths.length > 0 && (
+                  <button
+                    onClick={exportToCSV}
+                    className="w-full text-left p-2 mb-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
                   >
-                    {addingToCRM ? (
-                      <>
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Adding...
-                      </>
-                    ) : (
-                      <>
-                        <AlertTriangle className="h-4 w-4 mr-2" />
-                        Add {filteredBusinesses.length} Filtered as HOT Leads
-                      </>
-                    )}
-                  </Button>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Download className="h-4 w-4 text-green-600" />
+                        <span className="text-sm font-medium">Export {businessesInSelectedSwaths.length} businesses</span>
+                      </div>
+                      <Badge variant="secondary" className="text-xs">
+                        CSV
+                      </Badge>
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      From {selectedSwathIds.size} selected swaths · Includes swath # for each business
+                    </div>
+                  </button>
                 )}
               </div>
 

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Users, Phone, Mail, MapPin, Plus, Search } from 'lucide-react'
+import { Users, Phone, Mail, Plus, Search } from 'lucide-react'
 
 const mockLeads = [
   { id: 1, name: 'John Smith', email: 'john@email.com', phone: '555-0101', address: '123 Oak St, Dallas, TX', status: 'new', source: 'Hail Event' },

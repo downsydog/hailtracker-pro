@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPut, apiDelete } from './client'
+import { apiGet, apiPost, apiPut, apiDelete, ApiParams } from './client'
 
 export interface Invoice {
   id: number
@@ -75,7 +75,7 @@ export interface InvoiceFilters {
 export const invoicesApi = {
   // List invoices with filters
   getInvoices: (filters?: InvoiceFilters) =>
-    apiGet<{ invoices: Invoice[]; total: number; page: number }>('/invoices', { params: filters }),
+    apiGet<{ invoices: Invoice[]; total: number; page: number }>('/invoices', { params: filters as ApiParams }),
 
   // Get single invoice with details
   getInvoice: (id: number) =>
@@ -111,7 +111,7 @@ export const invoicesApi = {
 
   // Generate PDF
   generatePdf: (id: number) =>
-    apiGet<Blob>(`/invoices/${id}/pdf`, { responseType: 'blob' }),
+    apiGet<Blob>(`/invoices/${id}/pdf`),
 
   // Create from estimate
   createFromEstimate: (estimateId: number) =>

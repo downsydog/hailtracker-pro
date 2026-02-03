@@ -72,15 +72,15 @@
 - [x] Git commit
 - [x] Update STATE.md
 
-## Task 8: Subscription Plans and Limits
-- [ ] Create src/billing/plans.py: free (2 users, 3 storms/mo), pro (8 users, 50 storms/mo, $99), enterprise (100 users, unlimited, $299)
-- [ ] Plan enforcement middleware
-- [ ] Track usage per tenant per month
-- [ ] 403 with upgrade message when limit exceeded
-- [ ] DEV_MODE = enterprise (no limits)
-- [ ] Test: free plan hits limit, enterprise no limit, DEV_MODE no limit
-- [ ] Git commit
-- [ ] Update STATE.md
+## Task 8: Subscription Plans and Limits [COMPLETE]
+- [x] Create src/billing/plans.py: free (2 users, 3 storms/mo), pro (8 users, 50 storms/mo, $99), enterprise (100 users, unlimited, $299)
+- [x] Plan enforcement middleware
+- [x] Track usage per tenant per month
+- [x] 403 with upgrade message when limit exceeded
+- [x] DEV_MODE = enterprise (no limits)
+- [x] Test: free plan hits limit, enterprise no limit, DEV_MODE no limit
+- [x] Git commit
+- [x] Update STATE.md
 
 ## Task 9: Final Integration Test
 - [ ] Start backend and frontend

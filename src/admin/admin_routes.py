@@ -645,3 +645,79 @@ def get_api_usage():
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+# ============================================
+# BILLING / PLANS
+# ============================================
+
+@admin_bp.route('/plans', methods=['GET'])
+@require_admin
+def get_plans():
+    """Get all available plans."""
+    try:
+        from billing.plans import PLANS
+        return jsonify({
+            'plans': PLANS
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@admin_bp.route('/tenants/<int:tenant_id>/plan', methods=['GET'])
+@require_admin
+def get_tenant_plan_info(tenant_id):
+    """Get plan info and usage for a specific tenant."""
+    try:
+        from billing.plans import get_plan_info
+        info = get_plan_info(tenant_id)
+        return jsonify(info)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@admin_bp.route('/tenants/<int:tenant_id>/plan', methods=['PUT'])
+@require_admin
+def update_tenant_plan(tenant_id):
+    """Update a tenant's plan."""
+    try:
+        data = request.get_json()
+        if not data or 'plan' not in data:
+            return jsonify({'error': 'plan is required'}), 400
+
+        plan = data['plan']
+        valid_plans = ['free', 'pro', 'enterprise']
+        if plan not in valid_plans:
+            return jsonify({'error': f'Invalid plan. Must be one of: {", ".join(valid_plans)}'}), 400
+
+        # Get max_users for the new plan
+        from billing.plans import PLANS
+        max_users = PLANS[plan]['max_users']
+
+        conn = get_db()
+        cur = conn.cursor()
+
+        cur.execute("""
+            UPDATE tenants SET plan = %s, max_users = %s
+            WHERE id = %s
+            RETURNING id, company_name, plan, max_users
+        """, (plan, max_users, tenant_id))
+
+        tenant = cur.fetchone()
+        if not tenant:
+            conn.close()
+            return jsonify({'error': 'Tenant not found'}), 404
+
+        conn.commit()
+        conn.close()
+
+        return jsonify({
+            'id': tenant['id'],
+            'company_name': tenant['company_name'],
+            'plan': tenant['plan'],
+            'max_users': tenant['max_users'],
+            'message': f'Plan updated to {plan}'
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500

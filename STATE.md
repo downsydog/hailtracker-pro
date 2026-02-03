@@ -48,10 +48,24 @@ Last updated: 2026-02-03 17:55
 - Updated Sidebar.tsx with Tenants and Users links
 - Updated App.tsx routes and changed auth check to admin role
 - npm run build compiles clean
+- Git commit: da387f7
+
+### Task 8: Subscription Plans and Limits [COMPLETE]
+- Created src/billing/plans.py with plan definitions:
+  - free: 2 users, 3 storms/mo, 50 leads/mo, 10 jobs/mo, $0
+  - pro: 8 users, 50 storms/mo, 500 leads/mo, 100 jobs/mo, $99/mo
+  - enterprise: 100 users, unlimited, $299/mo
+- @require_plan_limit decorator for route protection
+- check_limit() function for limit checking
+- track_usage() for API usage tracking
+- get_plan_info() returns plan + usage stats
+- Added /api/admin/plans and /api/admin/tenants/:id/plan endpoints
+- Updated api_usage unique constraint for multi-tenant
+- DEV_MODE = enterprise (no limits)
 - Git commit: pending
 
 ## Current Task
-Task 8: Subscription Plans and Limits
+Task 9: Final Integration Test
 
 ## Verified Working
 - Backend: http://localhost:5000/api/health returns ok

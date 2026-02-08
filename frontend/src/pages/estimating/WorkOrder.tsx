@@ -1,13 +1,15 @@
 /**
- * PDR Work Order Screen
+ * PDR Work Order Screen - Matrix Based
  *
- * Tech's working view for repairs.
+ * Tech's working view for repairs using matrix-based pricing.
  * Features:
- * - Panel view with dent details
+ * - Panel view with matrix pricing info (dent count, majority size, modifiers)
+ * - Panel completion tracking (not per-dent)
  * - R&I checklist
  * - Discovery logging with photo capture
  * - Timer tracking
  * - Completion workflow
+ * - CR (Conventional Repair) warnings
  */
 
 import { useState, useMemo, useCallback, useEffect } from 'react'
@@ -33,14 +35,17 @@ import {
   Plus,
   Play,
   Pause,
-  Square,
   AlertCircle,
-  Camera,
-  Loader2
+  AlertTriangle,
+  Loader2,
+  CircleDot,
+  Droplets,
+  ArrowUp,
+  Layers
 } from 'lucide-react'
 
-import { DiscoveryForm, DiscoveryItem, DISCOVERY_TYPES } from '@/components/estimating/DiscoveryForm'
-import { SIZE_LABELS, ZONE_LABELS, DEPTH_LABELS } from '@/components/estimating/DentEntry'
+import { DiscoveryForm, DiscoveryItem } from '@/components/estimating/DiscoveryForm'
+import { SIZE_LABELS, PANEL_NAMES } from '@/hooks/use-pdr-estimates'
 
 import {
   useWorkOrder,
@@ -49,10 +54,52 @@ import {
 } from '@/hooks/use-pdr-estimates'
 import { cn } from '@/lib/utils'
 
+// Status styles
 const STATUS_STYLES: Record<string, string> = {
   assigned: 'bg-gray-100 text-gray-700',
   in_progress: 'bg-blue-100 text-blue-700',
   completed: 'bg-green-100 text-green-700'
+}
+
+// Modifier icons for visual display
+const ModifierIcon = ({ type, active }: { type: string; active: boolean }) => {
+  if (!active) return null
+
+  const icons: Record<string, { icon: React.ReactNode; label: string; color: string }> = {
+    aluminum: {
+      icon: <Layers className="h-4 w-4" />,
+      label: 'AL',
+      color: 'bg-amber-100 text-amber-700 border-amber-300'
+    },
+    hss: {
+      icon: <Layers className="h-4 w-4" />,
+      label: 'HSS',
+      color: 'bg-purple-100 text-purple-700 border-purple-300'
+    },
+    glue_pull: {
+      icon: <Droplets className="h-4 w-4" />,
+      label: 'GP',
+      color: 'bg-blue-100 text-blue-700 border-blue-300'
+    },
+    tall_roof: {
+      icon: <ArrowUp className="h-4 w-4" />,
+      label: 'TR',
+      color: 'bg-slate-100 text-slate-700 border-slate-300'
+    }
+  }
+
+  const config = icons[type]
+  if (!config) return null
+
+  return (
+    <div className={cn(
+      'flex items-center gap-1 px-2 py-1 rounded border text-xs font-medium',
+      config.color
+    )}>
+      {config.icon}
+      <span>{config.label}</span>
+    </div>
+  )
 }
 
 export function WorkOrder() {
@@ -63,7 +110,7 @@ export function WorkOrder() {
   const [isTimerRunning, setIsTimerRunning] = useState(false)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const [discoveryDialogOpen, setDiscoveryDialogOpen] = useState(false)
-  const [completedDents, setCompletedDents] = useState<Set<number>>(new Set())
+  const [completedPanels, setCompletedPanels] = useState<Set<number>>(new Set())
   const [completedRI, setCompletedRI] = useState<Set<number>>(new Set())
 
   // API hooks
@@ -109,24 +156,39 @@ export function WorkOrder() {
     }
   }, [workOrder, selectedPanelId])
 
-  // Progress stats
+  // Progress stats - panel based for matrix pricing
   const stats = useMemo(() => {
-    if (!workOrder) return { totalDents: 0, completedDents: 0, progress: 0, discoveryTotal: 0 }
+    if (!workOrder) return {
+      totalPanels: 0,
+      completedPanels: 0,
+      totalDents: 0,
+      progress: 0,
+      discoveryTotal: 0,
+      crPanels: 0
+    }
 
+    const panels = workOrder.panels || []
+    const totalPanels = panels.length
+
+    // Sum total dents across all panels
     let totalDents = 0
-    workOrder.panels?.forEach(panel => {
-      totalDents += panel.dents?.length || 0
+    let crPanels = 0
+    panels.forEach(panel => {
+      totalDents += panel.total_dent_count || 0
+      if (panel.is_conventional_repair) crPanels++
     })
 
     const discoveryTotal = workOrder.discoveries?.reduce((sum, d) => sum + (d.additional_cost || 0), 0) || 0
 
     return {
+      totalPanels,
+      completedPanels: completedPanels.size,
       totalDents,
-      completedDents: completedDents.size,
-      progress: totalDents > 0 ? Math.round((completedDents.size / totalDents) * 100) : 0,
-      discoveryTotal
+      progress: totalPanels > 0 ? Math.round((completedPanels.size / totalPanels) * 100) : 0,
+      discoveryTotal,
+      crPanels
     }
-  }, [workOrder, completedDents])
+  }, [workOrder, completedPanels])
 
   // Format time
   const formatTime = (seconds: number) => {
@@ -140,14 +202,14 @@ export function WorkOrder() {
     return `${mins}:${secs.toString().padStart(2, '0')}`
   }
 
-  // Toggle dent completion
-  const toggleDent = useCallback((dentId: number) => {
-    setCompletedDents(prev => {
+  // Toggle panel completion
+  const togglePanel = useCallback((panelId: number) => {
+    setCompletedPanels(prev => {
       const newSet = new Set(prev)
-      if (newSet.has(dentId)) {
-        newSet.delete(dentId)
+      if (newSet.has(panelId)) {
+        newSet.delete(panelId)
       } else {
-        newSet.add(dentId)
+        newSet.add(panelId)
       }
       return newSet
     })
@@ -229,6 +291,16 @@ export function WorkOrder() {
     navigate(`/estimating/invoice/${workOrder.estimate_id}`)
   }
 
+  // Get display name for panel
+  const getPanelDisplayName = (panelName: string) => {
+    return PANEL_NAMES[panelName] || panelName
+  }
+
+  // Get majority size label
+  const getMajoritySizeLabel = (size: string) => {
+    return SIZE_LABELS[size as keyof typeof SIZE_LABELS] || size
+  }
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-screen">
@@ -266,6 +338,11 @@ export function WorkOrder() {
                 <span className="text-sm text-muted-foreground">
                   {workOrder.customer_name}
                 </span>
+                {stats.crPanels > 0 && (
+                  <Badge variant="destructive" className="text-xs">
+                    {stats.crPanels} CR Panel{stats.crPanels > 1 ? 's' : ''}
+                  </Badge>
+                )}
               </div>
             </div>
           </div>
@@ -297,7 +374,8 @@ export function WorkOrder() {
         <div className="px-4 pb-4 max-w-6xl mx-auto">
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm text-muted-foreground">
-              {stats.completedDents} of {stats.totalDents} dents completed
+              {stats.completedPanels} of {stats.totalPanels} panels completed
+              <span className="text-xs ml-2">({stats.totalDents} total dents)</span>
             </span>
             <span className="font-bold">{stats.progress}%</span>
           </div>
@@ -311,13 +389,17 @@ export function WorkOrder() {
           <div className="space-y-4">
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm">Panels</CardTitle>
+                <CardTitle className="text-sm flex items-center justify-between">
+                  <span>Panels</span>
+                  <span className="text-xs font-normal text-muted-foreground">
+                    {stats.completedPanels}/{stats.totalPanels}
+                  </span>
+                </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
                 {workOrder.panels?.map(panel => {
-                  const panelDents = panel.dents?.length || 0
-                  const panelCompleted = panel.dents?.filter(d => completedDents.has(d.id)).length || 0
-                  const isComplete = panelCompleted === panelDents && panelDents > 0
+                  const isComplete = completedPanels.has(panel.id)
+                  const isCR = panel.is_conventional_repair
 
                   return (
                     <button
@@ -327,24 +409,55 @@ export function WorkOrder() {
                         'w-full p-3 rounded-lg border text-left transition-colors',
                         selectedPanelId === panel.id
                           ? 'border-primary bg-primary/5'
-                          : 'border-border hover:bg-accent/50'
+                          : 'border-border hover:bg-accent/50',
+                        isCR && 'border-red-300 bg-red-50'
                       )}
                     >
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           {isComplete ? (
                             <CheckCircle2 className="h-5 w-5 text-green-500" />
+                          ) : isCR ? (
+                            <AlertTriangle className="h-5 w-5 text-red-500" />
                           ) : (
                             <Circle className="h-5 w-5 text-muted-foreground" />
                           )}
-                          <span className="font-medium">
-                            {panel.display_name || panel.panel_name}
-                          </span>
+                          <div>
+                            <span className="font-medium">
+                              {getPanelDisplayName(panel.panel_name)}
+                            </span>
+                            {isCR && (
+                              <span className="text-xs text-red-600 ml-2">CR</span>
+                            )}
+                          </div>
                         </div>
-                        <Badge variant="secondary">
-                          {panelCompleted}/{panelDents}
-                        </Badge>
+                        <div className="text-right">
+                          <Badge variant="secondary" className="text-xs">
+                            {panel.total_dent_count || 0} dents
+                          </Badge>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            ${(panel.panel_total || 0).toFixed(0)}
+                          </p>
+                        </div>
                       </div>
+
+                      {/* Modifier badges in panel list */}
+                      {(panel.is_aluminum || panel.is_hss || panel.requires_glue_pull || panel.is_tall_roof) && (
+                        <div className="flex gap-1 mt-2">
+                          {panel.is_aluminum && (
+                            <span className="text-xs px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded">AL</span>
+                          )}
+                          {panel.is_hss && (
+                            <span className="text-xs px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded">HSS</span>
+                          )}
+                          {panel.requires_glue_pull && (
+                            <span className="text-xs px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded">GP</span>
+                          )}
+                          {panel.is_tall_roof && (
+                            <span className="text-xs px-1.5 py-0.5 bg-slate-100 text-slate-700 rounded">TR</span>
+                          )}
+                        </div>
+                      )}
                     </button>
                   )
                 })}
@@ -376,65 +489,188 @@ export function WorkOrder() {
               <CardContent className="pt-4">
                 <p className="text-sm text-muted-foreground">Vehicle</p>
                 <p className="font-medium">{workOrder.vehicle}</p>
+                {workOrder.matrix_profile && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Matrix: {workOrder.matrix_profile}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Legend */}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-xs text-muted-foreground">Legend</CardTitle>
+              </CardHeader>
+              <CardContent className="text-xs space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded">AL</span>
+                  <span>Aluminum (+25%)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded">HSS</span>
+                  <span>High Strength Steel (+25%)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded">GP</span>
+                  <span>Glue Pull (+25%)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="px-1.5 py-0.5 bg-slate-100 text-slate-700 rounded">TR</span>
+                  <span>Tall Roof (+25%)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="px-1.5 py-0.5 bg-red-100 text-red-700 rounded">CR</span>
+                  <span>Conventional Repair</span>
+                </div>
               </CardContent>
             </Card>
           </div>
 
-          {/* Center & Right: Dent List and R&I */}
+          {/* Center & Right: Panel Detail and R&I */}
           <div className="lg:col-span-2 space-y-4">
             {selectedPanel ? (
               <>
-                {/* Panel Header */}
-                <Card>
+                {/* Panel Header & Completion */}
+                <Card className={cn(
+                  selectedPanel.is_conventional_repair && 'border-red-300'
+                )}>
                   <CardHeader className="pb-2">
                     <CardTitle className="flex items-center justify-between">
-                      <span>{selectedPanel.display_name || selectedPanel.panel_name}</span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setDiscoveryDialogOpen(true)}
-                      >
-                        <Plus className="h-4 w-4 mr-1" />
-                        Add Discovery
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <span>{getPanelDisplayName(selectedPanel.panel_name)}</span>
+                        {selectedPanel.is_conventional_repair && (
+                          <Badge variant="destructive">CR - Conventional</Badge>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setDiscoveryDialogOpen(true)}
+                        >
+                          <Plus className="h-4 w-4 mr-1" />
+                          Add Discovery
+                        </Button>
+                        <Button
+                          variant={completedPanels.has(selectedPanel.id) ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => togglePanel(selectedPanel.id)}
+                          className={cn(
+                            completedPanels.has(selectedPanel.id) && 'bg-green-600 hover:bg-green-700'
+                          )}
+                        >
+                          {completedPanels.has(selectedPanel.id) ? (
+                            <>
+                              <CheckCircle2 className="h-4 w-4 mr-1" />
+                              Completed
+                            </>
+                          ) : (
+                            <>
+                              <Circle className="h-4 w-4 mr-1" />
+                              Mark Complete
+                            </>
+                          )}
+                        </Button>
+                      </div>
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    {/* Dent Grid */}
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                      {selectedPanel.dents?.map(dent => {
-                        const isComplete = completedDents.has(dent.id)
+                    {/* CR Warning */}
+                    {selectedPanel.is_conventional_repair && (
+                      <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+                        <div className="flex items-start gap-2">
+                          <AlertTriangle className="h-5 w-5 text-red-600 mt-0.5" />
+                          <div>
+                            <p className="font-medium text-red-700">Conventional Repair Required</p>
+                            <p className="text-sm text-red-600">
+                              This panel exceeds PDR limits. Route to body shop for conventional repair.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
 
-                        return (
-                          <button
-                            key={dent.id}
-                            onClick={() => toggleDent(dent.id)}
-                            className={cn(
-                              'p-4 rounded-lg border-2 text-left transition-all',
-                              isComplete
-                                ? 'border-green-500 bg-green-50'
-                                : 'border-gray-200 hover:border-gray-400'
-                            )}
-                          >
-                            <div className="flex items-center justify-between mb-2">
-                              <span className="font-medium capitalize text-sm">
-                                {SIZE_LABELS[dent.size as keyof typeof SIZE_LABELS] || dent.size}
-                              </span>
-                              {isComplete ? (
-                                <CheckCircle2 className="h-5 w-5 text-green-500" />
-                              ) : (
-                                <Circle className="h-5 w-5 text-gray-300" />
-                              )}
-                            </div>
-                            <p className="text-xs text-muted-foreground capitalize">
-                              {dent.zone} • {(dent as any).depth || 'medium'}
-                            </p>
-                            <p className="text-lg font-bold mt-2">
-                              ${(dent.final_price || 0).toFixed(0)}
-                            </p>
-                          </button>
-                        )
-                      })}
+                    {/* Matrix Info Grid */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                      <div className="p-3 bg-muted/50 rounded-lg text-center">
+                        <CircleDot className="h-5 w-5 mx-auto mb-1 text-muted-foreground" />
+                        <p className="text-2xl font-bold">{selectedPanel.total_dent_count || 0}</p>
+                        <p className="text-xs text-muted-foreground">Total Dents</p>
+                      </div>
+                      <div className="p-3 bg-muted/50 rounded-lg text-center">
+                        <CircleDot className="h-5 w-5 mx-auto mb-1 text-muted-foreground" />
+                        <p className="text-lg font-bold capitalize">
+                          {getMajoritySizeLabel(selectedPanel.majority_size || 'dime')}
+                        </p>
+                        <p className="text-xs text-muted-foreground">Majority Size</p>
+                      </div>
+                      <div className="p-3 bg-muted/50 rounded-lg text-center">
+                        <CircleDot className="h-5 w-5 mx-auto mb-1 text-orange-500" />
+                        <p className="text-2xl font-bold text-orange-600">
+                          {selectedPanel.oversized_count || 0}
+                        </p>
+                        <p className="text-xs text-muted-foreground">Oversized</p>
+                      </div>
+                      <div className="p-3 bg-primary/10 rounded-lg text-center">
+                        <p className="text-xl font-bold text-primary">
+                          ${(selectedPanel.matrix_base_price || 0).toFixed(0)}
+                        </p>
+                        <p className="text-xs text-muted-foreground">Base Price</p>
+                      </div>
+                    </div>
+
+                    {/* Modifiers */}
+                    <div className="flex flex-wrap gap-2 mb-4">
+                      <ModifierIcon type="aluminum" active={selectedPanel.is_aluminum || false} />
+                      <ModifierIcon type="hss" active={selectedPanel.is_hss || false} />
+                      <ModifierIcon type="glue_pull" active={selectedPanel.requires_glue_pull || false} />
+                      <ModifierIcon type="tall_roof" active={selectedPanel.is_tall_roof || false} />
+                    </div>
+
+                    {/* Price Breakdown */}
+                    <div className="border-t pt-4">
+                      <h4 className="text-sm font-medium mb-2">Price Breakdown</h4>
+                      <div className="space-y-1 text-sm">
+                        <div className="flex justify-between">
+                          <span>Matrix Base ({selectedPanel.total_dent_count} dents, {getMajoritySizeLabel(selectedPanel.majority_size || 'dime')})</span>
+                          <span>${(selectedPanel.matrix_base_price || 0).toFixed(2)}</span>
+                        </div>
+                        {selectedPanel.is_aluminum && (
+                          <div className="flex justify-between text-amber-700">
+                            <span>+ Aluminum (+25%)</span>
+                            <span>+${((selectedPanel.matrix_base_price || 0) * 0.25).toFixed(2)}</span>
+                          </div>
+                        )}
+                        {selectedPanel.is_hss && (
+                          <div className="flex justify-between text-purple-700">
+                            <span>+ HSS (+25%)</span>
+                            <span>+${((selectedPanel.matrix_base_price || 0) * 0.25).toFixed(2)}</span>
+                          </div>
+                        )}
+                        {selectedPanel.requires_glue_pull && (
+                          <div className="flex justify-between text-blue-700">
+                            <span>+ Glue Pull (+25%)</span>
+                            <span>+${((selectedPanel.matrix_base_price || 0) * 0.25).toFixed(2)}</span>
+                          </div>
+                        )}
+                        {selectedPanel.is_tall_roof && (
+                          <div className="flex justify-between text-slate-700">
+                            <span>+ Tall Roof (+25%)</span>
+                            <span>+${((selectedPanel.matrix_base_price || 0) * 0.25).toFixed(2)}</span>
+                          </div>
+                        )}
+                        {(selectedPanel.oversized_count || 0) > 0 && (
+                          <div className="flex justify-between text-orange-700">
+                            <span>+ Oversized ({selectedPanel.oversized_count} x $50)</span>
+                            <span>+${((selectedPanel.oversized_count || 0) * 50).toFixed(2)}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between font-bold text-lg border-t pt-2 mt-2">
+                          <span>Panel Total</span>
+                          <span>${(selectedPanel.panel_total || 0).toFixed(2)}</span>
+                        </div>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
@@ -511,7 +747,7 @@ export function WorkOrder() {
               <Card>
                 <CardContent className="py-12 text-center">
                   <Wrench className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                  <p className="text-muted-foreground">Select a panel to view dents</p>
+                  <p className="text-muted-foreground">Select a panel to view details</p>
                 </CardContent>
               </Card>
             )}
@@ -527,10 +763,20 @@ export function WorkOrder() {
               <p className="text-xs text-muted-foreground">Progress</p>
               <p className="font-bold">{stats.progress}%</p>
             </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Panels</p>
+              <p className="font-bold">{stats.completedPanels}/{stats.totalPanels}</p>
+            </div>
             {stats.discoveryTotal > 0 && (
               <div>
                 <p className="text-xs text-orange-600">Supplement</p>
                 <p className="font-bold text-orange-600">+${stats.discoveryTotal}</p>
+              </div>
+            )}
+            {stats.crPanels > 0 && (
+              <div>
+                <p className="text-xs text-red-600">CR Panels</p>
+                <p className="font-bold text-red-600">{stats.crPanels}</p>
               </div>
             )}
           </div>

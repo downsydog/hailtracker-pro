@@ -397,66 +397,14 @@ def update_estimate(estimate_id):
 # PANEL ENDPOINTS
 # =============================================================================
 
-@pdr_estimates_bp.route('/<int:estimate_id>/panels', methods=['POST'])
-def add_panel(estimate_id):
-    """
-    Add panel to estimate.
-
-    Body:
-    {
-        "panel_name": "hood",
-        "material": "steel"  // optional: steel, aluminum, high_strength_steel
-    }
-    """
-    tenant_id = get_current_tenant_id()
-    data = request.get_json() or {}
-
-    if not data.get('panel_name'):
-        return jsonify({"error": "panel_name required"}), 400
-
-    conn = get_db()
-    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-
-    # Verify estimate belongs to tenant and is draft
-    cursor.execute("""
-        SELECT status FROM pdr_estimates WHERE id = %s AND tenant_id = %s
-    """, (estimate_id, tenant_id))
-    result = cursor.fetchone()
-
-    if not result:
-        conn.close()
-        return jsonify({"error": "Estimate not found"}), 404
-
-    if result['status'] != 'draft':
-        conn.close()
-        return jsonify({"error": "Cannot modify approved/completed estimate"}), 400
-
-    # Get pricing config
-    config = get_tenant_pricing_config(conn, tenant_id)
-    engine = PricingEngine(config)
-
-    panel_name = data['panel_name'].lower().replace(" ", "_")
-    material = data.get('material', 'steel').lower()
-
-    panel_difficulty = engine.get_panel_difficulty(panel_name)
-    material_modifier = engine.get_material_modifier(material)
-
-    cursor.execute("""
-        INSERT INTO estimate_panels (estimate_id, panel_name, panel_difficulty, material_modifier)
-        VALUES (%s, %s, %s, %s)
-        RETURNING *
-    """, (estimate_id, panel_name, panel_difficulty, material_modifier))
-
-    panel = dict(cursor.fetchone())
-    conn.commit()
-    conn.close()
-
-    panel['panel_difficulty'] = float(panel['panel_difficulty'])
-    panel['material_modifier'] = float(panel['material_modifier'])
-    panel['dents'] = []
-    panel['rin_items'] = []
-
-    return jsonify({"success": True, "panel": panel}), 201
+# NOTE: Panel adding is now handled by matrix_routes.py with matrix-based pricing
+# The old per-dent add_panel route has been deprecated in favor of matrix-based panel entry
+# See: src/estimating/matrix_routes.py - add_panel_matrix()
+#
+# @pdr_estimates_bp.route('/<int:estimate_id>/panels', methods=['POST'])
+# def add_panel(estimate_id):
+#     """DEPRECATED - Use matrix_routes.py add_panel_matrix instead"""
+#     pass
 
 
 # =============================================================================

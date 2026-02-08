@@ -2261,6 +2261,25 @@ def create_app(config=None):
     logger.info("Estimates API routes registered at /api/estimates")
 
     # ====================
+    # PDR Estimates API Routes (Matrix-based pricing)
+    # ====================
+
+    try:
+        from src.estimating.estimate_routes import pdr_estimates_bp, work_orders_bp
+        app.register_blueprint(pdr_estimates_bp)
+        app.register_blueprint(work_orders_bp)
+        logger.info("PDR Estimates API routes registered at /api/pdr-estimates")
+    except Exception as e:
+        logger.warning(f"PDR Estimates API routes not loaded: {e}")
+
+    try:
+        from src.estimating.matrix_routes import matrix_bp
+        app.register_blueprint(matrix_bp)
+        logger.info("PDR Matrix API routes registered at /api/pdr-estimates (matrix)")
+    except Exception as e:
+        logger.warning(f"PDR Matrix API routes not loaded: {e}")
+
+    # ====================
     # Admin API Routes
     # ====================
 

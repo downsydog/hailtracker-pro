@@ -1,6 +1,7 @@
 /**
  * PDR Estimates API Hooks
  * TanStack Query hooks for PDR estimating module
+ * Matrix-based pricing: per-panel pricing with count ranges and size multipliers
  */
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -8,96 +9,133 @@ import { apiGet, apiPost, apiPut, apiDelete } from '@/api/client'
 
 // ============ Types ============
 
-export interface VehicleInfo {
-  year: number
-  make: string
-  model: string
-  vin?: string
-  vehicle_tier: 'economy' | 'standard' | 'premium' | 'luxury' | 'ev_adas'
-  aluminum_panels?: string[]
-  is_ev?: boolean
-  adas_features?: string[]
-}
-
-export interface Dent {
+export interface MatrixProfile {
   id: number
-  size: 'dime' | 'nickel' | 'quarter' | 'half_dollar' | 'silver_dollar' | 'oversized'
-  zone: 'center' | 'edge' | 'crease' | 'body_line'
-  depth: 'shallow' | 'medium' | 'deep' | 'severe'
-  base_price: number
-  final_price: number
-}
-
-export interface RIItem {
-  id: number
-  operation_code: string
-  operation_name: string
-  category: string
-  base_time_hours: number
-  calculated_time_hours: number
+  name: string
+  is_default: boolean
+  is_system: boolean
+  oversized_charge: number
+  aluminum_multiplier: number
+  hss_multiplier: number
+  glue_pull_multiplier: number
+  tall_roof_multiplier: number
   labor_rate: number
-  price: number
-  scope_min?: string
-  scope_typical?: string
-  scope_max?: string
+  notes?: string
+}
+
+export interface MatrixRow {
+  count_range: string
+  count_min: number
+  count_max: number
+  dime: { price: number | null; is_cr: boolean }
+  nickel: { price: number | null; is_cr: boolean }
+  quarter: { price: number | null; is_cr: boolean }
+  half: { price: number | null; is_cr: boolean }
+}
+
+export interface MatrixPricing {
+  panel: string
+  panel_display: string
+  dent_count: number
+  majority_size: 'dime' | 'nickel' | 'quarter' | 'half'
+  size_display: string
+  count_range: string
+  matrix_base_price: number
+  multiplier_total: number
+  multiplied_price: number
+  oversized_count: number
+  oversized_charge_each: number
+  oversized_total: number
+  upcharges: Array<{
+    type: string
+    label: string
+    multiplier?: number
+    percentage?: string
+    charge_each?: number
+    count?: number
+    total?: number
+  }>
+  upcharge_total: number
+  panel_total: number
+  is_cr: boolean
+  matrix_profile_id: number
+  matrix_profile_name: string
 }
 
 export interface Panel {
   id: number
   panel_name: string
-  display_name: string
-  material: 'steel' | 'aluminum' | 'high_strength_steel'
-  dents: Dent[]
-  ri_items: RIItem[]
+  total_dent_count: number
+  majority_size: 'dime' | 'nickel' | 'quarter' | 'half'
+  oversized_count: number
+  is_aluminum: boolean
+  is_hss: boolean
+  requires_glue_pull: boolean
+  is_tall_roof: boolean
+  is_conventional_repair: boolean
+  matrix_base_price: number
+  upcharge_total: number
   panel_total: number
+  ri_items: RIItem[]
+}
+
+export interface RIItem {
+  id: number
+  item_name: string
+  operation_name?: string  // Display name for UI
+  operation_code?: string
+  category?: string
+  time_hours: number
+  calculated_time_hours?: number  // Calculated based on scope
+  price: number
+  scope_level?: 'min' | 'typical' | 'max'
+  scope_bullets?: string[]
+  scope_typical?: string  // Description of typical scope
 }
 
 export interface Discovery {
   id: number
-  discovery_type: string
+  type: string
+  discovery_type: string  // Same as type, for compatibility
   description: string
   additional_time_hours: number
   additional_cost: number
   photo_url?: string
   panel_name?: string
   narrative?: string
-  acknowledged: boolean
   created_at: string
-}
-
-export interface InsuranceProfile {
-  id: number
-  carrier_name: string
-  labor_rate: number
-  pdr_rate_per_dent?: number
-  max_dents_per_panel?: number
-  requires_photos: boolean
-  supplement_email?: string
 }
 
 export interface PDREstimate {
   id: number
   estimate_number: string
-  status: 'draft' | 'pending' | 'approved' | 'completed'
+  status: 'draft' | 'in_progress' | 'approved' | 'completed'
   vehicle_year: number
   vehicle_make: string
   vehicle_model: string
-  vehicle_vin?: string
-  vehicle_tier: string
+  vin?: string
+  vehicle_vin?: string  // Alias for vin
+  vehicle_tier?: string
+  is_tall_roof_vehicle: boolean
   customer_name?: string
   customer_email?: string
   customer_phone?: string
   lead_id?: number
   contact_id?: number
   job_id?: number
-  insurance_profile_id?: number
-  insurance_profile?: InsuranceProfile
+  matrix_profile_id?: number
+  matrix_profile_name?: string
+  matrix_profile?: string  // Alias for matrix_profile_name
+  insurance_profile?: {
+    carrier_name: string
+    claim_number?: string
+  }
   claim_number?: string
   panels: Panel[]
-  dent_total: number
+  labor_total: number
   ri_total: number
-  grand_total: number
-  expires_at?: string
+  total_price: number
+  has_cr_panels: boolean
   created_at: string
   updated_at: string
 }
@@ -105,12 +143,13 @@ export interface PDREstimate {
 export interface WorkOrder {
   id: number
   estimate_id: number
-  work_order_number: string
+  work_order_number?: string
   status: 'assigned' | 'in_progress' | 'completed'
-  assigned_tech_id?: number
-  assigned_tech_name?: string
-  customer_name: string
-  vehicle: string
+  technician_id?: number
+  technician_name?: string
+  customer_name?: string
+  vehicle?: string  // Vehicle display string
+  matrix_profile?: string  // Matrix profile name
   panels: Panel[]
   discoveries: Discovery[]
   start_time?: string
@@ -119,26 +158,56 @@ export interface WorkOrder {
   created_at: string
 }
 
-export interface RILibraryItem {
-  operation_code: string
-  operation_name: string
-  category: string
-  base_time_hours: number
-  scope_bullets: {
-    min: string
-    typical: string
-    max: string
-  }
-}
-
 export interface VINDecodeResult {
+  valid: boolean
   year: number
   make: string
   model: string
   vehicle_tier: string
+  tier_multiplier: number
   aluminum_panels: string[]
   is_ev: boolean
   adas_features: string[]
+  vehicle_string: string
+}
+
+export interface AluminumCheck {
+  make: string
+  model?: string
+  year?: number
+  aluminum_panels: string[]
+  has_aluminum: boolean
+}
+
+// Standard panel names
+export const PANEL_NAMES: Record<string, string> = {
+  hood: 'Hood',
+  roof: 'Roof',
+  deck_lid: 'Deck Lid / Trunk',
+  lf_door: 'Left Front Door',
+  rf_door: 'Right Front Door',
+  lr_door: 'Left Rear Door',
+  rr_door: 'Right Rear Door',
+  l_fender: 'Left Fender',
+  r_fender: 'Right Fender',
+  l_quarter: 'Left Quarter Panel',
+  r_quarter: 'Right Quarter Panel',
+  l_roof_rail: 'Left Roof Rail',
+  r_roof_rail: 'Right Roof Rail',
+  metal_sunroof: 'Metal Sunroof',
+  cowl_other: 'Cowl / Other',
+  bedside_l: 'Left Bedside',
+  bedside_r: 'Right Bedside',
+  cab_corner_l: 'Left Cab Corner',
+  cab_corner_r: 'Right Cab Corner',
+  tailgate: 'Tailgate'
+}
+
+export const SIZE_LABELS: Record<string, string> = {
+  dime: 'Dime',
+  nickel: 'Nickel',
+  quarter: 'Quarter',
+  half: 'Half Dollar'
 }
 
 // ============ API Functions ============
@@ -152,52 +221,105 @@ const pdrApi = {
     apiGet<PDREstimate>(`/pdr-estimates/${id}`),
 
   createEstimate: (data: Partial<PDREstimate>) =>
-    apiPost<PDREstimate>('/pdr-estimates', data),
+    apiPost<{ success: boolean; estimate: PDREstimate }>('/pdr-estimates', data),
 
   updateEstimate: (id: number, data: Partial<PDREstimate>) =>
-    apiPut<PDREstimate>(`/pdr-estimates/${id}`, data),
+    apiPut<{ success: boolean; estimate: PDREstimate }>(`/pdr-estimates/${id}`, data),
 
   deleteEstimate: (id: number) =>
     apiDelete<{ success: boolean }>(`/pdr-estimates/${id}`),
 
   approveEstimate: (id: number, signature?: string) =>
-    apiPost<PDREstimate>(`/pdr-estimates/${id}/approve`, { signature }),
+    apiPost<{ success: boolean; estimate: PDREstimate }>(`/pdr-estimates/${id}/approve`, { signature }),
 
-  calculateTotals: (id: number) =>
-    apiPost<{ dent_total: number; ri_total: number; grand_total: number }>(`/pdr-estimates/${id}/calculate`),
+  setMatrixProfile: (id: number, data: { matrix_profile_id?: number; is_tall_roof_vehicle?: boolean }) =>
+    apiPut<{ success: boolean; estimate: PDREstimate }>(`/pdr-estimates/${id}/set-matrix-profile`, data),
 
   linkToCRM: (id: number, data: { lead_id?: number; contact_id?: number; job_id?: number }) =>
-    apiPut<PDREstimate>(`/pdr-estimates/${id}/link`, data),
+    apiPut<{ success: boolean; estimate: PDREstimate }>(`/pdr-estimates/${id}/link`, data),
 
-  // Panels
-  addPanel: (estimateId: number, data: { panel_name: string; material?: string }) =>
-    apiPost<Panel>(`/pdr-estimates/${estimateId}/panels`, data),
+  // Matrix Profiles
+  listMatrixProfiles: () =>
+    apiGet<{ profiles: MatrixProfile[]; count: number }>('/pdr-estimates/matrix-profiles'),
+
+  getMatrixProfile: (id: number, panel?: string) =>
+    apiGet<{ profile: MatrixProfile; matrix_data: Record<string, MatrixRow[]> }>(
+      `/pdr-estimates/matrix-profiles/${id}`,
+      { params: panel ? { panel } : undefined }
+    ),
+
+  createMatrixProfile: (data: { name: string; copy_from_id?: number; [key: string]: unknown }) =>
+    apiPost<{ success: boolean; profile: MatrixProfile }>('/pdr-estimates/matrix-profiles', data),
+
+  updateMatrixProfile: (id: number, data: Partial<MatrixProfile>) =>
+    apiPut<{ success: boolean; profile: MatrixProfile }>(`/pdr-estimates/matrix-profiles/${id}`, data),
+
+  // Matrix Lookup (calculate panel price)
+  matrixLookup: (data: {
+    matrix_profile_id?: number
+    panel: string
+    dent_count: number
+    majority_size: 'dime' | 'nickel' | 'quarter' | 'half'
+    oversized_count?: number
+    is_aluminum?: boolean
+    is_hss?: boolean
+    requires_glue_pull?: boolean
+    is_tall_roof?: boolean
+  }) => apiPost<MatrixPricing>('/pdr-estimates/matrix-lookup', data),
+
+  // Panels (Matrix-based)
+  addPanel: (estimateId: number, data: {
+    panel_name: string
+    total_dent_count: number
+    majority_size: 'dime' | 'nickel' | 'quarter' | 'half'
+    oversized_count?: number
+    is_aluminum?: boolean
+    is_hss?: boolean
+    requires_glue_pull?: boolean
+    is_tall_roof?: boolean
+  }) => apiPost<{ success: boolean; panel: Panel; pricing: MatrixPricing }>(
+    `/pdr-estimates/${estimateId}/panels`, data
+  ),
 
   updatePanel: (estimateId: number, panelId: number, data: Partial<Panel>) =>
-    apiPut<Panel>(`/pdr-estimates/${estimateId}/panels/${panelId}`, data),
+    apiPut<{ success: boolean; panel: Panel; pricing: MatrixPricing }>(
+      `/pdr-estimates/${estimateId}/panels/${panelId}`, data
+    ),
 
   deletePanel: (estimateId: number, panelId: number) =>
     apiDelete<{ success: boolean }>(`/pdr-estimates/${estimateId}/panels/${panelId}`),
 
-  // Dents
-  addDent: (estimateId: number, panelId: number, data: { size: string; zone: string; depth?: string }) =>
-    apiPost<Dent>(`/pdr-estimates/${estimateId}/panels/${panelId}/dents`, data),
-
-  addDentsBatch: (estimateId: number, panelId: number, dents: Array<{ size: string; zone: string; depth?: string; count?: number }>) =>
-    apiPost<{ dents: Dent[]; count: number }>(`/pdr-estimates/${estimateId}/panels/${panelId}/dents/batch`, { dents }),
-
-  deleteDent: (estimateId: number, dentId: number) =>
-    apiDelete<{ success: boolean }>(`/pdr-estimates/${estimateId}/dents/${dentId}`),
+  // Calculate Totals (Matrix-based)
+  calculateTotals: (id: number) =>
+    apiPost<{
+      estimate_id: number
+      panels: MatrixPricing[]
+      panel_count: number
+      labor_total: number
+      ri_total: number
+      grand_total: number
+      has_cr_panels: boolean
+      warning?: string
+    }>(`/pdr-estimates/${id}/calculate-matrix`),
 
   // R&I
-  getRILibrary: () =>
-    apiGet<{ items: RILibraryItem[] }>('/pdr-estimates/ri-library'),
+  getRILibrary: (category?: string) =>
+    apiGet<{ items: RIItem[]; by_category: Record<string, RIItem[]> }>(
+      '/pdr-estimates/ri-library',
+      { params: category ? { category } : undefined }
+    ),
 
   getRISuggestions: (estimateId: number, panelId: number) =>
-    apiGet<{ suggestions: RILibraryItem[] }>(`/pdr-estimates/${estimateId}/panels/${panelId}/ri-suggestions`),
+    apiGet<{ suggestions: RIItem[]; panel_name: string; vehicle_tier: string }>(
+      `/pdr-estimates/${estimateId}/panels/${panelId}/rin-suggestions`
+    ),
 
-  addRIFromLibrary: (estimateId: number, panelId: number, operationCode: string) =>
-    apiPost<RIItem>(`/pdr-estimates/${estimateId}/panels/${panelId}/ri-from-library`, { operation_code: operationCode }),
+  addRIFromLibrary: (estimateId: number, panelId: number, data: {
+    operation_code: string
+    scope_level?: 'min' | 'typical' | 'max'
+  }) => apiPost<{ success: boolean; rin_item: RIItem }>(
+    `/pdr-estimates/${estimateId}/panels/${panelId}/rin-from-library`, data
+  ),
 
   deleteRI: (estimateId: number, riId: number) =>
     apiDelete<{ success: boolean }>(`/pdr-estimates/${estimateId}/ri/${riId}`),
@@ -206,9 +328,79 @@ const pdrApi = {
   decodeVIN: (vin: string) =>
     apiGet<VINDecodeResult>(`/pdr-estimates/vin/decode/${vin}`),
 
-  // Insurance Profiles
-  getInsuranceProfiles: () =>
-    apiGet<{ profiles: InsuranceProfile[] }>('/pdr-estimates/insurance-profiles'),
+  // Aluminum Check
+  checkAluminum: (make: string, model?: string, year?: number) =>
+    apiGet<AluminumCheck>('/pdr-estimates/check-aluminum', {
+      params: { make, model, year }
+    }),
+
+  // Reference Data
+  getPanels: () =>
+    apiGet<{ panels: Record<string, string>; sizes: Record<string, string> }>('/pdr-estimates/panels'),
+
+  // Work Orders
+  createWorkOrder: (estimateId: number, techId?: number) =>
+    apiPost<{ success: boolean; work_order: WorkOrder }>(
+      `/pdr-estimates/${estimateId}/work-order`,
+      { technician_id: techId }
+    ),
+
+  getWorkOrder: (workOrderId: number) =>
+    apiGet<WorkOrder>(`/work-orders/${workOrderId}`),
+
+  updateWorkOrder: (workOrderId: number, data: Partial<WorkOrder>) =>
+    apiPut<WorkOrder>(`/work-orders/${workOrderId}`, data),
+
+  addDiscovery: (workOrderId: number, data: {
+    type?: string
+    discovery_type?: string
+    description?: string
+    additional_time_hours?: number
+    additional_cost?: number
+    photo_url?: string
+    photo_base64?: string
+    panel_name?: string
+  }) => apiPost<Discovery>(`/work-orders/${workOrderId}/discoveries`, {
+    ...data,
+    type: data.type || data.discovery_type  // Normalize to type for API
+  }),
+
+  // Supplements
+  getSupplement: (workOrderId: number) =>
+    apiGet<{
+      work_order_id: number
+      estimate_id: number
+      original_total: number
+      additional_time_hours: number
+      additional_cost: number
+      new_total: number
+      supplement_total: number  // Total of discoveries
+      grand_total: number  // original_total + supplement_total
+      discoveries: Discovery[]
+      narrative: string
+    }>(`/work-orders/${workOrderId}/supplement`),
+
+  // Matrix format (for insurance)
+  getMatrix: (estimateId: number) =>
+    apiGet<{
+      format: string
+      estimate_number: string
+      vehicle: string
+      vin?: string
+      panels: Array<{
+        panel_name: string
+        total_dents: number
+        dime: number
+        nickel: number
+        quarter: number
+        half_dollar: number
+        panel_labor: number
+      }>
+      ri_items: RIItem[]
+      labor_total: number
+      ri_total: number
+      grand_total: number
+    }>(`/pdr-estimates/${estimateId}/matrix`),
 
   // Photos
   uploadPhoto: (estimateId: number, data: FormData) =>
@@ -221,45 +413,15 @@ const pdrApi = {
     }).then(r => r.json()),
 
   getPhotos: (estimateId: number) =>
-    apiGet<{ photos: Array<{ id: number; url: string; description?: string }> }>(`/pdr-estimates/${estimateId}/photos`),
-
-  // Work Orders
-  createWorkOrder: (estimateId: number, techId?: number) =>
-    apiPost<WorkOrder>(`/pdr-estimates/${estimateId}/work-order`, { assigned_tech_id: techId }),
-
-  getWorkOrder: (workOrderId: number) =>
-    apiGet<WorkOrder>(`/pdr-estimates/work-orders/${workOrderId}`),
-
-  updateWorkOrder: (workOrderId: number, data: Partial<WorkOrder>) =>
-    apiPut<WorkOrder>(`/pdr-estimates/work-orders/${workOrderId}`, data),
-
-  addDiscovery: (workOrderId: number, data: {
-    discovery_type: string
-    description?: string
-    additional_time_hours?: number
-    additional_cost?: number
-    photo_base64?: string
-    panel_name?: string
-  }) =>
-    apiPost<Discovery>(`/pdr-estimates/work-orders/${workOrderId}/discoveries`, data),
-
-  // Supplements
-  getSupplement: (estimateId: number) =>
-    apiGet<{
-      original_total: number
-      supplement_total: number
-      grand_total: number
-      discoveries: Discovery[]
-      narrative: string
-    }>(`/pdr-estimates/${estimateId}/supplement`),
-
-  // Matrix format
-  getMatrix: (estimateId: number) =>
-    apiGet<{ matrix: Record<string, unknown> }>(`/pdr-estimates/${estimateId}/matrix`),
+    apiGet<{ photos: Array<{ id: number; file_path: string; photo_type: string }> }>(
+      `/pdr-estimates/${estimateId}/photos`
+    ),
 
   // Leads (for linking)
   searchLeads: (query: string) =>
-    apiGet<{ leads: Array<{ id: number; business_name: string; contact_name: string; phone: string }> }>('/leads', { params: { search: query } }),
+    apiGet<{ leads: Array<{ id: number; business_name: string; contact_name: string; phone: string }> }>(
+      '/leads', { params: { search: query } }
+    ),
 }
 
 // ============ Hooks ============
@@ -304,6 +466,18 @@ export function useUpdatePDREstimate() {
   })
 }
 
+export function useSetMatrixProfile() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ id, data }: { id: number; data: { matrix_profile_id?: number; is_tall_roof_vehicle?: boolean } }) =>
+      pdrApi.setMatrixProfile(id, data),
+    onSuccess: (_, { id }) => {
+      queryClient.invalidateQueries({ queryKey: ['pdr-estimates', id] })
+    },
+  })
+}
+
 export function useApprovePDREstimate() {
   const queryClient = useQueryClient()
 
@@ -340,13 +514,54 @@ export function useLinkToCRM() {
   })
 }
 
+// Matrix Profiles
+export function useMatrixProfiles() {
+  return useQuery({
+    queryKey: ['matrix-profiles'],
+    queryFn: () => pdrApi.listMatrixProfiles(),
+    staleTime: 1000 * 60 * 30, // Cache for 30 minutes
+  })
+}
+
+export function useMatrixProfile(id: number | null, panel?: string) {
+  return useQuery({
+    queryKey: ['matrix-profiles', id, panel],
+    queryFn: () => pdrApi.getMatrixProfile(id!, panel),
+    enabled: !!id,
+  })
+}
+
+export function useMatrixLookup() {
+  return useMutation({
+    mutationFn: (data: Parameters<typeof pdrApi.matrixLookup>[0]) =>
+      pdrApi.matrixLookup(data),
+  })
+}
+
 // Panels
 export function useAddPanel() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: ({ estimateId, data }: { estimateId: number; data: { panel_name: string; material?: string } }) =>
-      pdrApi.addPanel(estimateId, data),
+    mutationFn: ({ estimateId, data }: {
+      estimateId: number
+      data: Parameters<typeof pdrApi.addPanel>[1]
+    }) => pdrApi.addPanel(estimateId, data),
+    onSuccess: (_, { estimateId }) => {
+      queryClient.invalidateQueries({ queryKey: ['pdr-estimates', estimateId] })
+    },
+  })
+}
+
+export function useUpdatePanel() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ estimateId, panelId, data }: {
+      estimateId: number
+      panelId: number
+      data: Partial<Panel>
+    }) => pdrApi.updatePanel(estimateId, panelId, data),
     onSuccess: (_, { estimateId }) => {
       queryClient.invalidateQueries({ queryKey: ['pdr-estimates', estimateId] })
     },
@@ -365,54 +580,11 @@ export function useDeletePanel() {
   })
 }
 
-// Dents
-export function useAddDent() {
-  const queryClient = useQueryClient()
-
-  return useMutation({
-    mutationFn: ({ estimateId, panelId, data }: {
-      estimateId: number
-      panelId: number
-      data: { size: string; zone: string; depth?: string }
-    }) => pdrApi.addDent(estimateId, panelId, data),
-    onSuccess: (_, { estimateId }) => {
-      queryClient.invalidateQueries({ queryKey: ['pdr-estimates', estimateId] })
-    },
-  })
-}
-
-export function useAddDentsBatch() {
-  const queryClient = useQueryClient()
-
-  return useMutation({
-    mutationFn: ({ estimateId, panelId, dents }: {
-      estimateId: number
-      panelId: number
-      dents: Array<{ size: string; zone: string; depth?: string; count?: number }>
-    }) => pdrApi.addDentsBatch(estimateId, panelId, dents),
-    onSuccess: (_, { estimateId }) => {
-      queryClient.invalidateQueries({ queryKey: ['pdr-estimates', estimateId] })
-    },
-  })
-}
-
-export function useDeleteDent() {
-  const queryClient = useQueryClient()
-
-  return useMutation({
-    mutationFn: ({ estimateId, dentId }: { estimateId: number; dentId: number }) =>
-      pdrApi.deleteDent(estimateId, dentId),
-    onSuccess: (_, { estimateId }) => {
-      queryClient.invalidateQueries({ queryKey: ['pdr-estimates', estimateId] })
-    },
-  })
-}
-
 // R&I
-export function useRILibrary() {
+export function useRILibrary(category?: string) {
   return useQuery({
-    queryKey: ['ri-library'],
-    queryFn: () => pdrApi.getRILibrary(),
+    queryKey: ['ri-library', category],
+    queryFn: () => pdrApi.getRILibrary(category),
     staleTime: 1000 * 60 * 30, // Cache for 30 minutes
   })
 }
@@ -429,11 +601,11 @@ export function useAddRIFromLibrary() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: ({ estimateId, panelId, operationCode }: {
+    mutationFn: ({ estimateId, panelId, data }: {
       estimateId: number
       panelId: number
-      operationCode: string
-    }) => pdrApi.addRIFromLibrary(estimateId, panelId, operationCode),
+      data: { operation_code: string; scope_level?: 'min' | 'typical' | 'max' }
+    }) => pdrApi.addRIFromLibrary(estimateId, panelId, data),
     onSuccess: (_, { estimateId }) => {
       queryClient.invalidateQueries({ queryKey: ['pdr-estimates', estimateId] })
     },
@@ -447,12 +619,11 @@ export function useDecodeVIN() {
   })
 }
 
-// Insurance Profiles
-export function useInsuranceProfiles() {
-  return useQuery({
-    queryKey: ['insurance-profiles'],
-    queryFn: () => pdrApi.getInsuranceProfiles(),
-    staleTime: 1000 * 60 * 30, // Cache for 30 minutes
+// Aluminum Check
+export function useCheckAluminum() {
+  return useMutation({
+    mutationFn: ({ make, model, year }: { make: string; model?: string; year?: number }) =>
+      pdrApi.checkAluminum(make, model, year),
   })
 }
 
@@ -496,14 +667,7 @@ export function useAddDiscovery() {
   return useMutation({
     mutationFn: ({ workOrderId, data }: {
       workOrderId: number
-      data: {
-        discovery_type: string
-        description?: string
-        additional_time_hours?: number
-        additional_cost?: number
-        photo_base64?: string
-        panel_name?: string
-      }
+      data: Parameters<typeof pdrApi.addDiscovery>[1]
     }) => pdrApi.addDiscovery(workOrderId, data),
     onSuccess: (_, { workOrderId }) => {
       queryClient.invalidateQueries({ queryKey: ['work-orders', workOrderId] })
@@ -512,10 +676,19 @@ export function useAddDiscovery() {
 }
 
 // Supplement
-export function useSupplement(estimateId: number | null) {
+export function useSupplement(workOrderId: number | null) {
   return useQuery({
-    queryKey: ['supplement', estimateId],
-    queryFn: () => pdrApi.getSupplement(estimateId!),
+    queryKey: ['supplement', workOrderId],
+    queryFn: () => pdrApi.getSupplement(workOrderId!),
+    enabled: !!workOrderId,
+  })
+}
+
+// Matrix Format
+export function useMatrixFormat(estimateId: number | null) {
+  return useQuery({
+    queryKey: ['matrix-format', estimateId],
+    queryFn: () => pdrApi.getMatrix(estimateId!),
     enabled: !!estimateId,
   })
 }

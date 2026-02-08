@@ -1,8 +1,9 @@
 /**
- * PDR Invoice & Supplement Generator
+ * PDR Invoice & Supplement Generator - Matrix Based
  *
  * Final invoice screen after work is complete.
  * Two tabs: INVOICE (payment details) | SUPPLEMENT (if discoveries exist)
+ * Shows matrix-based pricing per panel with modifiers.
  * Auto-generates supplement narrative from discoveries.
  */
 
@@ -18,18 +19,20 @@ import {
   Download,
   Send,
   Printer,
-  CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   Clock,
   DollarSign,
   Car,
   Camera,
   Copy,
-  Loader2
+  Loader2,
+  Layers,
+  Droplets,
+  ArrowUp
 } from 'lucide-react'
 
-import { DiscoveryItem } from '@/components/estimating/DiscoveryForm'
-import { SIZE_LABELS } from '@/components/estimating/DentEntry'
+import { SIZE_LABELS, PANEL_NAMES } from '@/hooks/use-pdr-estimates'
 
 import {
   usePDREstimate,
@@ -46,19 +49,41 @@ export function InvoiceSupplement() {
 
   // API hooks
   const { data: estimate, isLoading: isLoadingEstimate } = usePDREstimate(id ? parseInt(id) : null)
-  const { data: supplementData, isLoading: isLoadingSupplement } = useSupplement(id ? parseInt(id) : null)
+  const { data: supplementData } = useSupplement(id ? parseInt(id) : null)
 
-  // Calculate totals
+  // Calculate totals - matrix based
   const totals = useMemo(() => {
-    if (!estimate) return { dentTotal: 0, riTotal: 0, originalTotal: 0, supplementTotal: 0, grandTotal: 0 }
+    if (!estimate) return {
+      panelTotal: 0,
+      riTotal: 0,
+      originalTotal: 0,
+      supplementTotal: 0,
+      grandTotal: 0,
+      totalDents: 0,
+      crPanels: 0
+    }
 
-    const dentTotal = estimate.dent_total || 0
-    const riTotal = estimate.ri_total || 0
-    const originalTotal = dentTotal + riTotal
+    // Sum panel totals from matrix pricing
+    let panelTotal = 0
+    let riTotal = 0
+    let totalDents = 0
+    let crPanels = 0
+
+    estimate.panels?.forEach(panel => {
+      panelTotal += panel.panel_total || 0
+      totalDents += panel.total_dent_count || 0
+      if (panel.is_conventional_repair) crPanels++
+
+      panel.ri_items?.forEach(ri => {
+        riTotal += ri.price || 0
+      })
+    })
+
+    const originalTotal = panelTotal + riTotal
     const supplementTotal = supplementData?.supplement_total || 0
     const grandTotal = supplementData?.grand_total || originalTotal
 
-    return { dentTotal, riTotal, originalTotal, supplementTotal, grandTotal }
+    return { panelTotal, riTotal, originalTotal, supplementTotal, grandTotal, totalDents, crPanels }
   }, [estimate, supplementData])
 
   // Check if has supplements
@@ -73,16 +98,15 @@ export function InvoiceSupplement() {
     }
   }
 
-  // Group dents by panel
-  const dentsByPanel = useMemo(() => {
-    if (!estimate?.panels) return {}
+  // Get display name for panel
+  const getPanelDisplayName = (panelName: string) => {
+    return PANEL_NAMES[panelName] || panelName
+  }
 
-    const grouped: Record<string, typeof estimate.panels[0]> = {}
-    estimate.panels.forEach(panel => {
-      grouped[panel.panel_name] = panel
-    })
-    return grouped
-  }, [estimate])
+  // Get majority size label
+  const getMajoritySizeLabel = (size: string) => {
+    return SIZE_LABELS[size as keyof typeof SIZE_LABELS] || size
+  }
 
   if (isLoadingEstimate) {
     return (
@@ -119,6 +143,12 @@ export function InvoiceSupplement() {
                   <Badge className="bg-orange-100 text-orange-700">
                     <AlertCircle className="h-3 w-3 mr-1" />
                     Supplement Required
+                  </Badge>
+                )}
+                {totals.crPanels > 0 && (
+                  <Badge variant="destructive">
+                    <AlertTriangle className="h-3 w-3 mr-1" />
+                    {totals.crPanels} CR Panel{totals.crPanels > 1 ? 's' : ''}
                   </Badge>
                 )}
               </div>
@@ -181,7 +211,7 @@ export function InvoiceSupplement() {
               </CardContent>
             </Card>
 
-            {/* Work Summary */}
+            {/* Work Summary - Matrix Based */}
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm flex items-center gap-2">
@@ -191,9 +221,15 @@ export function InvoiceSupplement() {
               </CardHeader>
               <CardContent className="space-y-2">
                 <div className="flex justify-between">
+                  <span className="text-muted-foreground">Panels</span>
+                  <span className="font-medium">
+                    {estimate.panels?.length || 0}
+                  </span>
+                </div>
+                <div className="flex justify-between">
                   <span className="text-muted-foreground">Total Dents</span>
                   <span className="font-medium">
-                    {estimate.panels?.reduce((sum, p) => sum + (p.dents?.length || 0), 0) || 0}
+                    {totals.totalDents}
                   </span>
                 </div>
                 <div className="flex justify-between">
@@ -202,6 +238,12 @@ export function InvoiceSupplement() {
                     {estimate.panels?.reduce((sum, p) => sum + (p.ri_items?.length || 0), 0) || 0}
                   </span>
                 </div>
+                {totals.crPanels > 0 && (
+                  <div className="flex justify-between text-red-600">
+                    <span>CR Panels</span>
+                    <span className="font-medium">{totals.crPanels}</span>
+                  </div>
+                )}
                 {hasSupplements && (
                   <div className="flex justify-between text-orange-600">
                     <span>Discoveries</span>
@@ -221,8 +263,8 @@ export function InvoiceSupplement() {
               </CardHeader>
               <CardContent className="space-y-2">
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Dent Repair</span>
-                  <span>${totals.dentTotal.toFixed(2)}</span>
+                  <span className="text-muted-foreground">Panel Repairs</span>
+                  <span>${totals.panelTotal.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">R&I Items</span>
@@ -247,26 +289,57 @@ export function InvoiceSupplement() {
               </CardContent>
             </Card>
 
-            {/* Insurance */}
-            {estimate.insurance_profile && (
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm">Insurance</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="font-medium">{estimate.insurance_profile.carrier_name}</p>
-                  {estimate.claim_number && (
-                    <p className="text-sm text-muted-foreground">
-                      Claim: {estimate.claim_number}
-                    </p>
-                  )}
-                  <Button variant="outline" size="sm" className="w-full mt-3">
-                    <Send className="h-4 w-4 mr-2" />
-                    Send to Insurance
-                  </Button>
-                </CardContent>
-              </Card>
-            )}
+            {/* Insurance / Matrix Profile */}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">Insurance Matrix</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="font-medium">{estimate.matrix_profile || estimate.insurance_profile?.carrier_name || 'Standard Matrix'}</p>
+                {estimate.claim_number && (
+                  <p className="text-sm text-muted-foreground">
+                    Claim: {estimate.claim_number}
+                  </p>
+                )}
+                <Button variant="outline" size="sm" className="w-full mt-3">
+                  <Send className="h-4 w-4 mr-2" />
+                  Send to Insurance
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* Legend */}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-xs text-muted-foreground">Legend</CardTitle>
+              </CardHeader>
+              <CardContent className="text-xs space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded">AL</span>
+                  <span>Aluminum (+25%)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded">HSS</span>
+                  <span>High Strength Steel (+25%)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded">GP</span>
+                  <span>Glue Pull (+25%)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="px-1.5 py-0.5 bg-slate-100 text-slate-700 rounded">TR</span>
+                  <span>Tall Roof (+25%)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded">O/S</span>
+                  <span>Oversized ($50 ea)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="px-1.5 py-0.5 bg-red-100 text-red-700 rounded">CR</span>
+                  <span>Conventional Repair</span>
+                </div>
+              </CardContent>
+            </Card>
           </div>
 
           {/* Right: Details */}
@@ -282,60 +355,169 @@ export function InvoiceSupplement() {
                 )}
               </TabsList>
 
-              {/* Invoice Tab */}
+              {/* Invoice Tab - Matrix Based */}
               <TabsContent value="invoice" className="space-y-4">
                 {estimate.panels?.map(panel => {
-                  const panelDentTotal = panel.dents?.reduce((sum, d) => sum + (d.final_price || 0), 0) || 0
                   const panelRITotal = panel.ri_items?.reduce((sum, r) => sum + (r.price || 0), 0) || 0
+                  const isCR = panel.is_conventional_repair
 
                   return (
-                    <Card key={panel.id}>
+                    <Card key={panel.id} className={cn(isCR && 'border-red-300')}>
                       <CardHeader className="pb-2">
                         <CardTitle className="text-base flex items-center justify-between">
-                          <span>{panel.display_name || panel.panel_name}</span>
-                          <span className="text-green-600">
-                            ${(panel.panel_total || panelDentTotal + panelRITotal).toFixed(0)}
+                          <div className="flex items-center gap-2">
+                            <span>{getPanelDisplayName(panel.panel_name)}</span>
+                            {isCR && (
+                              <Badge variant="destructive" className="text-xs">CR</Badge>
+                            )}
+                          </div>
+                          <span className={cn(
+                            "font-bold",
+                            isCR ? "text-red-600" : "text-green-600"
+                          )}>
+                            ${(panel.panel_total || 0).toFixed(2)}
                           </span>
                         </CardTitle>
                       </CardHeader>
                       <CardContent>
-                        {/* Dents table */}
-                        {panel.dents && panel.dents.length > 0 && (
-                          <table className="w-full text-sm mb-4">
-                            <thead>
-                              <tr className="border-b text-left">
-                                <th className="py-2 text-muted-foreground font-medium">#</th>
-                                <th className="py-2 text-muted-foreground font-medium">Size</th>
-                                <th className="py-2 text-muted-foreground font-medium">Zone</th>
-                                <th className="py-2 text-muted-foreground font-medium">Depth</th>
-                                <th className="py-2 text-right text-muted-foreground font-medium">Price</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {panel.dents.map((dent, idx) => (
-                                <tr key={dent.id} className="border-b border-dashed">
-                                  <td className="py-2">{idx + 1}</td>
-                                  <td className="py-2 capitalize">
-                                    {SIZE_LABELS[dent.size as keyof typeof SIZE_LABELS] || dent.size}
-                                  </td>
-                                  <td className="py-2 capitalize">{dent.zone}</td>
-                                  <td className="py-2 capitalize">{(dent as any).depth || 'medium'}</td>
-                                  <td className="py-2 text-right font-medium">
-                                    ${(dent.final_price || 0).toFixed(0)}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                            <tfoot>
-                              <tr>
-                                <td colSpan={4} className="py-2 font-medium">Dent Subtotal</td>
-                                <td className="py-2 text-right font-medium">
-                                  ${panelDentTotal.toFixed(0)}
+                        {/* CR Warning */}
+                        {isCR && (
+                          <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+                            <div className="flex items-start gap-2">
+                              <AlertTriangle className="h-5 w-5 text-red-600 mt-0.5" />
+                              <div>
+                                <p className="font-medium text-red-700">Conventional Repair Required</p>
+                                <p className="text-sm text-red-600">
+                                  Panel exceeds PDR limits - routed for conventional repair
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Matrix Info Grid */}
+                        <div className="grid grid-cols-4 gap-3 mb-4 p-3 bg-muted/50 rounded-lg">
+                          <div className="text-center">
+                            <p className="text-lg font-bold">{panel.total_dent_count || 0}</p>
+                            <p className="text-xs text-muted-foreground">Dents</p>
+                          </div>
+                          <div className="text-center">
+                            <p className="text-sm font-bold capitalize">
+                              {getMajoritySizeLabel(panel.majority_size || 'dime')}
+                            </p>
+                            <p className="text-xs text-muted-foreground">Majority</p>
+                          </div>
+                          <div className="text-center">
+                            <p className="text-lg font-bold text-orange-600">
+                              {panel.oversized_count || 0}
+                            </p>
+                            <p className="text-xs text-muted-foreground">Oversized</p>
+                          </div>
+                          <div className="text-center">
+                            <p className="text-lg font-bold text-primary">
+                              ${(panel.matrix_base_price || 0).toFixed(0)}
+                            </p>
+                            <p className="text-xs text-muted-foreground">Base</p>
+                          </div>
+                        </div>
+
+                        {/* Modifier Badges */}
+                        {(panel.is_aluminum || panel.is_hss || panel.requires_glue_pull || panel.is_tall_roof) && (
+                          <div className="flex flex-wrap gap-2 mb-4">
+                            {panel.is_aluminum && (
+                              <Badge className="bg-amber-100 text-amber-700 border-amber-300">
+                                <Layers className="h-3 w-3 mr-1" />
+                                Aluminum +25%
+                              </Badge>
+                            )}
+                            {panel.is_hss && (
+                              <Badge className="bg-purple-100 text-purple-700 border-purple-300">
+                                <Layers className="h-3 w-3 mr-1" />
+                                HSS +25%
+                              </Badge>
+                            )}
+                            {panel.requires_glue_pull && (
+                              <Badge className="bg-blue-100 text-blue-700 border-blue-300">
+                                <Droplets className="h-3 w-3 mr-1" />
+                                Glue Pull +25%
+                              </Badge>
+                            )}
+                            {panel.is_tall_roof && (
+                              <Badge className="bg-slate-100 text-slate-700 border-slate-300">
+                                <ArrowUp className="h-3 w-3 mr-1" />
+                                Tall Roof +25%
+                              </Badge>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Price Breakdown Table */}
+                        <table className="w-full text-sm mb-4">
+                          <thead>
+                            <tr className="border-b text-left">
+                              <th className="py-2 text-muted-foreground font-medium">Item</th>
+                              <th className="py-2 text-right text-muted-foreground font-medium">Amount</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr className="border-b border-dashed">
+                              <td className="py-2">
+                                Matrix Base ({panel.total_dent_count} dents, {getMajoritySizeLabel(panel.majority_size || 'dime')})
+                              </td>
+                              <td className="py-2 text-right">
+                                ${(panel.matrix_base_price || 0).toFixed(2)}
+                              </td>
+                            </tr>
+                            {panel.is_aluminum && (
+                              <tr className="border-b border-dashed text-amber-700">
+                                <td className="py-2">Aluminum Upcharge (+25%)</td>
+                                <td className="py-2 text-right">
+                                  +${((panel.matrix_base_price || 0) * 0.25).toFixed(2)}
                                 </td>
                               </tr>
-                            </tfoot>
-                          </table>
-                        )}
+                            )}
+                            {panel.is_hss && (
+                              <tr className="border-b border-dashed text-purple-700">
+                                <td className="py-2">HSS Upcharge (+25%)</td>
+                                <td className="py-2 text-right">
+                                  +${((panel.matrix_base_price || 0) * 0.25).toFixed(2)}
+                                </td>
+                              </tr>
+                            )}
+                            {panel.requires_glue_pull && (
+                              <tr className="border-b border-dashed text-blue-700">
+                                <td className="py-2">Glue Pull Upcharge (+25%)</td>
+                                <td className="py-2 text-right">
+                                  +${((panel.matrix_base_price || 0) * 0.25).toFixed(2)}
+                                </td>
+                              </tr>
+                            )}
+                            {panel.is_tall_roof && (
+                              <tr className="border-b border-dashed text-slate-700">
+                                <td className="py-2">Tall Roof Upcharge (+25%)</td>
+                                <td className="py-2 text-right">
+                                  +${((panel.matrix_base_price || 0) * 0.25).toFixed(2)}
+                                </td>
+                              </tr>
+                            )}
+                            {(panel.oversized_count || 0) > 0 && (
+                              <tr className="border-b border-dashed text-orange-700">
+                                <td className="py-2">Oversized Dents ({panel.oversized_count} x $50)</td>
+                                <td className="py-2 text-right">
+                                  +${((panel.oversized_count || 0) * 50).toFixed(2)}
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                          <tfoot>
+                            <tr className="font-bold">
+                              <td className="py-2">Panel Total</td>
+                              <td className="py-2 text-right">
+                                ${(panel.panel_total || 0).toFixed(2)}
+                              </td>
+                            </tr>
+                          </tfoot>
+                        </table>
 
                         {/* R&I items */}
                         {panel.ri_items && panel.ri_items.length > 0 && (
@@ -344,15 +526,37 @@ export function InvoiceSupplement() {
                             {panel.ri_items.map(item => (
                               <div key={item.id} className="flex justify-between text-sm py-1">
                                 <span>{item.operation_name}</span>
-                                <span>${(item.price || 0).toFixed(0)}</span>
+                                <span>${(item.price || 0).toFixed(2)}</span>
                               </div>
                             ))}
+                            <div className="flex justify-between text-sm font-medium border-t mt-2 pt-2">
+                              <span>R&I Subtotal</span>
+                              <span>${panelRITotal.toFixed(2)}</span>
+                            </div>
                           </div>
                         )}
                       </CardContent>
                     </Card>
                   )
                 })}
+
+                {/* Grand Total Card */}
+                <Card className="bg-green-50 border-green-200">
+                  <CardContent className="pt-6 pb-6">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <p className="text-sm text-muted-foreground">Invoice Total</p>
+                        <p className="text-3xl font-bold text-green-600">
+                          ${totals.originalTotal.toFixed(2)}
+                        </p>
+                      </div>
+                      <div className="text-right text-sm text-muted-foreground">
+                        <p>{estimate.panels?.length} panels</p>
+                        <p>{totals.totalDents} total dents</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
               </TabsContent>
 
               {/* Supplement Tab */}
@@ -397,7 +601,9 @@ export function InvoiceSupplement() {
                                 {discovery.discovery_type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
                               </h4>
                               {discovery.panel_name && (
-                                <p className="text-sm text-muted-foreground">{discovery.panel_name}</p>
+                                <p className="text-sm text-muted-foreground">
+                                  {getPanelDisplayName(discovery.panel_name)}
+                                </p>
                               )}
                             </div>
                             <Badge className="bg-orange-100 text-orange-700">

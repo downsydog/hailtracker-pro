@@ -37,10 +37,12 @@ const VehiclesPage = lazy(() => import("./pages/vehicles").then(m => ({ default:
 const VehicleDetailPage = lazy(() => import("./pages/vehicles/vehicle-detail").then(m => ({ default: m.VehicleDetailPage })))
 const VehicleFormPage = lazy(() => import("./pages/vehicles/vehicle-form").then(m => ({ default: m.VehicleFormPage })))
 
-// Estimates
+// Estimates - PDR zone-based pricing (replaces old generic estimates)
 const EstimatesPage = lazy(() => import("./pages/estimates").then(m => ({ default: m.EstimatesPage })))
-const EstimateDetailPage = lazy(() => import("./pages/estimates/estimate-detail").then(m => ({ default: m.EstimateDetailPage })))
-const EstimateFormPage = lazy(() => import("./pages/estimates/estimate-form").then(m => ({ default: m.EstimateFormPage })))
+const EstimateBuilderPage = lazy(() => import("./pages/estimating/EstimateBuilder").then(m => ({ default: m.EstimateBuilder })))
+const EstimateReviewPage = lazy(() => import("./pages/estimating/EstimateReview").then(m => ({ default: m.EstimateReview })))
+const WorkOrderPage = lazy(() => import("./pages/estimating/WorkOrder").then(m => ({ default: m.WorkOrder })))
+const InvoiceSupplementPage = lazy(() => import("./pages/estimating/InvoiceSupplement").then(m => ({ default: m.InvoiceSupplement })))
 
 // Schedule
 const SchedulePage = lazy(() => import("./pages/schedule").then(m => ({ default: m.SchedulePage })))
@@ -101,11 +103,6 @@ const PartOrdersPage = lazy(() => import("./pages/parts/orders").then(m => ({ de
 const RIOperationsPage = lazy(() => import("./pages/ri").then(m => ({ default: m.RIOperationsPage })))
 const RITimesPage = lazy(() => import("./pages/ri/times").then(m => ({ default: m.RITimesPage })))
 
-// PDR Estimating - zone-based pricing
-const EstimateBuilderPage = lazy(() => import("./pages/estimating/EstimateBuilder").then(m => ({ default: m.EstimateBuilder })))
-const EstimateReviewPage = lazy(() => import("./pages/estimating/EstimateReview").then(m => ({ default: m.EstimateReview })))
-const WorkOrderPage = lazy(() => import("./pages/estimating/WorkOrder").then(m => ({ default: m.WorkOrder })))
-const InvoiceSupplementPage = lazy(() => import("./pages/estimating/InvoiceSupplement").then(m => ({ default: m.InvoiceSupplement })))
 
 // Portal - separate chunk (different user type)
 const PortalLayout = lazy(() => import("./pages/portal").then(m => ({ default: m.PortalLayout })))
@@ -178,11 +175,14 @@ function App() {
           <Route path="/leads/:id" element={<LeadDetailPage />} />
           <Route path="/leads/:id/edit" element={<LeadFormPage />} />
 
-          {/* Estimates - lazy */}
+          {/* Estimates - PDR zone-based pricing */}
           <Route path="/estimates" element={<Suspense fallback={<PageLoader />}><EstimatesPage /></Suspense>} />
-          <Route path="/estimates/new" element={<Suspense fallback={<PageLoader />}><EstimateFormPage /></Suspense>} />
-          <Route path="/estimates/:id" element={<Suspense fallback={<PageLoader />}><EstimateDetailPage /></Suspense>} />
-          <Route path="/estimates/:id/edit" element={<Suspense fallback={<PageLoader />}><EstimateFormPage /></Suspense>} />
+          <Route path="/estimates/new" element={<Suspense fallback={<PageLoader />}><EstimateBuilderPage /></Suspense>} />
+          <Route path="/estimates/:id" element={<Suspense fallback={<PageLoader />}><EstimateBuilderPage /></Suspense>} />
+          <Route path="/estimates/:id/edit" element={<Suspense fallback={<PageLoader />}><EstimateBuilderPage /></Suspense>} />
+          <Route path="/estimates/:id/review" element={<Suspense fallback={<PageLoader />}><EstimateReviewPage /></Suspense>} />
+          <Route path="/estimates/:id/work-order" element={<Suspense fallback={<PageLoader />}><WorkOrderPage /></Suspense>} />
+          <Route path="/estimates/:id/invoice" element={<Suspense fallback={<PageLoader />}><InvoiceSupplementPage /></Suspense>} />
 
           {/* Schedule - lazy */}
           <Route path="/schedule" element={<Suspense fallback={<PageLoader />}><SchedulePage /></Suspense>} />
@@ -262,13 +262,6 @@ function App() {
           <Route path="/ri" element={<Suspense fallback={<PageLoader />}><RIOperationsPage /></Suspense>} />
           <Route path="/ri/times" element={<Suspense fallback={<PageLoader />}><RITimesPage /></Suspense>} />
 
-          {/* PDR Estimating - zone-based pricing */}
-          <Route path="/estimating" element={<Suspense fallback={<PageLoader />}><EstimateBuilderPage /></Suspense>} />
-          <Route path="/estimating/new" element={<Suspense fallback={<PageLoader />}><EstimateBuilderPage /></Suspense>} />
-          <Route path="/estimating/:id" element={<Suspense fallback={<PageLoader />}><EstimateReviewPage /></Suspense>} />
-          <Route path="/estimating/:id/review" element={<Suspense fallback={<PageLoader />}><EstimateReviewPage /></Suspense>} />
-          <Route path="/estimating/work-order/:id" element={<Suspense fallback={<PageLoader />}><WorkOrderPage /></Suspense>} />
-          <Route path="/estimating/invoice/:id" element={<Suspense fallback={<PageLoader />}><InvoiceSupplementPage /></Suspense>} />
         </Route>
 
         {/* Customer Portal - lazy loaded separate chunk */}

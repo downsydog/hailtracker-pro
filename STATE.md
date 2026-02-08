@@ -1,5 +1,5 @@
 # HAILTRACKER PRO - MULTI-TENANT CONVERSION STATE
-Last updated: 2026-02-03 17:55
+Last updated: 2026-02-04 00:15
 
 ## Architecture
 - Frontend: frontend/ (React + TypeScript + Vite) - port 5179
@@ -100,6 +100,31 @@ All 9 tasks completed successfully. The HailTracker Pro application now supports
 - Jobs: filtered by tenant_id (0 rows for tenant 1)
 - Frontend: http://localhost:5179 with DEV_MODE auto-login
 - npm run build compiles clean
+
+## Bug Fixes (2026-02-04)
+
+### Fix 1: DEV_MODE Hiding Auth Bugs [COMPLETE]
+- Added POST /api/auth/dev-login endpoint for passwordless login as any user
+- Added X-Test-Auth: true header support to force real authentication even in DEV_MODE
+- Updated login_required decorator to respect X-Test-Auth header
+- Updated require_admin decorator to respect X-Test-Auth header
+
+### Fix 2: POST /api/leads Returns 405 [COMPLETE]
+- Implemented full CRUD for leads:
+  - POST /api/leads - create lead (scoped to current tenant)
+  - GET /api/leads - list leads (scoped to current tenant)
+  - GET /api/leads/:id - get single lead (tenant-scoped)
+  - PUT /api/leads/:id - update lead (tenant-scoped)
+  - DELETE /api/leads/:id - delete lead (tenant-scoped)
+- Added @login_required decorator to leads endpoints
+- Added source column to leads table
+
+### Fix 3: Tenant Isolation Verified [COMPLETE]
+- Tested with real JWT tokens (not DEV_MODE bypass)
+- test@example.com (tenant_id=1) created "Tenant 1 Lead" - only sees their lead
+- kyle@test.com (tenant_id=2) created "Tenant 2 Lead" - only sees their lead
+- Database confirmed both leads with correct tenant_id
+- Full isolation working correctly
 
 ## Errors/Blockers
 (none)

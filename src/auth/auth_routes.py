@@ -343,6 +343,92 @@ def get_me():
     })
 
 
+@auth_bp.route('/dev-login', methods=['POST'])
+def dev_login():
+    """
+    DEV_MODE ONLY: Login as any user by email without password.
+    This endpoint is for testing real authentication/authorization.
+
+    Request Body:
+        {
+            "email": "user@example.com"
+        }
+
+    Returns:
+        {
+            "success": true,
+            "token": "jwt_access_token",
+            "refresh_token": "jwt_refresh_token",
+            "user": { user info }
+        }
+    """
+    if not DEV_MODE:
+        return jsonify({'success': False, 'error': 'This endpoint is only available in DEV_MODE'}), 403
+
+    data = request.get_json() or {}
+    email = data.get('email')
+
+    if not email:
+        return jsonify({'success': False, 'error': 'Email required'}), 400
+
+    try:
+        conn = get_db()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # Find user by email
+        cur.execute("""
+            SELECT id, tenant_id, email, name, phone, role, is_active
+            FROM users
+            WHERE email = %s
+        """, (email,))
+
+        user = cur.fetchone()
+
+        if not user:
+            conn.close()
+            return jsonify({'success': False, 'error': f'User not found: {email}'}), 404
+
+        if not user['is_active']:
+            conn.close()
+            return jsonify({'success': False, 'error': 'Account is disabled'}), 401
+
+        # Update last login
+        cur.execute("""
+            UPDATE users SET last_login = %s WHERE id = %s
+        """, (datetime.utcnow(), user['id']))
+        conn.commit()
+        conn.close()
+
+        # Generate tokens (REAL tokens, not dev bypass)
+        token = generate_token(
+            user_id=user['id'],
+            tenant_id=user['tenant_id'],
+            email=user['email'],
+            role=user['role'],
+            name=user['name']
+        )
+        refresh = generate_refresh_token(user['id'], user['tenant_id'])
+
+        return jsonify({
+            'success': True,
+            'token': token,
+            'refresh_token': refresh,
+            'user': {
+                'id': user['id'],
+                'email': user['email'],
+                'name': user['name'],
+                'role': user['role'],
+                'role_name': user['role'].title(),
+                'tenant_id': user['tenant_id'],
+                'permissions': get_permissions_for_role(user['role'])
+            },
+            'dev_login': True
+        })
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'Database error: {str(e)}'}), 500
+
+
 def get_permissions_for_role(role: str) -> list:
     """
     Get permissions list for a given role.

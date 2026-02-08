@@ -14,7 +14,9 @@ def login_required(f):
     """
     Decorator that requires a valid JWT token to access the route.
 
-    In DEV_MODE, automatically uses a dev admin user.
+    In DEV_MODE, automatically uses a dev admin user UNLESS:
+    - X-Test-Auth: true header is present (forces real auth)
+    - Authorization header is present (uses real token)
 
     Usage:
         @app.route('/api/protected')
@@ -25,8 +27,12 @@ def login_required(f):
     """
     @wraps(f)
     def decorated_function(*args, **kwargs):
+        auth_header = request.headers.get('Authorization')
+        test_auth = request.headers.get('X-Test-Auth', '').lower() == 'true'
+
         # DEV_MODE bypass - auto-authenticate as dev admin
-        if DEV_MODE:
+        # UNLESS X-Test-Auth header is set OR Authorization header is present
+        if DEV_MODE and not test_auth and not auth_header:
             dev_user = get_dev_user()
             g.current_user = {
                 'user_id': dev_user['user_id'],
@@ -37,9 +43,7 @@ def login_required(f):
             }
             return f(*args, **kwargs)
 
-        # Check for Authorization header
-        auth_header = request.headers.get('Authorization')
-
+        # Real authentication required
         if not auth_header:
             return jsonify({'error': 'Authorization header required'}), 401
 

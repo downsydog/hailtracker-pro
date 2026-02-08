@@ -500,10 +500,10 @@ def get_category_info():
         return jsonify({
             'categories': [
                 {'key': 'car_dealership', 'name': 'Car Dealership', 'tier': 1, 'icon': '🚗', 'color': '#4CAF50'},
-                {'key': 'rental_car', 'name': 'Rental Car', 'tier': 1, 'icon': '🚙', 'color': '#2196F3'},
+                {'key': 'car_rental', 'name': 'Car Rental', 'tier': 1, 'icon': '🔑', 'color': '#2196F3'},
                 {'key': 'municipal', 'name': 'Municipal', 'tier': 1, 'icon': '🏛️', 'color': '#F44336'},
                 {'key': 'hospital', 'name': 'Hospital', 'tier': 1, 'icon': '🏥', 'color': '#E91E63'},
-                {'key': 'school', 'name': 'School', 'tier': 1, 'icon': '🏫', 'color': '#673AB7'},
+                {'key': 'school_district', 'name': 'Schools', 'tier': 1, 'icon': '🏫', 'color': '#673AB7'},
             ]
         })
 
@@ -1543,7 +1543,8 @@ def get_tile_discovery_service():
     """Get TileBasedDiscovery service instance."""
     try:
         from src.business.tile_discovery import TileBasedDiscovery
-        return TileBasedDiscovery(tile_size_miles=0.5)
+        # Use 0.25 sq mile tiles for maximum coverage (Kyle's proven tile size)
+        return TileBasedDiscovery(tile_size_miles=0.25)
     except Exception as e:
         logger.warning(f"TileBasedDiscovery not available: {e}")
         return None
@@ -1565,18 +1566,21 @@ def tile_discover_businesses():
     POST body:
     {
         "event_ids": [80812, 80801, ...],     // Hail event IDs
-        "tile_size_miles": 0.5,                // Tile size (0.25, 0.5, or 1.0)
+        "tile_size_miles": 0.25,               // Tile size (0.25 recommended for max results)
         "sources": ["osm", "bbb"],             // Data sources to use
         "force_refresh": false                 // Ignore tile cache
     }
 
-    Available sources:
-    - "osm": OpenStreetMap (comprehensive, has coordinates) - WORKING
+    Available sources (all 6 APIs for maximum coverage):
+    - "osm": OpenStreetMap (comprehensive, free, unlimited) - WORKING
+    - "yelp": Yelp Fusion API (50/call, 5k/day) - WORKING
+    - "foursquare": Foursquare Places API (50/call, 100k/month) - WORKING
+    - "here": HERE Places API (100/call, 250k/month) - WORKING
+    - "tomtom": TomTom Search API (100/call, 2.5k/day) - WORKING
+    - "google": Google Places API (60/call, costs $) - WORKING
     - "bbb": Better Business Bureau (accredited businesses) - WORKING
     - "yellowpages": Yellow Pages (may be blocked) - BLOCKED
     - "manta": Manta.com business directory (may be blocked) - BLOCKED
-    - "foursquare": Foursquare Places API (needs API key) - READY
-    - "google": Google Places (future - not implemented)
 
     Returns:
     {
@@ -1609,18 +1613,21 @@ def tile_discover_businesses():
 
     data = request.get_json() or {}
     event_ids = data.get('event_ids', [])
-    tile_size = data.get('tile_size_miles', 0.5)
-    sources = data.get('sources', ['osm'])
+    tile_size = data.get('tile_size_miles', 0.25)  # 0.25 sq miles for max results
+    sources = data.get('sources', ['osm', 'yelp', 'foursquare', 'here', 'tomtom', 'google'])
     force_refresh = data.get('force_refresh', False)
+    # Smart default: limit to 200 tiles for reasonable response time (~4-5 min)
+    # Use max_tiles=0 for unlimited (full search)
+    max_tiles = data.get('max_tiles', 200)
 
     if not event_ids:
         return jsonify({'error': 'event_ids is required'}), 400
 
-    # Validate sources
-    valid_sources = ['osm', 'bbb', 'yellowpages', 'google', 'manta', 'foursquare']
+    # Validate sources - all 6 APIs supported
+    valid_sources = ['osm', 'yelp', 'foursquare', 'here', 'tomtom', 'google', 'bbb', 'yellowpages', 'manta']
     sources = [s for s in sources if s in valid_sources]
     if not sources:
-        sources = ['osm']
+        sources = ['osm', 'yelp', 'foursquare', 'here', 'tomtom', 'google']
 
     try:
         logger.info(f"Tile-based discovery for {len(event_ids)} events")
@@ -1672,7 +1679,8 @@ def tile_discover_businesses():
         result = discovery.discover_for_swaths(
             swaths=swaths,
             sources=sources,
-            use_cache=not force_refresh
+            use_cache=not force_refresh,
+            max_tiles=max_tiles  # Limit tiles for faster response
         )
 
         # Format businesses for frontend

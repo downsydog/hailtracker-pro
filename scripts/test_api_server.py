@@ -59,17 +59,31 @@ def health():
 
 # Import and register auth blueprint
 from auth.auth_routes import auth_bp
+from auth.auth_middleware import login_required
 app.register_blueprint(auth_bp)
 
 # Import and register admin blueprint (requires admin role)
 from admin.admin_routes import admin_bp
 app.register_blueprint(admin_bp)
 
+# Import and register PDR estimating blueprints
+from estimating.estimate_routes import pdr_estimates_bp, work_orders_bp
+app.register_blueprint(pdr_estimates_bp)
+app.register_blueprint(work_orders_bp)
+
 # Logout endpoint (simple, no state needed)
 @app.route('/api/auth/logout', methods=['POST'])
 def logout():
     """Logout endpoint."""
     return jsonify({"success": True, "message": "Logged out successfully"})
+
+
+# Discovery types endpoint (global)
+@app.route('/api/discovery-types', methods=['GET'])
+def get_discovery_types():
+    """List all available discovery types."""
+    from estimating.supplement_generator import list_discovery_types
+    return jsonify(list_discovery_types())
 
 
 @app.route('/api/storms')
@@ -1004,47 +1018,188 @@ def get_jobs():
     except Exception as e:
         return jsonify({"jobs": [], "stats": {"total": 0, "in_progress": 0, "total_revenue": 0}, "total": 0, "error": str(e)})
 
-@app.route('/api/leads')
-def get_leads():
+@app.route('/api/leads', methods=['GET', 'POST'])
+@login_required
+def leads_endpoint():
     """
-    Get leads for the current tenant.
+    Get or create leads for the current tenant.
     Tenant-scoped: filters by tenant_id from JWT.
     """
     from auth.tenant_context import get_current_tenant_id
+    from datetime import datetime
+
+    tenant_id = get_current_tenant_id()
+
+    if request.method == 'GET':
+        try:
+            per_page = request.args.get('per_page', 100, type=int)
+            page = request.args.get('page', 1, type=int)
+            offset = (page - 1) * per_page
+
+            conn = get_db()
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+            # Get leads filtered by tenant_id
+            cursor.execute("""
+                SELECT * FROM leads
+                WHERE tenant_id = %s
+                ORDER BY created_at DESC
+                LIMIT %s OFFSET %s
+            """, (tenant_id, per_page, offset))
+            leads = cursor.fetchall()
+
+            # Get total count for this tenant
+            cursor.execute("SELECT COUNT(*) FROM leads WHERE tenant_id = %s", (tenant_id,))
+            total = cursor.fetchone()['count']
+
+            conn.close()
+
+            # Convert datetime objects to ISO format
+            result_leads = []
+            for lead in leads:
+                lead_dict = dict(lead)
+                for key, value in lead_dict.items():
+                    if hasattr(value, 'isoformat'):
+                        lead_dict[key] = value.isoformat()
+                result_leads.append(lead_dict)
+
+            return jsonify({
+                "leads": result_leads,
+                "total": total,
+                "page": page,
+                "per_page": per_page,
+                "tenant_id": tenant_id
+            })
+        except Exception as e:
+            return jsonify({"leads": [], "total": 0, "error": str(e)})
+
+    elif request.method == 'POST':
+        # Create a new lead scoped to current tenant
+        try:
+            data = request.get_json() or {}
+
+            company_name = data.get('company_name')
+            contact_name = data.get('contact_name')
+            phone = data.get('phone')
+            email = data.get('email')
+            address = data.get('address')
+            status = data.get('status', 'new')
+            source = data.get('source', 'manual')
+            notes = data.get('notes')
+            storm_id = data.get('storm_id')
+            business_id = data.get('business_id')
+
+            if not company_name:
+                return jsonify({"success": False, "error": "company_name is required"}), 400
+
+            conn = get_db()
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+            cursor.execute("""
+                INSERT INTO leads (tenant_id, company_name, contact_name, phone, email, address, status, source, notes, storm_id, business_id, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING *
+            """, (tenant_id, company_name, contact_name, phone, email, address, status, source, notes, storm_id, business_id, datetime.utcnow()))
+
+            lead = cursor.fetchone()
+            conn.commit()
+            conn.close()
+
+            # Convert datetime objects to ISO format
+            lead_dict = dict(lead)
+            for key, value in lead_dict.items():
+                if hasattr(value, 'isoformat'):
+                    lead_dict[key] = value.isoformat()
+
+            return jsonify({
+                "success": True,
+                "lead": lead_dict,
+                "tenant_id": tenant_id
+            }), 201
+
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/leads/<int:lead_id>', methods=['GET', 'PUT', 'DELETE'])
+@login_required
+def lead_detail(lead_id):
+    """
+    Get, update, or delete a specific lead.
+    Tenant-scoped: only allows access to leads belonging to current tenant.
+    """
+    from auth.tenant_context import get_current_tenant_id
+    from datetime import datetime
+
+    tenant_id = get_current_tenant_id()
 
     try:
-        tenant_id = get_current_tenant_id()
-        per_page = request.args.get('per_page', 100, type=int)
-        page = request.args.get('page', 1, type=int)
-        offset = (page - 1) * per_page
-
         conn = get_db()
         cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-        # Get leads filtered by tenant_id
-        cursor.execute("""
-            SELECT * FROM leads
-            WHERE tenant_id = %s
-            ORDER BY created_at DESC
-            LIMIT %s OFFSET %s
-        """, (tenant_id, per_page, offset))
-        leads = cursor.fetchall()
+        # First verify the lead belongs to this tenant
+        cursor.execute("SELECT * FROM leads WHERE id = %s AND tenant_id = %s", (lead_id, tenant_id))
+        lead = cursor.fetchone()
 
-        # Get total count for this tenant
-        cursor.execute("SELECT COUNT(*) FROM leads WHERE tenant_id = %s", (tenant_id,))
-        total = cursor.fetchone()['count']
+        if not lead:
+            conn.close()
+            return jsonify({"error": "Lead not found or access denied"}), 404
 
-        conn.close()
+        if request.method == 'GET':
+            conn.close()
+            lead_dict = dict(lead)
+            for key, value in lead_dict.items():
+                if hasattr(value, 'isoformat'):
+                    lead_dict[key] = value.isoformat()
+            return jsonify({"lead": lead_dict, "tenant_id": tenant_id})
 
-        return jsonify({
-            "leads": [dict(l) for l in leads],
-            "total": total,
-            "page": page,
-            "per_page": per_page,
-            "tenant_id": tenant_id
-        })
+        elif request.method == 'PUT':
+            data = request.get_json() or {}
+
+            # Build update query dynamically
+            update_fields = []
+            params = []
+            allowed_fields = ['company_name', 'contact_name', 'phone', 'email', 'address', 'status', 'source', 'notes', 'storm_id', 'business_id']
+
+            for field in allowed_fields:
+                if field in data:
+                    update_fields.append(f"{field} = %s")
+                    params.append(data[field])
+
+            if not update_fields:
+                conn.close()
+                return jsonify({"error": "No valid fields to update"}), 400
+
+            # Add updated_at
+            update_fields.append("updated_at = %s")
+            params.append(datetime.utcnow())
+
+            # Add WHERE clause params
+            params.extend([lead_id, tenant_id])
+
+            query = f"UPDATE leads SET {', '.join(update_fields)} WHERE id = %s AND tenant_id = %s RETURNING *"
+            cursor.execute(query, params)
+
+            updated_lead = cursor.fetchone()
+            conn.commit()
+            conn.close()
+
+            lead_dict = dict(updated_lead)
+            for key, value in lead_dict.items():
+                if hasattr(value, 'isoformat'):
+                    lead_dict[key] = value.isoformat()
+
+            return jsonify({"success": True, "lead": lead_dict, "tenant_id": tenant_id})
+
+        elif request.method == 'DELETE':
+            cursor.execute("DELETE FROM leads WHERE id = %s AND tenant_id = %s", (lead_id, tenant_id))
+            conn.commit()
+            conn.close()
+
+            return jsonify({"success": True, "message": f"Lead {lead_id} deleted", "tenant_id": tenant_id})
+
     except Exception as e:
-        return jsonify({"leads": [], "total": 0, "error": str(e)})
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/estimates')
 def get_estimates():

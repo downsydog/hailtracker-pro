@@ -101,6 +101,12 @@ const PartOrdersPage = lazy(() => import("./pages/parts/orders").then(m => ({ de
 const RIOperationsPage = lazy(() => import("./pages/ri").then(m => ({ default: m.RIOperationsPage })))
 const RITimesPage = lazy(() => import("./pages/ri/times").then(m => ({ default: m.RITimesPage })))
 
+// PDR Estimating - zone-based pricing
+const EstimateBuilderPage = lazy(() => import("./pages/estimating/EstimateBuilder").then(m => ({ default: m.EstimateBuilder })))
+const EstimateReviewPage = lazy(() => import("./pages/estimating/EstimateReview").then(m => ({ default: m.EstimateReview })))
+const WorkOrderPage = lazy(() => import("./pages/estimating/WorkOrder").then(m => ({ default: m.WorkOrder })))
+const InvoiceSupplementPage = lazy(() => import("./pages/estimating/InvoiceSupplement").then(m => ({ default: m.InvoiceSupplement })))
+
 // Portal - separate chunk (different user type)
 const PortalLayout = lazy(() => import("./pages/portal").then(m => ({ default: m.PortalLayout })))
 const PortalLoginPage = lazy(() => import("./pages/portal/login").then(m => ({ default: m.PortalLoginPage })))
@@ -255,6 +261,14 @@ function App() {
           {/* R&I Operations - lazy */}
           <Route path="/ri" element={<Suspense fallback={<PageLoader />}><RIOperationsPage /></Suspense>} />
           <Route path="/ri/times" element={<Suspense fallback={<PageLoader />}><RITimesPage /></Suspense>} />
+
+          {/* PDR Estimating - zone-based pricing */}
+          <Route path="/estimating" element={<Suspense fallback={<PageLoader />}><EstimateBuilderPage /></Suspense>} />
+          <Route path="/estimating/new" element={<Suspense fallback={<PageLoader />}><EstimateBuilderPage /></Suspense>} />
+          <Route path="/estimating/:id" element={<Suspense fallback={<PageLoader />}><EstimateReviewPage /></Suspense>} />
+          <Route path="/estimating/:id/review" element={<Suspense fallback={<PageLoader />}><EstimateReviewPage /></Suspense>} />
+          <Route path="/estimating/work-order/:id" element={<Suspense fallback={<PageLoader />}><WorkOrderPage /></Suspense>} />
+          <Route path="/estimating/invoice/:id" element={<Suspense fallback={<PageLoader />}><InvoiceSupplementPage /></Suspense>} />
         </Route>
 
         {/* Customer Portal - lazy loaded separate chunk */}

@@ -24,11 +24,19 @@ def get_db():
 
 
 def require_admin(f):
-    """Decorator that requires admin role."""
+    """
+    Decorator that requires admin role.
+    In DEV_MODE, allows all requests UNLESS:
+    - X-Test-Auth: true header is present (forces real auth check)
+    - Authorization header is present (uses real token)
+    """
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        # In DEV_MODE, allow all requests
-        if DEV_MODE:
+        auth_header = request.headers.get('Authorization')
+        test_auth = request.headers.get('X-Test-Auth', '').lower() == 'true'
+
+        # In DEV_MODE, allow all requests UNLESS testing real auth
+        if DEV_MODE and not test_auth and not auth_header:
             return f(*args, **kwargs)
 
         # Check if user is authenticated

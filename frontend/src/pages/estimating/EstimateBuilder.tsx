@@ -1,101 +1,89 @@
 /**
  * PDR Estimate Builder - Fast Dent Entry Interface
  *
- * Tap zone to add dent instantly - no modals, no confirmations.
- * Goal: Add 10 dents to a panel in < 30 seconds.
+ * Mobile-first, one-tap dent entry for maximum speed.
+ * Goal: Add 20 dents to a panel in < 45 seconds.
+ *
+ * Features:
+ * - VIN decode with vehicle tier detection
+ * - Coin-based dent sizes (dime → oversized)
+ * - Depth multipliers (shallow → severe)
+ * - Zone multipliers (center, edge, crease, body_line)
+ * - R&I suggestions with scope bullets
+ * - Customer/Lead linking
+ * - Insurance profile selection
  */
 
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useEffect } from 'react'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
-  Plus,
-  Minus,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
+import {
+  ArrowLeft,
   Car,
   Save,
-  Trash2,
-  ChevronRight,
   Calculator,
-  Undo2
+  ChevronDown,
+  ChevronRight,
+  Search,
+  Link,
+  AlertTriangle,
+  Loader2,
+  Undo2,
+  User,
+  Building2
 } from 'lucide-react'
 
-// Types
-interface Dent {
-  id: string
-  size: 'small' | 'medium' | 'large' | 'xlarge'
-  zone: 'center' | 'edge' | 'crease'
-  price?: number
-}
+// Import our new components
+import { PanelSelector, PanelInfo, DEFAULT_PANELS } from '@/components/estimating/PanelSelector'
+import { DentEntry, DentList, DentSize, DentZone, DentDepth } from '@/components/estimating/DentEntry'
+import { RISuggestions, RIItemsList, RILibraryItem } from '@/components/estimating/RISuggestions'
+import { RunningTotals } from '@/components/estimating/EstimateSummary'
 
-interface Panel {
-  id: string
-  name: string
-  displayName: string
-  dents: Dent[]
-  material: 'steel' | 'aluminum' | 'high_strength_steel'
-}
+// Import hooks
+import {
+  usePDREstimate,
+  useCreatePDREstimate,
+  useUpdatePDREstimate,
+  useAddPanel,
+  useAddDent,
+  useAddDentsBatch,
+  useDeleteDent,
+  useRISuggestions,
+  useAddRIFromLibrary,
+  useDecodeVIN,
+  useInsuranceProfiles,
+  useSearchLeads,
+  useCalculateTotals,
+  useLinkToCRM,
+  PDREstimate,
+  Panel,
+} from '@/hooks/use-pdr-estimates'
+import { cn } from '@/lib/utils'
 
-interface VehicleInfo {
-  year: string
-  make: string
-  model: string
-  vin?: string
-}
-
-// Pricing config (mirrors backend)
-const BASE_PRICES = {
-  small: 50,
-  medium: 75,
-  large: 100,
-  xlarge: 150
-}
-
-const ZONE_MULTIPLIERS = {
-  center: 1.0,
-  edge: 1.4,
-  crease: 1.6
-}
-
-const PANEL_DIFFICULTY = {
-  hood: 1.0,
-  roof: 1.2,
-  driver_door: 1.0,
-  passenger_door: 1.0,
-  driver_rear_door: 1.1,
-  passenger_rear_door: 1.1,
-  driver_fender: 1.1,
-  passenger_fender: 1.1,
-  driver_quarter: 1.3,
-  passenger_quarter: 1.3,
-  trunk: 1.0,
-  tailgate: 1.1
-}
-
-const MATERIAL_MODIFIERS = {
-  steel: 1.0,
-  aluminum: 1.5,
-  high_strength_steel: 1.3
-}
-
-// Available panels
-const AVAILABLE_PANELS = [
-  { id: 'hood', name: 'hood', displayName: 'Hood' },
-  { id: 'roof', name: 'roof', displayName: 'Roof' },
-  { id: 'driver_fender', name: 'driver_fender', displayName: 'Driver Fender' },
-  { id: 'passenger_fender', name: 'passenger_fender', displayName: 'Passenger Fender' },
-  { id: 'driver_door', name: 'driver_door', displayName: 'Driver Door' },
-  { id: 'passenger_door', name: 'passenger_door', displayName: 'Passenger Door' },
-  { id: 'driver_rear_door', name: 'driver_rear_door', displayName: 'Driver Rear Door' },
-  { id: 'passenger_rear_door', name: 'passenger_rear_door', displayName: 'Passenger Rear Door' },
-  { id: 'driver_quarter', name: 'driver_quarter', displayName: 'Driver Quarter' },
-  { id: 'passenger_quarter', name: 'passenger_quarter', displayName: 'Passenger Quarter' },
-  { id: 'trunk', name: 'trunk', displayName: 'Trunk' },
-  { id: 'tailgate', name: 'tailgate', displayName: 'Tailgate' }
-]
-
-// Years for dropdown
-const YEARS = Array.from({ length: 30 }, (_, i) => (new Date().getFullYear() - i).toString())
+// Years dropdown
+const YEARS = Array.from({ length: 35 }, (_, i) => (new Date().getFullYear() + 1 - i).toString())
 
 // Common makes
 const MAKES = [
@@ -105,677 +93,755 @@ const MAKES = [
   'Tesla', 'Toyota', 'Volkswagen', 'Volvo'
 ]
 
-function generateId(): string {
-  return Math.random().toString(36).substr(2, 9)
+// Vehicle tiers
+const VEHICLE_TIERS = [
+  { value: 'economy', label: 'Economy (0.85x)' },
+  { value: 'standard', label: 'Standard (1.0x)' },
+  { value: 'premium', label: 'Premium (1.15x)' },
+  { value: 'luxury', label: 'Luxury (1.35x)' },
+  { value: 'ev_adas', label: 'EV/ADAS (1.25x)' }
+]
+
+const STATUS_STYLES: Record<string, string> = {
+  draft: 'bg-gray-100 text-gray-700',
+  pending: 'bg-yellow-100 text-yellow-700',
+  approved: 'bg-green-100 text-green-700',
+  completed: 'bg-blue-100 text-blue-700'
 }
 
-function calculateDentPrice(
-  size: Dent['size'],
-  zone: Dent['zone'],
-  panelName: string,
-  material: Panel['material']
-): number {
-  const basePrice = BASE_PRICES[size]
-  const zoneMult = ZONE_MULTIPLIERS[zone]
-  const panelMult = PANEL_DIFFICULTY[panelName as keyof typeof PANEL_DIFFICULTY] || 1.0
-  const materialMult = MATERIAL_MODIFIERS[material]
+export function EstimateBuilder() {
+  const navigate = useNavigate()
+  const { id } = useParams<{ id: string }>()
+  const [searchParams] = useSearchParams()
+  const isNew = !id || id === 'new'
 
-  return Math.round(basePrice * zoneMult * panelMult * materialMult * 100) / 100
-}
+  // Local state
+  const [selectedPanelId, setSelectedPanelId] = useState<string | null>(null)
+  const [vehicleExpanded, setVehicleExpanded] = useState(true)
+  const [customerExpanded, setCustomerExpanded] = useState(false)
+  const [vinInput, setVinInput] = useState('')
+  const [leadSearchOpen, setLeadSearchOpen] = useState(false)
+  const [leadSearchQuery, setLeadSearchQuery] = useState('')
+  const [undoStack, setUndoStack] = useState<Array<{ type: string; id: number }>>([])
 
-// Zone selector SVG component
-function ZoneSelector({
-  onZoneClick,
-  currentSize,
-  dentCounts
-}: {
-  onZoneClick: (zone: Dent['zone']) => void
-  currentSize: Dent['size']
-  dentCounts: { center: number; edge: number; crease: number }
-}) {
-  return (
-    <svg viewBox="0 0 200 200" className="w-full max-w-[300px] mx-auto">
-      {/* Crease zone (outermost ring) */}
-      <circle
-        cx="100"
-        cy="100"
-        r="95"
-        fill="#fecaca"
-        stroke="#dc2626"
-        strokeWidth="2"
-        className="cursor-pointer hover:fill-red-300 transition-colors"
-        onClick={() => onZoneClick('crease')}
-      />
-      {/* Edge zone (middle ring) */}
-      <circle
-        cx="100"
-        cy="100"
-        r="70"
-        fill="#fef08a"
-        stroke="#ca8a04"
-        strokeWidth="2"
-        className="cursor-pointer hover:fill-yellow-300 transition-colors"
-        onClick={() => onZoneClick('edge')}
-      />
-      {/* Center zone (inner circle) */}
-      <circle
-        cx="100"
-        cy="100"
-        r="40"
-        fill="#bbf7d0"
-        stroke="#16a34a"
-        strokeWidth="2"
-        className="cursor-pointer hover:fill-green-300 transition-colors"
-        onClick={() => onZoneClick('center')}
-      />
+  // Form state for new estimate
+  const [formData, setFormData] = useState({
+    vehicle_year: '',
+    vehicle_make: '',
+    vehicle_model: '',
+    vehicle_vin: '',
+    vehicle_tier: 'standard',
+    customer_name: '',
+    customer_email: '',
+    customer_phone: '',
+    claim_number: '',
+    insurance_profile_id: ''
+  })
 
-      {/* Zone labels with counts */}
-      <text x="100" y="105" textAnchor="middle" className="text-sm font-bold fill-green-800 pointer-events-none">
-        Center ({dentCounts.center})
-      </text>
-      <text x="100" y="155" textAnchor="middle" className="text-xs font-medium fill-yellow-800 pointer-events-none">
-        Edge ({dentCounts.edge})
-      </text>
-      <text x="100" y="185" textAnchor="middle" className="text-xs font-medium fill-red-800 pointer-events-none">
-        Crease ({dentCounts.crease})
-      </text>
+  // API hooks
+  const { data: estimate, isLoading: isLoadingEstimate, refetch } = usePDREstimate(isNew ? null : parseInt(id!))
+  const createEstimate = useCreatePDREstimate()
+  const updateEstimate = useUpdatePDREstimate()
+  const addPanel = useAddPanel()
+  const addDent = useAddDent()
+  const addDentsBatch = useAddDentsBatch()
+  const deleteDent = useDeleteDent()
+  const decodeVIN = useDecodeVIN()
+  const { data: insuranceProfilesData } = useInsuranceProfiles()
+  const { data: leadSearchData } = useSearchLeads(leadSearchQuery)
+  const calculateTotals = useCalculateTotals()
+  const linkToCRM = useLinkToCRM()
 
-      {/* Current size indicator */}
-      <text x="100" y="30" textAnchor="middle" className="text-xs font-bold fill-gray-600 pointer-events-none">
-        TAP TO ADD: {currentSize.toUpperCase()}
-      </text>
-    </svg>
+  // R&I suggestions for selected panel
+  const selectedPanel = useMemo(() => {
+    if (!estimate || !selectedPanelId) return null
+    return estimate.panels?.find(p => p.panel_name === selectedPanelId) || null
+  }, [estimate, selectedPanelId])
+
+  const { data: riSuggestionsData, isLoading: isLoadingRI } = useRISuggestions(
+    estimate?.id || null,
+    selectedPanel?.id || null
   )
-}
+  const addRIFromLibrary = useAddRIFromLibrary()
 
-// Size selector component
-function SizeSelector({
-  currentSize,
-  onSizeChange
-}: {
-  currentSize: Dent['size']
-  onSizeChange: (size: Dent['size']) => void
-}) {
-  const sizes: Dent['size'][] = ['small', 'medium', 'large', 'xlarge']
+  // Derived state
+  const insuranceProfiles = insuranceProfilesData?.profiles || []
+  const riSuggestions = riSuggestionsData?.suggestions || []
+  const leadResults = leadSearchData?.leads || []
 
-  return (
-    <div className="flex gap-2">
-      {sizes.map(size => (
-        <Button
-          key={size}
-          variant={currentSize === size ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => onSizeChange(size)}
-          className="flex-1"
-        >
-          {size === 'xlarge' ? 'XL' : size.charAt(0).toUpperCase()}
-          <span className="ml-1 text-xs opacity-70">${BASE_PRICES[size]}</span>
-        </Button>
-      ))}
-    </div>
-  )
-}
+  // Panel info for selector
+  const panelInfo: PanelInfo[] = useMemo(() => {
+    if (!estimate?.panels) return []
+    return estimate.panels.map(p => ({
+      id: p.panel_name,
+      name: p.panel_name,
+      displayName: DEFAULT_PANELS.find(dp => dp.name === p.panel_name)?.displayName || p.panel_name,
+      dentCount: p.dents?.length || 0,
+      riCount: p.ri_items?.length || 0,
+      total: p.panel_total || 0,
+      material: p.material
+    }))
+  }, [estimate?.panels])
 
-// Quick add buttons
-function QuickAddButtons({
-  onQuickAdd,
-  currentZone
-}: {
-  onQuickAdd: (size: Dent['size'], count: number) => void
-  currentZone: Dent['zone']
-}) {
-  return (
-    <div className="grid grid-cols-3 gap-2">
-      <Button
-        variant="secondary"
-        size="sm"
-        onClick={() => onQuickAdd('small', 5)}
-        className="text-xs"
-      >
-        +5 Small
-      </Button>
-      <Button
-        variant="secondary"
-        size="sm"
-        onClick={() => onQuickAdd('medium', 3)}
-        className="text-xs"
-      >
-        +3 Medium
-      </Button>
-      <Button
-        variant="secondary"
-        size="sm"
-        onClick={() => onQuickAdd('large', 2)}
-        className="text-xs"
-      >
-        +2 Large
-      </Button>
-    </div>
-  )
-}
+  // Aluminum panels from VIN decode
+  const [aluminumPanels, setAluminumPanels] = useState<string[]>([])
 
-// Panel list item
-function PanelListItem({
-  panel,
-  isSelected,
-  onClick,
-  onRemove
-}: {
-  panel: Panel
-  isSelected: boolean
-  onClick: () => void
-  onRemove: () => void
-}) {
-  const dentCount = panel.dents.length
-  const panelTotal = panel.dents.reduce((sum, d) => sum + (d.price || 0), 0)
+  // Initialize form from existing estimate
+  useEffect(() => {
+    if (estimate) {
+      setFormData({
+        vehicle_year: estimate.vehicle_year?.toString() || '',
+        vehicle_make: estimate.vehicle_make || '',
+        vehicle_model: estimate.vehicle_model || '',
+        vehicle_vin: estimate.vehicle_vin || '',
+        vehicle_tier: estimate.vehicle_tier || 'standard',
+        customer_name: estimate.customer_name || '',
+        customer_email: estimate.customer_email || '',
+        customer_phone: estimate.customer_phone || '',
+        claim_number: estimate.claim_number || '',
+        insurance_profile_id: estimate.insurance_profile_id?.toString() || ''
+      })
+      if (estimate.vehicle_vin) {
+        setVinInput(estimate.vehicle_vin)
+      }
+      // Collapse vehicle section if already filled
+      if (estimate.vehicle_year && estimate.vehicle_make) {
+        setVehicleExpanded(false)
+      }
+    }
+  }, [estimate])
 
-  return (
-    <div
-      className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-colors ${
-        isSelected ? 'border-primary bg-primary/5' : 'border-border hover:bg-accent/50'
-      }`}
-      onClick={onClick}
-    >
-      <div className="flex items-center gap-3">
-        <div className={`w-2 h-2 rounded-full ${dentCount > 0 ? 'bg-green-500' : 'bg-gray-300'}`} />
-        <span className="font-medium">{panel.displayName}</span>
-        {dentCount > 0 && (
-          <Badge variant="secondary" className="text-xs">
-            {dentCount} dent{dentCount !== 1 ? 's' : ''}
-          </Badge>
-        )}
-      </div>
-      <div className="flex items-center gap-2">
-        {panelTotal > 0 && (
-          <span className="text-sm font-medium text-green-600">${panelTotal.toFixed(0)}</span>
-        )}
-        <ChevronRight className="h-4 w-4 text-muted-foreground" />
-      </div>
-    </div>
-  )
-}
+  // Handle VIN decode
+  const handleDecodeVIN = async () => {
+    if (!vinInput || vinInput.length !== 17) return
 
-// Dent list for selected panel
-function DentList({
-  dents,
-  onRemoveDent
-}: {
-  dents: Dent[]
-  onRemoveDent: (dentId: string) => void
-}) {
-  const grouped = useMemo(() => {
-    const groups: Record<string, Dent[]> = {}
-    dents.forEach(d => {
-      const key = `${d.size}-${d.zone}`
-      if (!groups[key]) groups[key] = []
-      groups[key].push(d)
+    try {
+      const result = await decodeVIN.mutateAsync(vinInput)
+      setFormData(prev => ({
+        ...prev,
+        vehicle_year: result.year.toString(),
+        vehicle_make: result.make,
+        vehicle_model: result.model,
+        vehicle_vin: vinInput,
+        vehicle_tier: result.vehicle_tier
+      }))
+      setAluminumPanels(result.aluminum_panels || [])
+      setVehicleExpanded(false)
+    } catch (error) {
+      console.error('VIN decode failed:', error)
+    }
+  }
+
+  // Create or update estimate
+  const handleSave = async () => {
+    const data = {
+      vehicle_year: parseInt(formData.vehicle_year),
+      vehicle_make: formData.vehicle_make,
+      vehicle_model: formData.vehicle_model,
+      vehicle_vin: formData.vehicle_vin || undefined,
+      vehicle_tier: formData.vehicle_tier,
+      customer_name: formData.customer_name || undefined,
+      customer_email: formData.customer_email || undefined,
+      customer_phone: formData.customer_phone || undefined,
+      claim_number: formData.claim_number || undefined,
+      insurance_profile_id: formData.insurance_profile_id ? parseInt(formData.insurance_profile_id) : undefined
+    }
+
+    if (isNew) {
+      const newEstimate = await createEstimate.mutateAsync(data)
+      navigate(`/estimating/${newEstimate.id}`, { replace: true })
+    } else {
+      await updateEstimate.mutateAsync({ id: parseInt(id!), data })
+    }
+  }
+
+  // Handle panel selection
+  const handleSelectPanel = useCallback(async (panelId: string) => {
+    setSelectedPanelId(panelId)
+
+    // Create panel if it doesn't exist
+    if (estimate && !estimate.panels?.find(p => p.panel_name === panelId)) {
+      const material = aluminumPanels.includes(panelId) ? 'aluminum' : 'steel'
+      await addPanel.mutateAsync({
+        estimateId: estimate.id,
+        data: { panel_name: panelId, material }
+      })
+      refetch()
+    }
+  }, [estimate, aluminumPanels, addPanel, refetch])
+
+  // Handle add dent
+  const handleAddDent = useCallback(async (size: DentSize, zone: DentZone, depth: DentDepth) => {
+    if (!estimate || !selectedPanel) return
+
+    const result = await addDent.mutateAsync({
+      estimateId: estimate.id,
+      panelId: selectedPanel.id,
+      data: { size, zone, depth }
     })
-    return groups
-  }, [dents])
 
-  if (dents.length === 0) {
+    setUndoStack(prev => [...prev, { type: 'dent', id: result.id }])
+    refetch()
+  }, [estimate, selectedPanel, addDent, refetch])
+
+  // Handle batch add
+  const handleAddBatch = useCallback(async (size: DentSize, zone: DentZone, depth: DentDepth, count: number) => {
+    if (!estimate || !selectedPanel) return
+
+    await addDentsBatch.mutateAsync({
+      estimateId: estimate.id,
+      panelId: selectedPanel.id,
+      dents: [{ size, zone, depth, count }]
+    })
+
+    refetch()
+  }, [estimate, selectedPanel, addDentsBatch, refetch])
+
+  // Handle delete dent
+  const handleDeleteDent = useCallback(async (dentId: number) => {
+    if (!estimate) return
+
+    await deleteDent.mutateAsync({
+      estimateId: estimate.id,
+      dentId
+    })
+
+    refetch()
+  }, [estimate, deleteDent, refetch])
+
+  // Handle undo
+  const handleUndo = useCallback(async () => {
+    if (undoStack.length === 0 || !estimate) return
+
+    const lastAction = undoStack[undoStack.length - 1]
+    if (lastAction.type === 'dent') {
+      await deleteDent.mutateAsync({
+        estimateId: estimate.id,
+        dentId: lastAction.id
+      })
+      setUndoStack(prev => prev.slice(0, -1))
+      refetch()
+    }
+  }, [undoStack, estimate, deleteDent, refetch])
+
+  // Handle add R&I
+  const handleAddRI = useCallback(async (operationCode: string) => {
+    if (!estimate || !selectedPanel) return
+
+    await addRIFromLibrary.mutateAsync({
+      estimateId: estimate.id,
+      panelId: selectedPanel.id,
+      operationCode
+    })
+
+    refetch()
+  }, [estimate, selectedPanel, addRIFromLibrary, refetch])
+
+  // Handle calculate
+  const handleCalculate = async () => {
+    if (!estimate) return
+    await calculateTotals.mutateAsync(estimate.id)
+    refetch()
+  }
+
+  // Handle link to lead
+  const handleLinkLead = async (leadId: number) => {
+    if (!estimate) return
+    await linkToCRM.mutateAsync({
+      id: estimate.id,
+      data: { lead_id: leadId }
+    })
+    setLeadSearchOpen(false)
+    refetch()
+  }
+
+  // Navigate to review
+  const handleReview = () => {
+    if (estimate) {
+      navigate(`/estimating/${estimate.id}/review`)
+    }
+  }
+
+  // Loading state
+  if (!isNew && isLoadingEstimate) {
     return (
-      <p className="text-sm text-muted-foreground text-center py-4">
-        Tap a zone above to add dents
-      </p>
+      <div className="flex items-center justify-center h-screen">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
     )
   }
 
   return (
-    <div className="space-y-2 max-h-[200px] overflow-y-auto">
-      {Object.entries(grouped).map(([key, groupDents]) => {
-        const [size, zone] = key.split('-')
-        const totalPrice = groupDents.reduce((sum, d) => sum + (d.price || 0), 0)
-
-        return (
-          <div
-            key={key}
-            className="flex items-center justify-between p-2 bg-muted/50 rounded-md"
-          >
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">
-                {groupDents.length}x {size} ({zone})
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">${totalPrice.toFixed(0)}</span>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6"
-                onClick={() => {
-                  // Remove last dent of this type
-                  const lastDent = groupDents[groupDents.length - 1]
-                  onRemoveDent(lastDent.id)
-                }}
-              >
-                <Minus className="h-3 w-3" />
-              </Button>
+    <div className="pb-24">
+      {/* Header */}
+      <div className="sticky top-0 z-40 bg-background border-b">
+        <div className="flex items-center justify-between p-4 max-w-6xl mx-auto">
+          <div className="flex items-center gap-3">
+            <Button variant="ghost" size="icon" onClick={() => navigate('/estimating')}>
+              <ArrowLeft className="h-5 w-5" />
+            </Button>
+            <div>
+              <h1 className="text-lg font-bold flex items-center gap-2">
+                {isNew ? 'New Estimate' : `Estimate #${estimate?.estimate_number || estimate?.id}`}
+              </h1>
+              {estimate && (
+                <Badge className={cn('text-xs', STATUS_STYLES[estimate.status])}>
+                  {estimate.status}
+                </Badge>
+              )}
             </div>
           </div>
-        )
-      })}
-    </div>
-  )
-}
-
-export function EstimateBuilder() {
-  // Vehicle info
-  const [vehicle, setVehicle] = useState<VehicleInfo>({
-    year: '',
-    make: '',
-    model: ''
-  })
-
-  // Panels with dents
-  const [panels, setPanels] = useState<Panel[]>([])
-
-  // Selected panel
-  const [selectedPanelId, setSelectedPanelId] = useState<string | null>(null)
-
-  // Current dent size for tap-to-add
-  const [currentSize, setCurrentSize] = useState<Dent['size']>('medium')
-
-  // Current zone for quick-add
-  const [currentZone, setCurrentZone] = useState<Dent['zone']>('center')
-
-  // Undo stack
-  const [undoStack, setUndoStack] = useState<Dent[]>([])
-
-  // Get or create panel
-  const getOrCreatePanel = useCallback((panelInfo: typeof AVAILABLE_PANELS[0]): Panel => {
-    const existing = panels.find(p => p.id === panelInfo.id)
-    if (existing) return existing
-
-    const newPanel: Panel = {
-      id: panelInfo.id,
-      name: panelInfo.name,
-      displayName: panelInfo.displayName,
-      dents: [],
-      material: 'steel'
-    }
-    setPanels(prev => [...prev, newPanel])
-    return newPanel
-  }, [panels])
-
-  // Selected panel object
-  const selectedPanel = useMemo(() => {
-    return panels.find(p => p.id === selectedPanelId) || null
-  }, [panels, selectedPanelId])
-
-  // Add dent to selected panel
-  const addDent = useCallback((zone: Dent['zone'], size: Dent['size'] = currentSize) => {
-    if (!selectedPanelId) return
-
-    const panel = panels.find(p => p.id === selectedPanelId)
-    if (!panel) return
-
-    const price = calculateDentPrice(size, zone, panel.name, panel.material)
-
-    const newDent: Dent = {
-      id: generateId(),
-      size,
-      zone,
-      price
-    }
-
-    setPanels(prev => prev.map(p => {
-      if (p.id === selectedPanelId) {
-        return { ...p, dents: [...p.dents, newDent] }
-      }
-      return p
-    }))
-
-    setCurrentZone(zone)
-    setUndoStack(prev => [...prev, newDent])
-  }, [selectedPanelId, currentSize, panels])
-
-  // Quick add multiple dents
-  const quickAddDents = useCallback((size: Dent['size'], count: number) => {
-    if (!selectedPanelId) return
-
-    const panel = panels.find(p => p.id === selectedPanelId)
-    if (!panel) return
-
-    const newDents: Dent[] = Array.from({ length: count }, () => ({
-      id: generateId(),
-      size,
-      zone: currentZone,
-      price: calculateDentPrice(size, currentZone, panel.name, panel.material)
-    }))
-
-    setPanels(prev => prev.map(p => {
-      if (p.id === selectedPanelId) {
-        return { ...p, dents: [...p.dents, ...newDents] }
-      }
-      return p
-    }))
-
-    setUndoStack(prev => [...prev, ...newDents])
-  }, [selectedPanelId, currentZone, panels])
-
-  // Remove dent
-  const removeDent = useCallback((dentId: string) => {
-    setPanels(prev => prev.map(p => ({
-      ...p,
-      dents: p.dents.filter(d => d.id !== dentId)
-    })))
-  }, [])
-
-  // Undo last action
-  const undo = useCallback(() => {
-    if (undoStack.length === 0) return
-
-    const lastDent = undoStack[undoStack.length - 1]
-    removeDent(lastDent.id)
-    setUndoStack(prev => prev.slice(0, -1))
-  }, [undoStack, removeDent])
-
-  // Select panel from available list
-  const selectPanel = useCallback((panelInfo: typeof AVAILABLE_PANELS[0]) => {
-    const panel = getOrCreatePanel(panelInfo)
-    setSelectedPanelId(panel.id)
-  }, [getOrCreatePanel])
-
-  // Dent counts for selected panel
-  const dentCounts = useMemo(() => {
-    if (!selectedPanel) return { center: 0, edge: 0, crease: 0 }
-    return {
-      center: selectedPanel.dents.filter(d => d.zone === 'center').length,
-      edge: selectedPanel.dents.filter(d => d.zone === 'edge').length,
-      crease: selectedPanel.dents.filter(d => d.zone === 'crease').length
-    }
-  }, [selectedPanel])
-
-  // Calculate totals
-  const totals = useMemo(() => {
-    let dentTotal = 0
-    let dentCount = 0
-
-    panels.forEach(p => {
-      p.dents.forEach(d => {
-        dentTotal += d.price || 0
-        dentCount++
-      })
-    })
-
-    return { dentTotal, dentCount, panelCount: panels.filter(p => p.dents.length > 0).length }
-  }, [panels])
-
-  return (
-    <div className="p-4 md:p-6 max-w-6xl mx-auto">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Car className="h-6 w-6" />
-            PDR Estimate Builder
-          </h1>
-          <p className="text-muted-foreground">Tap zones to add dents instantly</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={undo} disabled={undoStack.length === 0}>
-            <Undo2 className="h-4 w-4 mr-2" />
-            Undo
-          </Button>
-          <Button>
-            <Save className="h-4 w-4 mr-2" />
-            Save Estimate
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleUndo}
+              disabled={undoStack.length === 0}
+            >
+              <Undo2 className="h-4 w-4" />
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleSave}
+              disabled={createEstimate.isPending || updateEstimate.isPending}
+            >
+              <Save className="h-4 w-4 mr-1" />
+              Save
+            </Button>
+          </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left: Vehicle Info + Panel List */}
-        <div className="space-y-4">
-          {/* Vehicle Info */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-lg">Vehicle</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="grid grid-cols-3 gap-2">
-                <select
-                  className="px-3 py-2 border rounded-md bg-background text-sm"
-                  value={vehicle.year}
-                  onChange={(e) => setVehicle(v => ({ ...v, year: e.target.value }))}
-                >
-                  <option value="">Year</option>
-                  {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
-                </select>
-                <select
-                  className="px-3 py-2 border rounded-md bg-background text-sm"
-                  value={vehicle.make}
-                  onChange={(e) => setVehicle(v => ({ ...v, make: e.target.value }))}
-                >
-                  <option value="">Make</option>
-                  {MAKES.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
-                <input
-                  type="text"
-                  placeholder="Model"
-                  className="px-3 py-2 border rounded-md bg-background text-sm"
-                  value={vehicle.model}
-                  onChange={(e) => setVehicle(v => ({ ...v, model: e.target.value }))}
-                />
-              </div>
-              <input
-                type="text"
-                placeholder="VIN (optional)"
-                className="w-full px-3 py-2 border rounded-md bg-background text-sm"
-                value={vehicle.vin || ''}
-                onChange={(e) => setVehicle(v => ({ ...v, vin: e.target.value }))}
-              />
-            </CardContent>
-          </Card>
-
-          {/* Panel List */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-lg">Panels</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 max-h-[400px] overflow-y-auto">
-              {AVAILABLE_PANELS.map(panelInfo => {
-                const existingPanel = panels.find(p => p.id === panelInfo.id)
-                const panel: Panel = existingPanel || {
-                  id: panelInfo.id,
-                  name: panelInfo.name,
-                  displayName: panelInfo.displayName,
-                  dents: [],
-                  material: 'steel'
-                }
-                return (
-                  <PanelListItem
-                    key={panelInfo.id}
-                    panel={panel}
-                    isSelected={selectedPanelId === panelInfo.id}
-                    onClick={() => selectPanel(panelInfo)}
-                    onRemove={() => {
-                      setPanels(prev => prev.filter(p => p.id !== panelInfo.id))
-                      if (selectedPanelId === panelInfo.id) setSelectedPanelId(null)
-                    }}
-                  />
-                )
-              })}
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Center: Zone Selector */}
-        <div className="space-y-4">
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-lg">
-                {selectedPanel ? selectedPanel.displayName : 'Select a Panel'}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {selectedPanel ? (
-                <div className="space-y-4">
-                  {/* Material selector */}
-                  <div className="flex gap-2">
-                    {(['steel', 'aluminum', 'high_strength_steel'] as const).map(mat => (
+      <div className="max-w-6xl mx-auto p-4">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {/* Left Column: Vehicle, Customer, Panels */}
+          <div className="space-y-4">
+            {/* Vehicle Section */}
+            <Collapsible open={vehicleExpanded} onOpenChange={setVehicleExpanded}>
+              <Card>
+                <CollapsibleTrigger asChild>
+                  <CardHeader className="cursor-pointer hover:bg-accent/50 transition-colors">
+                    <CardTitle className="text-sm flex items-center justify-between">
+                      <span className="flex items-center gap-2">
+                        <Car className="h-4 w-4" />
+                        Vehicle
+                      </span>
+                      <div className="flex items-center gap-2">
+                        {formData.vehicle_year && formData.vehicle_make && (
+                          <span className="text-xs text-muted-foreground font-normal">
+                            {formData.vehicle_year} {formData.vehicle_make} {formData.vehicle_model}
+                          </span>
+                        )}
+                        <ChevronDown className={cn(
+                          'h-4 w-4 transition-transform',
+                          vehicleExpanded && 'rotate-180'
+                        )} />
+                      </div>
+                    </CardTitle>
+                  </CardHeader>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <CardContent className="space-y-3">
+                    {/* VIN Input */}
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="Enter VIN (17 characters)"
+                        value={vinInput}
+                        onChange={(e) => setVinInput(e.target.value.toUpperCase())}
+                        maxLength={17}
+                        className="font-mono"
+                      />
                       <Button
-                        key={mat}
-                        variant={selectedPanel.material === mat ? 'default' : 'outline'}
-                        size="sm"
-                        className="flex-1 text-xs"
-                        onClick={() => {
-                          setPanels(prev => prev.map(p => {
-                            if (p.id === selectedPanelId) {
-                              // Recalculate all dent prices
-                              const newDents = p.dents.map(d => ({
-                                ...d,
-                                price: calculateDentPrice(d.size, d.zone, p.name, mat)
-                              }))
-                              return { ...p, material: mat, dents: newDents }
-                            }
-                            return p
-                          }))
-                        }}
+                        variant="secondary"
+                        onClick={handleDecodeVIN}
+                        disabled={vinInput.length !== 17 || decodeVIN.isPending}
                       >
-                        {mat === 'high_strength_steel' ? 'HSS' : mat.charAt(0).toUpperCase() + mat.slice(1)}
+                        {decodeVIN.isPending ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          'Decode'
+                        )}
                       </Button>
-                    ))}
-                  </div>
+                    </div>
 
-                  {/* Size selector */}
-                  <div>
-                    <p className="text-xs text-muted-foreground mb-2">Dent Size</p>
-                    <SizeSelector currentSize={currentSize} onSizeChange={setCurrentSize} />
-                  </div>
+                    {/* Aluminum warning */}
+                    {aluminumPanels.length > 0 && (
+                      <div className="flex items-center gap-2 p-2 bg-orange-50 border border-orange-200 rounded-lg text-sm text-orange-700">
+                        <AlertTriangle className="h-4 w-4" />
+                        <span>Aluminum panels: {aluminumPanels.join(', ')}</span>
+                      </div>
+                    )}
 
-                  {/* Zone selector */}
-                  <ZoneSelector
-                    onZoneClick={(zone) => addDent(zone)}
-                    currentSize={currentSize}
-                    dentCounts={dentCounts}
-                  />
+                    {/* Manual entry */}
+                    <div className="grid grid-cols-3 gap-2">
+                      <Select
+                        value={formData.vehicle_year}
+                        onValueChange={(v) => setFormData(prev => ({ ...prev, vehicle_year: v }))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Year" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {YEARS.map(y => (
+                            <SelectItem key={y} value={y}>{y}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Select
+                        value={formData.vehicle_make}
+                        onValueChange={(v) => setFormData(prev => ({ ...prev, vehicle_make: v }))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Make" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {MAKES.map(m => (
+                            <SelectItem key={m} value={m}>{m}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        placeholder="Model"
+                        value={formData.vehicle_model}
+                        onChange={(e) => setFormData(prev => ({ ...prev, vehicle_model: e.target.value }))}
+                      />
+                    </div>
 
-                  {/* Quick add */}
-                  <div>
-                    <p className="text-xs text-muted-foreground mb-2">
-                      Quick Add to {currentZone.toUpperCase()} zone
-                    </p>
-                    <QuickAddButtons onQuickAdd={quickAddDents} currentZone={currentZone} />
-                  </div>
-                </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <Car className="h-12 w-12 text-muted-foreground mb-4" />
-                  <p className="text-muted-foreground">Select a panel from the list to start adding dents</p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+                    {/* Vehicle tier */}
+                    <div>
+                      <Label className="text-xs text-muted-foreground">Vehicle Tier</Label>
+                      <Select
+                        value={formData.vehicle_tier}
+                        onValueChange={(v) => setFormData(prev => ({ ...prev, vehicle_tier: v }))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {VEHICLE_TIERS.map(t => (
+                            <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </CardContent>
+                </CollapsibleContent>
+              </Card>
+            </Collapsible>
 
-          {/* Dent list for selected panel */}
-          {selectedPanel && selectedPanel.dents.length > 0 && (
+            {/* Customer Section */}
+            <Collapsible open={customerExpanded} onOpenChange={setCustomerExpanded}>
+              <Card>
+                <CollapsibleTrigger asChild>
+                  <CardHeader className="cursor-pointer hover:bg-accent/50 transition-colors">
+                    <CardTitle className="text-sm flex items-center justify-between">
+                      <span className="flex items-center gap-2">
+                        <User className="h-4 w-4" />
+                        Customer
+                      </span>
+                      <div className="flex items-center gap-2">
+                        {formData.customer_name && (
+                          <span className="text-xs text-muted-foreground font-normal">
+                            {formData.customer_name}
+                          </span>
+                        )}
+                        <ChevronDown className={cn(
+                          'h-4 w-4 transition-transform',
+                          customerExpanded && 'rotate-180'
+                        )} />
+                      </div>
+                    </CardTitle>
+                  </CardHeader>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <CardContent className="space-y-3">
+                    {/* Link to Lead button */}
+                    <Button
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => setLeadSearchOpen(true)}
+                    >
+                      <Link className="h-4 w-4 mr-2" />
+                      Link to Lead
+                    </Button>
+
+                    {/* Manual customer entry */}
+                    <Input
+                      placeholder="Customer Name"
+                      value={formData.customer_name}
+                      onChange={(e) => setFormData(prev => ({ ...prev, customer_name: e.target.value }))}
+                    />
+                    <div className="grid grid-cols-2 gap-2">
+                      <Input
+                        placeholder="Phone"
+                        value={formData.customer_phone}
+                        onChange={(e) => setFormData(prev => ({ ...prev, customer_phone: e.target.value }))}
+                      />
+                      <Input
+                        placeholder="Email"
+                        type="email"
+                        value={formData.customer_email}
+                        onChange={(e) => setFormData(prev => ({ ...prev, customer_email: e.target.value }))}
+                      />
+                    </div>
+
+                    {/* Insurance */}
+                    <div className="border-t pt-3">
+                      <Label className="text-xs text-muted-foreground">Insurance</Label>
+                      <Select
+                        value={formData.insurance_profile_id}
+                        onValueChange={(v) => setFormData(prev => ({ ...prev, insurance_profile_id: v }))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select insurance carrier" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {insuranceProfiles.map(p => (
+                            <SelectItem key={p.id} value={p.id.toString()}>
+                              {p.carrier_name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        className="mt-2"
+                        placeholder="Claim Number"
+                        value={formData.claim_number}
+                        onChange={(e) => setFormData(prev => ({ ...prev, claim_number: e.target.value }))}
+                      />
+                    </div>
+                  </CardContent>
+                </CollapsibleContent>
+              </Card>
+            </Collapsible>
+
+            {/* Panel Selector */}
             <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-lg flex items-center justify-between">
-                  <span>Dents on {selectedPanel.displayName}</span>
-                  <Badge variant="secondary">{selectedPanel.dents.length}</Badge>
-                </CardTitle>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">Select Panel</CardTitle>
               </CardHeader>
               <CardContent>
-                <DentList dents={selectedPanel.dents} onRemoveDent={removeDent} />
+                <PanelSelector
+                  panels={panelInfo}
+                  selectedPanelId={selectedPanelId}
+                  onSelectPanel={handleSelectPanel}
+                  aluminumPanels={aluminumPanels}
+                />
               </CardContent>
             </Card>
-          )}
-        </div>
+          </div>
 
-        {/* Right: Summary */}
-        <div className="space-y-4">
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Calculator className="h-5 w-5" />
-                Estimate Summary
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {/* Stats */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="bg-muted/50 rounded-lg p-3 text-center">
-                  <p className="text-2xl font-bold">{totals.dentCount}</p>
-                  <p className="text-xs text-muted-foreground">Total Dents</p>
-                </div>
-                <div className="bg-muted/50 rounded-lg p-3 text-center">
-                  <p className="text-2xl font-bold">{totals.panelCount}</p>
-                  <p className="text-xs text-muted-foreground">Panels</p>
-                </div>
-              </div>
+          {/* Center Column: Dent Entry */}
+          <div className="space-y-4">
+            {selectedPanelId ? (
+              <>
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm flex items-center justify-between">
+                      <span>
+                        {DEFAULT_PANELS.find(p => p.name === selectedPanelId)?.displayName || selectedPanelId}
+                      </span>
+                      {selectedPanel && selectedPanel.dents?.length > 0 && (
+                        <Badge variant="secondary">
+                          {selectedPanel.dents.length} dents
+                        </Badge>
+                      )}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <DentEntry
+                      panelName={selectedPanelId}
+                      onAddDent={handleAddDent}
+                      onAddBatch={handleAddBatch}
+                      disabled={!estimate || addDent.isPending}
+                      vehicleTier={formData.vehicle_tier}
+                    />
+                  </CardContent>
+                </Card>
 
-              {/* Panel breakdown */}
-              {panels.filter(p => p.dents.length > 0).map(panel => {
-                const panelTotal = panel.dents.reduce((sum, d) => sum + (d.price || 0), 0)
-                return (
-                  <div key={panel.id} className="flex items-center justify-between text-sm">
-                    <span>{panel.displayName} ({panel.dents.length})</span>
-                    <span className="font-medium">${panelTotal.toFixed(0)}</span>
-                  </div>
-                )
-              })}
+                {/* Dent list for selected panel */}
+                {selectedPanel && selectedPanel.dents && selectedPanel.dents.length > 0 && (
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm">
+                        Dents ({selectedPanel.dents.length})
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <DentList
+                        dents={selectedPanel.dents.map(d => ({
+                          id: d.id,
+                          size: d.size as DentSize,
+                          zone: d.zone as DentZone,
+                          depth: (d as any).depth || 'medium',
+                          final_price: d.final_price
+                        }))}
+                        onRemove={handleDeleteDent}
+                      />
+                    </CardContent>
+                  </Card>
+                )}
+              </>
+            ) : (
+              <Card>
+                <CardContent className="py-12 text-center">
+                  <Car className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                  <p className="text-muted-foreground">
+                    Select a panel to start adding dents
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+          </div>
 
-              {/* Divider */}
-              {totals.dentCount > 0 && (
-                <>
-                  <div className="border-t pt-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">Dent Subtotal</span>
-                      <span className="font-medium">${totals.dentTotal.toFixed(2)}</span>
-                    </div>
-                    <div className="flex items-center justify-between text-muted-foreground text-sm">
-                      <span>R&I Items</span>
-                      <span>$0.00</span>
-                    </div>
-                  </div>
+          {/* Right Column: R&I and Summary */}
+          <div className="space-y-4">
+            {/* R&I Suggestions */}
+            {selectedPanelId && (
+              <RISuggestions
+                suggestions={riSuggestions}
+                addedItems={selectedPanel?.ri_items?.map(ri => ({
+                  id: ri.id,
+                  operation_code: ri.operation_code,
+                  operation_name: ri.operation_name,
+                  calculated_time_hours: ri.calculated_time_hours,
+                  price: ri.price
+                })) || []}
+                vehicleTier={formData.vehicle_tier}
+                laborRate={75}
+                onAdd={handleAddRI}
+                isLoading={isLoadingRI}
+              />
+            )}
 
-                  <div className="border-t pt-3">
-                    <div className="flex items-center justify-between text-lg font-bold">
-                      <span>Total</span>
-                      <span className="text-green-600">${totals.dentTotal.toFixed(2)}</span>
-                    </div>
-                  </div>
-                </>
-              )}
+            {/* R&I Items Added */}
+            {selectedPanel?.ri_items && selectedPanel.ri_items.length > 0 && (
+              <RIItemsList
+                items={selectedPanel.ri_items.map(ri => ({
+                  id: ri.id,
+                  operation_code: ri.operation_code,
+                  operation_name: ri.operation_name,
+                  calculated_time_hours: ri.calculated_time_hours,
+                  price: ri.price
+                }))}
+              />
+            )}
 
-              {totals.dentCount === 0 && (
-                <p className="text-center text-muted-foreground py-4">
-                  No dents added yet
-                </p>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Vehicle summary */}
-          {(vehicle.year || vehicle.make || vehicle.model) && (
+            {/* Summary Card */}
             <Card>
-              <CardContent className="pt-4">
-                <p className="text-sm text-muted-foreground">Vehicle</p>
-                <p className="font-medium">
-                  {[vehicle.year, vehicle.make, vehicle.model].filter(Boolean).join(' ')}
-                </p>
-                {vehicle.vin && (
-                  <p className="text-xs text-muted-foreground mt-1">VIN: {vehicle.vin}</p>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <Calculator className="h-4 w-4" />
+                  Summary
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                <div className="grid grid-cols-2 gap-3 text-center">
+                  <div className="bg-muted/50 rounded-lg p-3">
+                    <p className="text-2xl font-bold">
+                      {estimate?.panels?.reduce((sum, p) => sum + (p.dents?.length || 0), 0) || 0}
+                    </p>
+                    <p className="text-xs text-muted-foreground">Total Dents</p>
+                  </div>
+                  <div className="bg-muted/50 rounded-lg p-3">
+                    <p className="text-2xl font-bold">
+                      {panelInfo.filter(p => p.dentCount > 0).length}
+                    </p>
+                    <p className="text-xs text-muted-foreground">Panels</p>
+                  </div>
+                </div>
+
+                {/* Panel totals */}
+                {panelInfo.filter(p => p.dentCount > 0).map(panel => (
+                  <div
+                    key={panel.id}
+                    className="flex items-center justify-between text-sm"
+                  >
+                    <span>{panel.displayName} ({panel.dentCount})</span>
+                    <span className="font-medium">${panel.total.toFixed(0)}</span>
+                  </div>
+                ))}
+
+                {estimate && (
+                  <>
+                    <div className="border-t pt-2 space-y-1">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Dents</span>
+                        <span>${(estimate.dent_total || 0).toFixed(0)}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">R&I</span>
+                        <span>${(estimate.ri_total || 0).toFixed(0)}</span>
+                      </div>
+                    </div>
+                    <div className="flex justify-between text-lg border-t pt-2">
+                      <span className="font-bold">Total</span>
+                      <span className="font-bold text-green-600">
+                        ${(estimate.grand_total || 0).toFixed(0)}
+                      </span>
+                    </div>
+                  </>
                 )}
               </CardContent>
             </Card>
-          )}
-
-          {/* Action buttons */}
-          <div className="space-y-2">
-            <Button className="w-full" size="lg">
-              <Save className="h-4 w-4 mr-2" />
-              Save Estimate
-            </Button>
-            <Button variant="outline" className="w-full">
-              Continue to R&I Items
-            </Button>
           </div>
         </div>
       </div>
+
+      {/* Running Totals Footer */}
+      {estimate && (
+        <RunningTotals
+          dentTotal={estimate.dent_total || 0}
+          riTotal={estimate.ri_total || 0}
+          grandTotal={estimate.grand_total || 0}
+          onCalculate={handleCalculate}
+          onReview={handleReview}
+          isCalculating={calculateTotals.isPending}
+        />
+      )}
+
+      {/* Lead Search Dialog */}
+      <Dialog open={leadSearchOpen} onOpenChange={setLeadSearchOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Link to Lead</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="flex gap-2">
+              <Input
+                placeholder="Search leads..."
+                value={leadSearchQuery}
+                onChange={(e) => setLeadSearchQuery(e.target.value)}
+              />
+              <Button variant="secondary">
+                <Search className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="max-h-64 overflow-y-auto space-y-2">
+              {leadResults.map(lead => (
+                <button
+                  key={lead.id}
+                  onClick={() => handleLinkLead(lead.id)}
+                  className="w-full p-3 text-left rounded-lg border hover:bg-accent transition-colors"
+                >
+                  <div className="flex items-center gap-2">
+                    <Building2 className="h-4 w-4 text-muted-foreground" />
+                    <span className="font-medium">{lead.business_name}</span>
+                  </div>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {lead.contact_name} • {lead.phone}
+                  </p>
+                </button>
+              ))}
+              {leadSearchQuery.length >= 2 && leadResults.length === 0 && (
+                <p className="text-center text-muted-foreground py-4">
+                  No leads found
+                </p>
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

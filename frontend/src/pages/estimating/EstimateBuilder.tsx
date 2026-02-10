@@ -2467,119 +2467,141 @@ export function EstimateBuilder() {
               </div>
             )}
 
-            {/* Stage 8B: Inline R&I Panel Section - suggestions + included summary */}
-            {selectedPanelId && riSuggestions.length > 0 && (
-              <div className="border-t bg-blue-50/50 px-4 py-3 space-y-3">
-                {/* Header */}
-                <div className="flex items-center gap-2">
-                  <Wrench className="h-4 w-4 text-blue-600" />
-                  <span className="text-sm font-medium text-blue-900">
-                    Access / R&I for {getPanelDisplayName(selectedPanelId)}
-                  </span>
+            {/* Stage 8D: Inline Panel R&I embedded in damage entry flow */}
+            {selectedPanelId && (
+              <div className="border-t border-b bg-gradient-to-b from-blue-50 to-white px-4 py-3">
+                {/* Stage 8D: Current Panel Info Header */}
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center">
+                      <Wrench className="h-4 w-4 text-blue-600" />
+                    </div>
+                    <div>
+                      <div className="text-sm font-semibold text-blue-900">
+                        {getPanelDisplayName(selectedPanelId)}
+                      </div>
+                      {/* Show current panel damage if entered */}
+                      {panels[selectedPanelId]?.countRange && panels[selectedPanelId]?.dentSize && (
+                        <div className="text-xs text-muted-foreground">
+                          {panels[selectedPanelId].countRange} dents • {panels[selectedPanelId].dentSize}
+                          {panels[selectedPanelId].totalPrice > 0 && (
+                            <span className="text-green-600 ml-1">
+                              ${panels[selectedPanelId].totalPrice.toFixed(0)}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  {/* View full R&I tab - de-emphasized */}
                   {estimateId && (
                     <button
                       onClick={() => setActiveServiceTab('ri')}
-                      className="text-xs text-blue-600 hover:underline ml-auto"
+                      className="text-[10px] text-muted-foreground hover:text-blue-600 transition-colors"
                     >
-                      View R&I Details →
+                      R&I Details →
                     </button>
                   )}
-                  {!estimateId && (
-                    <span className="text-xs text-blue-500 ml-auto">
-                      Click to add (auto-saves)
-                    </span>
-                  )}
                 </div>
 
-                {/* Stage 8B: Suggestion Pills with 3 states */}
-                <div className="flex flex-wrap gap-2">
-                  {riSuggestions.slice(0, 6).map((suggestion) => {
-                    const isAddedToEstimate = alreadyAddedRiCodes.has(suggestion.code) || riAddedCodes.has(suggestion.code)
-                    const isAdding = riAddingCode === suggestion.code
-                    // Get catalog hours for this operation
-                    const catalogOp = riCatalog?.operations?.find(op => op.code === suggestion.code)
-                    const baseHours = catalogOp?.steps?.reduce((sum, step) => sum + (step.base_time_hours || 0), 0) || 0
-
-                    return (
-                      <button
-                        key={suggestion.code}
-                        onClick={() => !isAddedToEstimate && !isAdding && handleRiQuickAdd(suggestion)}
-                        disabled={isAddedToEstimate || isAdding}
-                        className={`
-                          inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm
-                          transition-all duration-200
-                          ${isAddedToEstimate
-                            ? 'bg-green-100 text-green-700 cursor-default'
-                            : isAdding
-                              ? 'bg-blue-100 text-blue-700 cursor-wait'
-                              : 'bg-white border border-blue-200 text-blue-700 hover:bg-blue-100 hover:border-blue-300 shadow-sm'
-                          }
-                        `}
-                        title={isAddedToEstimate ? 'Already added to estimate' : suggestion.description}
-                      >
-                        {isAdding ? (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        ) : isAddedToEstimate ? (
-                          <CheckCircle className="h-3 w-3" />
-                        ) : (
-                          <Plus className="h-3 w-3" />
-                        )}
-                        {suggestion.label}
-                        {baseHours > 0 && !isAddedToEstimate && (
-                          <span className="text-xs opacity-70">+{baseHours.toFixed(1)}h</span>
-                        )}
-                      </button>
-                    )
-                  })}
-                </div>
-
-                {/* Stage 8B: Inline R&I Summary for this panel */}
-                {estimateId && estimateRiData && (() => {
-                  // Get relevant operation codes for this panel
-                  const panelRelevantCodes = getPanelRelevantOperationCodes(selectedPanelId)
-                  // Filter estimate operations to those relevant to this panel
-                  const panelOperations = estimateRiData.operations?.filter(
-                    op => panelRelevantCodes.has(op.code)
-                  ) || []
-
-                  if (panelOperations.length === 0) {
-                    return (
-                      <div className="text-xs text-muted-foreground italic pt-1 border-t border-blue-100">
-                        No R&I added for this panel yet.
+                {/* Stage 8D: R&I Pills - context-first, no search */}
+                {riSuggestions.length > 0 ? (
+                  <div className="space-y-2">
+                    {/* Compact hint for new estimates */}
+                    {!estimateId && (
+                      <div className="text-[10px] text-blue-500">
+                        Click to add access operations (auto-saves estimate)
                       </div>
-                    )
-                  }
+                    )}
 
-                  return (
-                    <div className="pt-2 border-t border-blue-100">
-                      <div className="text-xs font-medium text-blue-800 mb-1.5">
-                        R&I included for {getPanelDisplayName(selectedPanelId)}:
-                      </div>
-                      <div className="space-y-1">
-                        {panelOperations.map(op => (
+                    {/* Pills with 3 states */}
+                    <div className="flex flex-wrap gap-1.5">
+                      {riSuggestions.slice(0, 6).map((suggestion) => {
+                        const isAddedToEstimate = alreadyAddedRiCodes.has(suggestion.code) || riAddedCodes.has(suggestion.code)
+                        const isAdding = riAddingCode === suggestion.code
+                        const catalogOp = riCatalog?.operations?.find(op => op.code === suggestion.code)
+                        const baseHours = catalogOp?.steps?.reduce((sum, step) => sum + (step.base_time_hours || 0), 0) || 0
+
+                        return (
                           <button
-                            key={op.estimate_ri_operation_id}
-                            onClick={() => setActiveServiceTab('ri')}
-                            className="w-full flex items-center justify-between text-xs px-2 py-1 rounded hover:bg-blue-100/50 transition-colors text-left group"
+                            key={suggestion.code}
+                            onClick={() => !isAddedToEstimate && !isAdding && handleRiQuickAdd(suggestion)}
+                            disabled={isAddedToEstimate || isAdding}
+                            className={`
+                              inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium
+                              transition-all duration-150
+                              ${isAddedToEstimate
+                                ? 'bg-green-100 text-green-700 cursor-default ring-1 ring-green-200'
+                                : isAdding
+                                  ? 'bg-blue-100 text-blue-600 cursor-wait'
+                                  : 'bg-white text-blue-700 hover:bg-blue-50 shadow-sm border border-blue-200 hover:border-blue-300'
+                              }
+                            `}
+                            title={isAddedToEstimate ? 'Added to estimate' : suggestion.description}
                           >
-                            <span className="text-blue-800 group-hover:text-blue-900">
-                              {op.display_name}
-                            </span>
-                            <span className="text-blue-600 font-medium">
-                              {op.totals?.total_time?.toFixed(1) || '0.0'}h
-                            </span>
+                            {isAdding ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : isAddedToEstimate ? (
+                              <CheckCircle className="h-3 w-3" />
+                            ) : (
+                              <Plus className="h-3 w-3" />
+                            )}
+                            <span>{suggestion.label}</span>
+                            {baseHours > 0 && !isAddedToEstimate && (
+                              <span className="opacity-60">+{baseHours.toFixed(1)}h</span>
+                            )}
                           </button>
-                        ))}
-                      </div>
+                        )
+                      })}
                     </div>
-                  )
-                })()}
 
-                {/* Total R&I summary */}
+                    {/* Stage 8D: Compact inline summary - "Access added: X, Y (N ops) • +X.Xh" */}
+                    {estimateId && estimateRiData && (() => {
+                      const panelRelevantCodes = getPanelRelevantOperationCodes(selectedPanelId)
+                      const panelOperations = estimateRiData.operations?.filter(
+                        op => panelRelevantCodes.has(op.code)
+                      ) || []
+
+                      if (panelOperations.length === 0) {
+                        return null // No message cluttering the UI when empty
+                      }
+
+                      const totalHours = panelOperations.reduce(
+                        (sum, op) => sum + (op.totals?.total_time || 0), 0
+                      )
+                      const opNames = panelOperations.map(op => op.display_name)
+
+                      return (
+                        <button
+                          onClick={() => setActiveServiceTab('ri')}
+                          className="w-full text-left text-xs bg-green-50 text-green-800 px-2.5 py-1.5 rounded-lg hover:bg-green-100 transition-colors flex items-center gap-1"
+                        >
+                          <CheckCircle className="h-3 w-3 text-green-600 flex-shrink-0" />
+                          <span className="truncate">
+                            Access added: {opNames.slice(0, 2).join(', ')}
+                            {opNames.length > 2 && ` +${opNames.length - 2} more`}
+                          </span>
+                          <span className="ml-auto flex-shrink-0 font-medium">
+                            ({panelOperations.length} {panelOperations.length === 1 ? 'op' : 'ops'}) • +{totalHours.toFixed(1)}h
+                          </span>
+                        </button>
+                      )
+                    })()}
+                  </div>
+                ) : (
+                  /* Stage 8D: No mappings for this panel */
+                  <div className="text-xs text-muted-foreground italic">
+                    No common access operations for this panel.
+                  </div>
+                )}
+
+                {/* Stage 8D: Total R&I for entire estimate - compact */}
                 {estimateRiData && estimateRiData.total_ri_time_hours > 0 && (
-                  <div className="text-xs text-blue-700 pt-1 border-t border-blue-100">
-                    Total Estimate R&I: {estimateRiData.total_ri_time_hours.toFixed(1)} hrs
-                    (${((estimateRiData.total_ri_time_hours) * resolvedLaborRate).toFixed(2)})
+                  <div className="mt-2 pt-2 border-t border-blue-100 text-[10px] text-muted-foreground flex items-center justify-between">
+                    <span>Total Estimate R&I</span>
+                    <span className="font-medium text-blue-700">
+                      {estimateRiData.total_ri_time_hours.toFixed(1)}h • ${((estimateRiData.total_ri_time_hours) * resolvedLaborRate).toFixed(0)}
+                    </span>
                   </div>
                 )}
               </div>

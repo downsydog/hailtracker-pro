@@ -126,6 +126,7 @@ import { useCustomer } from '@/hooks/use-customers'
 import { useLead, useConvertLead } from '@/hooks/use-leads'
 import { useCreateVehicle, useVehicle } from '@/hooks/use-vehicles'
 import { Customer, Vehicle } from '@/types'
+import { getRiSuggestionsForPanel, RISuggestion } from '@/lib/riPanelSuggestions'
 
 // ============================================================================
 // PHASE 7 FEATURE FLAGS
@@ -431,6 +432,10 @@ export function EstimateBuilder() {
   const [writerRapidMode, setWriterRapidMode] = useState(false) // Keep focus after adding
   const writerPanelInputRef = useRef<HTMLInputElement>(null)
   const [writerSearchOpen, setWriterSearchOpen] = useState(false)
+
+  // Stage 7D: Panel-Driven R&I Quick Add state
+  const [riAddingCode, setRiAddingCode] = useState<string | null>(null) // Currently adding
+  const [riAddedCodes, setRiAddedCodes] = useState<Set<string>>(new Set()) // Already added this session
 
   // Debounced save state
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
@@ -1177,6 +1182,54 @@ export function EstimateBuilder() {
     setSelectedPanelKeys(new Set())
     setSelectionMode(false)
   }, [selectedPanelId, selectedPanelKeys, panels, matrixLookup, isEditing, estimateId, savePanelToBackend])
+
+  // Stage 7D: R&I suggestions for selected panel
+  const riSuggestions = useMemo(() => {
+    if (!selectedPanelId) return []
+    return getRiSuggestionsForPanel(selectedPanelId)
+  }, [selectedPanelId])
+
+  // Stage 7D: Track already-added R&I operation codes for this estimate
+  const alreadyAddedRiCodes = useMemo(() => {
+    if (!estimateRiData?.operations) return new Set<string>()
+    return new Set(estimateRiData.operations.map((op: { code: string }) => op.code))
+  }, [estimateRiData?.operations])
+
+  // Stage 7D: Handle R&I quick add with auto-save
+  const handleRiQuickAdd = useCallback(async (suggestion: RISuggestion) => {
+    if (!estimateId) {
+      // For new estimates, show toast to save first
+      alert('Please save the estimate first to add R&I operations.')
+      return
+    }
+
+    // If there are pending changes, save first
+    if (pendingChangesRef.current || isSaving) {
+      setSaveStatus('saving')
+      // Wait for any pending save
+      await new Promise(resolve => setTimeout(resolve, 500))
+    }
+
+    setRiAddingCode(suggestion.code)
+
+    try {
+      await addEstimateRI.mutateAsync({
+        operationCode: suggestion.code,
+        notes: `Added via panel suggestion for ${selectedPanelId}`
+      })
+
+      // Mark as added this session
+      setRiAddedCodes(prev => new Set(prev).add(suggestion.code))
+
+      // Success feedback - brief toast would go here
+      console.log(`Added R&I: ${suggestion.label}`)
+    } catch (error) {
+      console.error('Failed to add R&I:', error)
+      alert(`Failed to add ${suggestion.label}. It may already exist or the operation code may not be in the catalog.`)
+    } finally {
+      setRiAddingCode(null)
+    }
+  }, [estimateId, selectedPanelId, addEstimateRI, isSaving])
 
   // Stage 7A: Keyboard shortcuts handler
   useEffect(() => {
@@ -2222,6 +2275,64 @@ export function EstimateBuilder() {
                 className="w-full max-w-md"
               />
             </div>
+
+            {/* Stage 7D: R&I Suggestions Strip - shown when panel selected */}
+            {selectedPanelId && riSuggestions.length > 0 && isEditing && (
+              <div className="border-t bg-blue-50/50 px-4 py-2">
+                <div className="flex items-center gap-2 mb-2">
+                  <Wrench className="h-4 w-4 text-blue-600" />
+                  <span className="text-sm font-medium text-blue-900">
+                    R&I for {selectedPanelId.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
+                  </span>
+                  <button
+                    onClick={() => setActiveServiceTab('ri')}
+                    className="text-xs text-blue-600 hover:underline ml-auto"
+                  >
+                    View R&I Tab →
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {riSuggestions.slice(0, 6).map((suggestion) => {
+                    const isAdded = alreadyAddedRiCodes.has(suggestion.code) || riAddedCodes.has(suggestion.code)
+                    const isAdding = riAddingCode === suggestion.code
+
+                    return (
+                      <button
+                        key={suggestion.code}
+                        onClick={() => !isAdded && !isAdding && handleRiQuickAdd(suggestion)}
+                        disabled={isAdded || isAdding}
+                        className={`
+                          inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm
+                          transition-all duration-200
+                          ${isAdded
+                            ? 'bg-green-100 text-green-700 cursor-default'
+                            : isAdding
+                              ? 'bg-blue-100 text-blue-700 cursor-wait'
+                              : 'bg-white border border-blue-200 text-blue-700 hover:bg-blue-100 hover:border-blue-300'
+                          }
+                        `}
+                        title={suggestion.description}
+                      >
+                        {isAdding ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : isAdded ? (
+                          <CheckCircle className="h-3 w-3" />
+                        ) : (
+                          <Plus className="h-3 w-3" />
+                        )}
+                        {suggestion.label}
+                      </button>
+                    )
+                  })}
+                </div>
+                {estimateRiData && estimateRiData.total_ri_time_hours > 0 && (
+                  <div className="mt-2 text-xs text-blue-700">
+                    Current R&I: {estimateRiData.total_ri_time_hours.toFixed(1)} hrs
+                    (${((estimateRiData.total_ri_time_hours) * resolvedLaborRate).toFixed(2)})
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 

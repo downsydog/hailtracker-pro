@@ -106,15 +106,18 @@ class AuthService:
         db.session.commit()
 
         # Create tokens with user info
+        # PyJWT 2.x requires subject to be a string, so we JSON-serialize the identity
+        import json
         identity = {
             'user_id': user.id,
             'tenant_id': user.tenant_id,
             'role': user.role,
             'email': user.email
         }
+        identity_str = json.dumps(identity)
 
-        access_token = create_access_token(identity=identity)
-        refresh_token = create_refresh_token(identity=identity)
+        access_token = create_access_token(identity=identity_str)
+        refresh_token = create_refresh_token(identity=identity_str)
 
         return {
             'access_token': access_token,

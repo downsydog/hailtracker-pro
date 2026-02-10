@@ -6,7 +6,7 @@ Tenant-specific operations for PDR business users.
 
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity
-from app.api.middleware import login_required, roles_required, permission_required, check_permission
+from app.api.middleware import login_required, roles_required, permission_required, check_permission, parse_identity
 from app.services.storm_service import StormService
 from app.services.lead_service import LeadService
 from app.services.permissions_service import Permission
@@ -177,7 +177,7 @@ def list_leads():
     Returns:
         200: List of leads
     """
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
 
     status = request.args.get('status')
     assigned_to = request.args.get('assigned_to', type=int)
@@ -213,7 +213,7 @@ def create_lead():
         201: Lead created
         400: Validation error
     """
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     data = request.get_json()
 
     if not data.get('business_id') or not data.get('storm_id'):
@@ -250,7 +250,7 @@ def create_leads_bulk():
         201: Result with created and skipped counts
         400: Validation error
     """
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     data = request.get_json()
 
     if not data.get('business_ids') or not data.get('storm_id'):
@@ -276,7 +276,7 @@ def get_lead(lead_id):
         200: Lead details
         404: Lead not found or not authorized
     """
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
 
     lead = LeadService.get_lead(
         lead_id=lead_id,
@@ -308,7 +308,7 @@ def update_lead(lead_id):
         200: Updated lead
         400: Validation error
     """
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     data = request.get_json()
 
     lead, error = LeadService.update_lead(
@@ -343,7 +343,7 @@ def add_lead_contact(lead_id):
         201: Contact created
         400: Validation error
     """
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     data = request.get_json()
 
     if not data.get('name'):
@@ -384,7 +384,7 @@ def log_lead_call(lead_id):
         201: Call logged
         400: Validation error
     """
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     data = request.get_json()
 
     if not data.get('call_type') or not data.get('outcome'):
@@ -415,7 +415,7 @@ def get_lead_stats():
     Returns:
         200: Lead statistics
     """
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
 
     stats = LeadService.get_lead_stats(
         tenant_id=identity['tenant_id'],
@@ -439,7 +439,7 @@ def customer_dashboard():
     Returns:
         200: Dashboard statistics
     """
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
 
     from app.models.master.tenant import Tenant
     from app.models.master.user import User
@@ -503,7 +503,7 @@ def list_team():
     Returns:
         200: List of team members
     """
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
 
     from app.models.master.user import User
 
@@ -534,7 +534,7 @@ def add_team_member():
         201: Team member added
         400: Validation error
     """
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     data = request.get_json()
 
     if not data:
@@ -585,7 +585,7 @@ def update_team_member(user_id):
         200: Team member updated
         400: Error
     """
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     data = request.get_json()
 
     from app.models.master.user import User
@@ -638,7 +638,7 @@ def update_company_settings():
         200: Settings updated
         400: Error
     """
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     data = request.get_json()
 
     if not data:
@@ -661,6 +661,255 @@ def update_company_settings():
         'message': 'Settings updated',
         'tenant': tenant.to_dict()
     })
+
+
+# ==============================================================================
+# PDR ESTIMATE CRUD ENDPOINTS
+# ==============================================================================
+
+@customer_bp.route('/pdr-estimates', methods=['GET'])
+@login_required
+def list_estimates():
+    """
+    List PDR estimates for the tenant.
+
+    Query params:
+        status: Filter by status (draft, in_progress, approved, completed)
+        customer_id: Filter by customer ID
+        lead_id: Filter by lead ID
+        search: Search by estimate number, customer name, or vehicle
+        limit: Max results (default 50)
+        offset: Pagination offset (default 0)
+
+    Returns:
+        200: { estimates: [...], total: N }
+    """
+    from app.models.tenant.pdr_estimate import PDREstimate
+    from app.extensions import db
+
+    identity = parse_identity(get_jwt_identity())
+    tenant_id = identity['tenant_id']
+
+    status = request.args.get('status')
+    customer_id = request.args.get('customer_id', type=int)
+    lead_id = request.args.get('lead_id', type=int)
+    search = request.args.get('search', '').strip()
+    limit = request.args.get('limit', 50, type=int)
+    offset = request.args.get('offset', 0, type=int)
+
+    query = PDREstimate.query.filter_by(tenant_id=tenant_id)
+
+    if status:
+        query = query.filter_by(status=status)
+    if customer_id:
+        query = query.filter_by(customer_id=customer_id)
+    if lead_id:
+        query = query.filter_by(lead_id=lead_id)
+    if search:
+        search_pattern = f'%{search}%'
+        query = query.filter(
+            db.or_(
+                PDREstimate.estimate_number.ilike(search_pattern),
+                PDREstimate.customer_name.ilike(search_pattern),
+                PDREstimate.vehicle_make.ilike(search_pattern),
+                PDREstimate.vehicle_model.ilike(search_pattern)
+            )
+        )
+
+    total = query.count()
+    estimates = query.order_by(PDREstimate.updated_at.desc()).offset(offset).limit(limit).all()
+
+    return jsonify({
+        'estimates': [e.to_dict() for e in estimates],
+        'total': total
+    })
+
+
+@customer_bp.route('/pdr-estimates/<int:estimate_id>', methods=['GET'])
+@login_required
+def get_estimate(estimate_id):
+    """
+    Get a single PDR estimate by ID.
+
+    Returns:
+        200: Estimate object with panels
+        404: Estimate not found
+    """
+    from app.models.tenant.pdr_estimate import PDREstimate
+    from app.models.tenant.pdr_estimate_panel import PDREstimatePanel
+
+    identity = parse_identity(get_jwt_identity())
+    tenant_id = identity['tenant_id']
+
+    estimate = PDREstimate.query.filter_by(id=estimate_id, tenant_id=tenant_id).first()
+    if not estimate:
+        return jsonify({'error': 'Estimate not found'}), 404
+
+    result = estimate.to_dict()
+
+    # Include panels
+    panels = PDREstimatePanel.query.filter_by(estimate_id=estimate_id).all()
+    result['panels'] = [p.to_dict() for p in panels]
+
+    return jsonify(result)
+
+
+@customer_bp.route('/pdr-estimates', methods=['POST'])
+@login_required
+def create_estimate():
+    """
+    Create a new PDR estimate.
+
+    Request Body:
+        vehicle_year: int
+        vehicle_make: str
+        vehicle_model: str
+        vin: str (optional)
+        customer_id: int (optional)
+        lead_id: int (optional)
+        customer_name: str (optional)
+        matrix_profile_id: int (optional)
+
+    Returns:
+        201: { success: true, estimate: {...} }
+        400: Validation error
+    """
+    from app.models.tenant.pdr_estimate import PDREstimate
+    from app.extensions import db
+    import uuid
+
+    identity = parse_identity(get_jwt_identity())
+    tenant_id = identity['tenant_id']
+    user_id = identity.get('user_id')
+    data = request.get_json() or {}
+
+    # Generate estimate number
+    estimate_number = f"EST-{uuid.uuid4().hex[:8].upper()}"
+
+    estimate = PDREstimate(
+        tenant_id=tenant_id,
+        estimate_number=estimate_number,
+        vehicle_year=data.get('vehicle_year', datetime.now().year),
+        vehicle_make=data.get('vehicle_make', 'Unknown'),
+        vehicle_model=data.get('vehicle_model', 'Unknown'),
+        vehicle_type=data.get('vehicle_type', 'car'),
+        vin=data.get('vin'),
+        customer_id=data.get('customer_id') or data.get('contact_id'),
+        lead_id=data.get('lead_id'),
+        customer_name=data.get('customer_name'),
+        status='draft',
+        created_by=user_id
+    )
+
+    # Set optional fields
+    if data.get('matrix_profile_id'):
+        estimate.matrix_profile_id = data['matrix_profile_id']
+    if data.get('customer_phone'):
+        estimate.customer_phone = data['customer_phone']
+
+    db.session.add(estimate)
+    db.session.commit()
+
+    return jsonify({
+        'success': True,
+        'estimate': estimate.to_dict()
+    }), 201
+
+
+@customer_bp.route('/pdr-estimates/<int:estimate_id>', methods=['PUT', 'PATCH'])
+@login_required
+def update_estimate(estimate_id):
+    """
+    Update a PDR estimate.
+
+    Request Body: Any estimate fields to update
+
+    Returns:
+        200: { success: true, estimate: {...} }
+        404: Estimate not found
+    """
+    from app.models.tenant.pdr_estimate import PDREstimate
+    from app.extensions import db
+
+    identity = parse_identity(get_jwt_identity())
+    tenant_id = identity['tenant_id']
+    data = request.get_json() or {}
+
+    estimate = PDREstimate.query.filter_by(id=estimate_id, tenant_id=tenant_id).first()
+    if not estimate:
+        return jsonify({'error': 'Estimate not found'}), 404
+
+    # Allowed fields to update
+    allowed_fields = [
+        'vehicle_year', 'vehicle_make', 'vehicle_model', 'vehicle_type', 'vin',
+        'license_plate', 'color', 'mileage', 'customer_id', 'lead_id',
+        'customer_name', 'customer_phone', 'customer_email',
+        'insurance_company', 'claim_number', 'deductible', 'adjuster_name',
+        'adjuster_email', 'adjuster_phone', 'status', 'notes', 'internal_notes',
+        'matrix_profile_id', 'vehicle_id', 'contact_id'
+    ]
+
+    for field in allowed_fields:
+        if field in data:
+            # Handle contact_id -> customer_id mapping
+            if field == 'contact_id':
+                setattr(estimate, 'customer_id', data[field])
+            elif field == 'vehicle_id':
+                # vehicle_id might be used for linking
+                pass  # Skip if no direct column
+            else:
+                setattr(estimate, field, data[field])
+
+    estimate.updated_at = datetime.utcnow()
+    db.session.commit()
+
+    return jsonify({
+        'success': True,
+        'estimate': estimate.to_dict()
+    })
+
+
+@customer_bp.route('/pdr-estimates/<int:estimate_id>', methods=['DELETE'])
+@login_required
+@roles_required(['owner', 'manager'])
+def delete_estimate(estimate_id):
+    """
+    Delete a PDR estimate.
+
+    Only owner/manager can delete.
+    Cannot delete if jobs or invoices are linked.
+
+    Returns:
+        200: { success: true }
+        404: Estimate not found
+        400: Cannot delete (has linked records)
+    """
+    from app.models.tenant.pdr_estimate import PDREstimate
+    from app.models.tenant.job import Job
+    from app.models.tenant.invoice import Invoice
+    from app.extensions import db
+
+    identity = parse_identity(get_jwt_identity())
+    tenant_id = identity['tenant_id']
+
+    estimate = PDREstimate.query.filter_by(id=estimate_id, tenant_id=tenant_id).first()
+    if not estimate:
+        return jsonify({'error': 'Estimate not found'}), 404
+
+    # Check for linked jobs
+    linked_job = Job.query.filter_by(estimate_id=estimate_id).first()
+    if linked_job:
+        return jsonify({'error': 'Cannot delete estimate with linked job'}), 400
+
+    # Check for linked invoices
+    linked_invoice = Invoice.query.filter_by(estimate_id=estimate_id).first()
+    if linked_invoice:
+        return jsonify({'error': 'Cannot delete estimate with linked invoices'}), 400
+
+    db.session.delete(estimate)
+    db.session.commit()
+
+    return jsonify({'success': True})
 
 
 # ==============================================================================
@@ -687,7 +936,7 @@ def get_estimate_pdf(estimate_id):
     from app.models.master.tenant import Tenant
     from app.models.tenant import PDREstimate
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
 
     # Try to get tenant info for shop name
@@ -796,7 +1045,7 @@ def preview_estimate_pdf(estimate_id):
     from app.services.pdf_generator import generate_estimate_pdf
     from app.models.master.tenant import Tenant
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
 
     estimate_data = request.get_json()
 
@@ -855,7 +1104,7 @@ def get_estimate_photosheet(estimate_id):
     from app.models.master.tenant import Tenant
     from app.models.tenant.estimate_photo import EstimatePhoto
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
 
     # Get tenant info for shop name
     tenant = Tenant.query.get(identity['tenant_id'])
@@ -940,7 +1189,7 @@ def preview_estimate_photosheet(estimate_id):
     from app.services.photo_sheet_generator import generate_photo_sheet
     from app.models.master.tenant import Tenant
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
 
     data = request.get_json()
 
@@ -1090,7 +1339,7 @@ def send_estimate_package(estimate_id):
     """
     from app.services.email_service import get_email_service
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     data = request.get_json() or {}
 
     # Validate required fields
@@ -1212,7 +1461,7 @@ def create_estimate_version(estimate_id):
     """
     from app.models.tenant import EstimateVersion, EstimateActivity
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     data = request.get_json() or {}
 
     snapshot = data.get('snapshot', {})
@@ -1298,7 +1547,7 @@ def create_supplement(estimate_id):
     )
     from app.services.supplement_diff import compute_supplement_diff, generate_supplement_narrative
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     data = request.get_json() or {}
 
     baseline_version_id = data.get('baseline_version_id')
@@ -1423,7 +1672,7 @@ def get_supplement_pdf(supplement_id):
     from app.models.master.tenant import Tenant
     from app.services.supplement_pdf_generator import generate_supplement_pdf
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
 
     supplement = EstimateSupplement.query.get(supplement_id)
     if not supplement:
@@ -1489,7 +1738,7 @@ def send_supplement(supplement_id):
     from app.services.supplement_pdf_generator import generate_supplement_pdf
     from app.services.email_service import get_email_service
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     data = request.get_json() or {}
 
     to = data.get('to')
@@ -1633,7 +1882,7 @@ def get_estimate_dispute_pack(estimate_id):
     from app.models.tenant.part_request import PartRequest
     from app.services.ri_service import RIService
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     user_id = identity.get('user_id')
 
     # Get tenant info
@@ -1791,7 +2040,7 @@ def create_estimate_share_link(estimate_id):
     from app.models.tenant.pdr_estimate import PDREstimate
     from app.models.tenant.estimate_activity import EstimateActivity
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity.get('user_id')
 
@@ -2404,7 +2653,7 @@ def request_estimate_signature(estimate_id):
     from app.models.tenant.pdr_estimate import PDREstimate
     from app.models.tenant.estimate_activity import EstimateActivity
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity.get('user_id')
 
@@ -2485,7 +2734,7 @@ def sign_estimate_internal(estimate_id):
     from app.models.tenant.estimate_activity import EstimateActivity
     import base64
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     user_id = identity.get('user_id')
 
     data = request.get_json() or {}
@@ -2575,7 +2824,7 @@ def approve_estimate(estimate_id):
     from app.models.tenant.pdr_estimate import PDREstimate
     from app.models.tenant.estimate_activity import EstimateActivity
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     user_id = identity.get('user_id')
 
     try:
@@ -2633,7 +2882,7 @@ def decline_estimate(estimate_id):
     from app.models.tenant.pdr_estimate import PDREstimate
     from app.models.tenant.estimate_activity import EstimateActivity
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     user_id = identity.get('user_id')
 
     data = request.get_json() or {}
@@ -2695,7 +2944,7 @@ def submit_to_insurer(estimate_id):
     from app.models.tenant.pdr_estimate import PDREstimate
     from app.models.tenant.estimate_activity import EstimateActivity
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     user_id = identity.get('user_id')
 
     try:
@@ -2761,7 +3010,7 @@ def insurer_approve(estimate_id):
     from app.models.tenant.pdr_estimate import PDREstimate
     from app.models.tenant.estimate_activity import EstimateActivity
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     user_id = identity.get('user_id')
 
     data = request.get_json() or {}
@@ -2871,7 +3120,7 @@ def update_insurer_approval(estimate_id):
     from app.models.tenant.pdr_estimate import PDREstimate
     from app.models.tenant.estimate_activity import EstimateActivity
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     user_id = identity.get('user_id')
 
     data = request.get_json() or {}
@@ -2954,7 +3203,7 @@ def insurer_decline(estimate_id):
     from app.models.tenant.pdr_estimate import PDREstimate
     from app.models.tenant.estimate_activity import EstimateActivity
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     user_id = identity.get('user_id')
 
     data = request.get_json() or {}
@@ -3010,7 +3259,7 @@ def insurer_needs_revision(estimate_id):
     from app.models.tenant.pdr_estimate import PDREstimate
     from app.models.tenant.estimate_activity import EstimateActivity
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     user_id = identity.get('user_id')
 
     data = request.get_json() or {}
@@ -3180,7 +3429,7 @@ def get_estimate_job(estimate_id):
     from app.models.tenant.job import Job
     from app.models.tenant.pdr_estimate import PDREstimate
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
 
     # Verify estimate exists and belongs to tenant
@@ -3223,7 +3472,7 @@ def create_job_from_estimate(estimate_id):
     from app.models.tenant.estimate_activity import EstimateActivity
     from datetime import datetime
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity.get('user_id')
 
@@ -3320,7 +3569,7 @@ def list_jobs():
     """
     from app.models.tenant.job import Job
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
 
     status = request.args.get('status')
@@ -3354,7 +3603,7 @@ def get_job(job_id):
     """
     from app.models.tenant.job import Job
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
 
     job = Job.query.filter_by(id=job_id, tenant_id=tenant_id).first()
@@ -3390,7 +3639,7 @@ def update_job(job_id):
     from app.models.tenant.estimate_activity import EstimateActivity
     from datetime import datetime, time
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity.get('user_id')
 
@@ -3500,7 +3749,7 @@ def list_invoices():
     """
     from app.models.tenant.invoice import Invoice
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
 
     status = request.args.get('status')
@@ -3543,7 +3792,7 @@ def get_invoice(invoice_id):
     """
     from app.models.tenant.invoice import Invoice
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
 
     invoice = Invoice.query.filter_by(id=invoice_id, tenant_id=tenant_id).first()
@@ -3581,7 +3830,7 @@ def create_invoice_from_estimate(estimate_id):
     from app.models.tenant.job import Job
     from decimal import Decimal
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity.get('user_id')
 
@@ -3738,7 +3987,7 @@ def update_estimate_billing(estimate_id):
     from app.models.tenant.estimate_activity import EstimateActivity
     from decimal import Decimal
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity.get('user_id')
 
@@ -3819,7 +4068,7 @@ def create_insurer_invoice(estimate_id):
     from app.models.tenant.estimate_activity import EstimateActivity
     from app.models.tenant.job import Job
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity.get('user_id')
 
@@ -3935,7 +4184,7 @@ def create_customer_deductible_invoice(estimate_id):
     from app.models.tenant.estimate_activity import EstimateActivity
     from app.models.tenant.job import Job
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity.get('user_id')
 
@@ -4056,7 +4305,7 @@ def get_estimate_invoices(estimate_id):
     from app.models.tenant.pdr_estimate import PDREstimate
     from app.models.tenant.invoice import Invoice
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
 
     try:
@@ -4111,7 +4360,7 @@ def issue_invoice(invoice_id):
     from app.models.tenant.invoice import Invoice
     from app.models.tenant.estimate_activity import EstimateActivity
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity.get('user_id')
 
@@ -4168,7 +4417,7 @@ def void_invoice(invoice_id):
     from app.models.tenant.invoice import Invoice
     from app.models.tenant.estimate_activity import EstimateActivity
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity.get('user_id')
 
@@ -4225,7 +4474,7 @@ def list_invoice_payments(invoice_id):
     """
     from app.models.tenant.invoice import Invoice
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
 
     invoice = Invoice.query.filter_by(id=invoice_id, tenant_id=tenant_id).first()
@@ -4264,7 +4513,7 @@ def add_payment(invoice_id):
     from app.models.tenant.estimate_activity import EstimateActivity
     from datetime import datetime
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity.get('user_id')
 
@@ -4375,7 +4624,7 @@ def update_invoice(invoice_id):
     from app.models.tenant.invoice import Invoice
     from datetime import datetime
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
 
     data = request.get_json() or {}
@@ -4439,7 +4688,7 @@ def get_estimate_workflow(estimate_id):
     from app.models.tenant.pdr_estimate import PDREstimate
     from app.services.workflow_service import WorkflowService
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
 
     estimate = PDREstimate.query.filter_by(id=estimate_id, tenant_id=tenant_id).first()
@@ -4466,7 +4715,7 @@ def get_job_workflow(job_id):
     from app.models.tenant.pdr_estimate import PDREstimate
     from app.services.workflow_service import WorkflowService
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
 
     job = Job.query.filter_by(id=job_id, tenant_id=tenant_id).first()
@@ -4538,7 +4787,7 @@ def flag_job_issue(job_id):
     from app.models.tenant.estimate_activity import EstimateActivity
     from app.extensions import db
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity['user_id']
     user_role = identity.get('role', '')
@@ -4672,7 +4921,7 @@ def update_job_blocker(job_id):
     from app.models.tenant.estimate_activity import EstimateActivity
     from app.extensions import db
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity['user_id']
 
@@ -4799,7 +5048,7 @@ def clear_job_blocker(job_id):
     from app.models.tenant.estimate_activity import EstimateActivity
     from app.extensions import db
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity['user_id']
 
@@ -4870,7 +5119,7 @@ def list_part_requests():
     from app.models.master.user import User
     from sqlalchemy import func
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
 
     # Base query with tenant safety
@@ -4986,7 +5235,7 @@ def create_part_request():
     from app.models.tenant.estimate_activity import EstimateActivity
     from app.extensions import db
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity['user_id']
 
@@ -5089,7 +5338,7 @@ def update_part_request(request_id):
     from app.models.tenant.estimate_activity import EstimateActivity
     from app.extensions import db
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity['user_id']
 
@@ -5202,7 +5451,7 @@ def approve_part_request(request_id):
     from app.models.tenant.estimate_activity import EstimateActivity
     from app.extensions import db
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity['user_id']
 
@@ -5263,7 +5512,7 @@ def unapprove_part_request(request_id):
     from app.models.tenant.estimate_activity import EstimateActivity
     from app.extensions import db
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity['user_id']
 
@@ -5320,7 +5569,7 @@ def bulk_approve_part_requests():
     from app.models.tenant.estimate_activity import EstimateActivity
     from app.extensions import db
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity['user_id']
 
@@ -5412,7 +5661,7 @@ def update_part_request_status(request_id):
     from app.services.blocker_helpers import normalize_eta
     from app.extensions import db
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity['user_id']
 
@@ -5544,7 +5793,7 @@ def nudge_part_request(request_id):
     from app.extensions import db
     import hashlib
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity['user_id']
 
@@ -5741,7 +5990,7 @@ def get_estimate_parts_suggestions(estimate_id):
     """
     from app.services.parts_request_builder import get_parts_suggestions
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
 
     result = get_parts_suggestions(estimate_id, tenant_id)
@@ -5781,7 +6030,7 @@ def create_estimate_parts_requests(estimate_id):
     """
     from app.services.parts_request_builder import create_parts_requests_from_suggestions
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity['user_id']
 
@@ -5820,7 +6069,7 @@ def get_estimate_parts_requests(estimate_id):
     """
     from app.models.tenant import PDREstimate, PartRequest
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
 
     estimate = PDREstimate.query.filter_by(id=estimate_id, tenant_id=tenant_id).first()
@@ -5861,7 +6110,7 @@ def get_ri_catalog():
     """
     from app.services.ri_justification_service import get_ri_catalog
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
 
     catalog = get_ri_catalog(tenant_id)
@@ -5910,7 +6159,7 @@ def create_ri_operation():
     from app.models.tenant.ri_step import RIStep
     from app.extensions import db
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
 
     data = request.get_json() or {}
@@ -6017,7 +6266,7 @@ def delete_ri_operation(operation_id):
     from app.models.tenant.ri_operation import RIOperation
     from app.extensions import db
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
 
     operation = RIOperation.query.filter_by(id=operation_id, tenant_id=tenant_id).first()
@@ -6064,7 +6313,7 @@ def add_ri_step(operation_id):
     from app.models.tenant.ri_step import RIStep
     from app.extensions import db
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
 
     operation = RIOperation.query.filter_by(id=operation_id, tenant_id=tenant_id).first()
@@ -6127,7 +6376,7 @@ def delete_ri_step(step_id):
     from app.models.tenant.ri_step import RIStep
     from app.extensions import db
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
 
     step = RIStep.query.filter_by(id=step_id, tenant_id=tenant_id).first()
@@ -6239,7 +6488,7 @@ def get_estimate_ri(estimate_id):
     from app.models.tenant import PDREstimate
     from app.services.ri_justification_service import compute_estimate_ri_summary
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
 
     # Tenant safety
@@ -6286,7 +6535,7 @@ def add_estimate_ri(estimate_id):
     from app.services.ri_justification_service import ensure_default_ri_catalog
     from app.extensions import db
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity['user_id']
 
@@ -6405,7 +6654,7 @@ def update_estimate_ri(estimate_id, estimate_ri_op_id):
     from app.models.tenant.estimate_activity import EstimateActivity
     from app.extensions import db
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity['user_id']
 
@@ -6504,7 +6753,7 @@ def remove_estimate_ri(estimate_id, estimate_ri_op_id):
     from app.models.tenant.estimate_activity import EstimateActivity
     from app.extensions import db
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity['user_id']
 
@@ -6581,7 +6830,7 @@ def denial_simulator(estimate_id):
     from app.models.tenant import PDREstimate
     from app.services.ri_justification_service import get_denial_rebuttal, DENIAL_DEFINITIONS
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
 
     # Tenant safety
@@ -6662,7 +6911,7 @@ def supplement_preview(estimate_id):
     from app.services.ri_justification_service import build_supplement_letter
     from app.models.tenant.estimate_activity import EstimateActivity
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity['user_id']
 
@@ -6721,7 +6970,7 @@ def job_check_in(job_id):
     from app.models.master.user import User
     from app.extensions import db
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity['user_id']
     user_role = identity.get('role', '')
@@ -6791,7 +7040,7 @@ def close_estimate_claim(estimate_id):
     from app.models.tenant.pdr_estimate import PDREstimate, EstimateActivity
     from app.services.workflow_service import WorkflowGuard
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity.get('user_id')
 
@@ -6885,7 +7134,7 @@ def issue_invoice_with_guard(invoice_id):
     from app.models.tenant.pdr_estimate import PDREstimate, EstimateActivity
     from app.services.workflow_service import validate_invoice_issue
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity.get('user_id')
 
@@ -6962,7 +7211,7 @@ def download_payment_receipt(invoice_id, payment_id):
     from app.models.tenant.user import User
     from app.services.receipt_pdf_generator import generate_payment_receipt
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity.get('user_id')
 
@@ -7062,7 +7311,7 @@ def export_invoices_csv():
     from app.models.tenant.invoice import Invoice
     from app.models.tenant.pdr_estimate import EstimateActivity
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity.get('user_id')
 
@@ -7193,7 +7442,7 @@ def export_payments_csv():
     from app.models.tenant.user import User
     from app.models.tenant.pdr_estimate import EstimateActivity
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity.get('user_id')
 
@@ -7343,7 +7592,7 @@ def get_ops_overview():
     from app.models.master.user import User
     from app.services.workflow_service import WorkflowService
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
 
     # Time thresholds
@@ -8553,7 +8802,7 @@ def get_work_inbox():
     from app.models.master.user import User
     from app.services.workflow_service import WorkflowService
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity['user_id']
     user_role = identity.get('role', '')
@@ -9085,7 +9334,7 @@ def send_nudge():
     from app.models.master.user import User
     from app.services.email_service import EmailService
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity['user_id']
 
@@ -9235,7 +9484,7 @@ def get_auto_nudges_settings():
     """
     from app.models.master.tenant import Tenant
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
 
     tenant = Tenant.query.get(tenant_id)
@@ -9285,7 +9534,7 @@ def update_auto_nudges_settings():
     from app.models.master.tenant import Tenant
     from app.extensions import db
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
 
     tenant = Tenant.query.get(tenant_id)
@@ -9372,7 +9621,7 @@ def test_auto_nudges():
     from app.models.master.user import User
     from app.services.sla_service import SLAService
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
 
     tenant = Tenant.query.get(tenant_id)
@@ -9476,7 +9725,7 @@ def get_labor_rates_settings():
     """
     from app.models.master.tenant import Tenant
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
 
     tenant = Tenant.query.get(tenant_id)
@@ -9523,7 +9772,7 @@ def update_labor_rates_settings():
     from app.models.master.tenant import Tenant
     from app.services.labor_rate_service import validate_labor_rates_config
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
 
     tenant = Tenant.query.get(tenant_id)
@@ -9584,7 +9833,7 @@ def preview_labor_rate_resolution():
     """
     from app.services.labor_rate_service import preview_rate_resolution
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
 
     data = request.get_json() or {}
@@ -9622,7 +9871,7 @@ def set_estimate_labor_rate_override(estimate_id):
     """
     from app.services.labor_rate_service import set_estimate_ri_rate_override
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
     user_id = identity['user_id']
 
@@ -9668,7 +9917,7 @@ def get_estimate_labor_rate(estimate_id):
     from app.models.tenant import PDREstimate
     from app.services.labor_rate_service import resolve_ri_rate_for_estimate
 
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     tenant_id = identity['tenant_id']
 
     estimate = PDREstimate.query.filter_by(

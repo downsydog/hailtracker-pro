@@ -13,6 +13,25 @@ from app.services.permissions_service import (
 )
 
 
+def parse_identity(identity):
+    """
+    Parse JWT identity which may be a JSON string (PyJWT 2.x) or dict.
+
+    Args:
+        identity: Raw identity from JWT token
+
+    Returns:
+        dict: Parsed identity or original value
+    """
+    import json
+    if isinstance(identity, str):
+        try:
+            return json.loads(identity)
+        except json.JSONDecodeError:
+            return identity
+    return identity
+
+
 def get_current_user():
     """
     Get the current user from JWT token.
@@ -23,7 +42,8 @@ def get_current_user():
     identity = get_jwt_identity()
     if not identity:
         return None
-    return identity
+    # Identity is JSON-serialized string due to PyJWT 2.x requirements
+    return parse_identity(identity)
 
 
 def login_required(f):
@@ -41,7 +61,9 @@ def login_required(f):
         try:
             verify_jwt_in_request()
             # Store identity in g for easy access
-            g.current_user = get_jwt_identity()
+            # Identity is JSON-serialized due to PyJWT 2.x requirements
+            identity = parse_identity(get_jwt_identity())
+            g.current_user = identity
             return f(*args, **kwargs)
         except Exception as e:
             return jsonify({
@@ -66,7 +88,7 @@ def admin_required(f):
     def decorated_function(*args, **kwargs):
         try:
             verify_jwt_in_request()
-            identity = get_jwt_identity()
+            identity = parse_identity(get_jwt_identity())
             g.current_user = identity
 
             if identity.get('role') != User.ROLE_OWNER:
@@ -99,7 +121,7 @@ def manager_required(f):
     def decorated_function(*args, **kwargs):
         try:
             verify_jwt_in_request()
-            identity = get_jwt_identity()
+            identity = parse_identity(get_jwt_identity())
             g.current_user = identity
 
             if identity.get('role') not in [User.ROLE_OWNER, User.ROLE_MANAGER]:
@@ -132,7 +154,7 @@ def desk_required(f):
     def decorated_function(*args, **kwargs):
         try:
             verify_jwt_in_request()
-            identity = get_jwt_identity()
+            identity = parse_identity(get_jwt_identity())
             g.current_user = identity
 
             allowed_roles = [User.ROLE_OWNER, User.ROLE_MANAGER, User.ROLE_DESK]
@@ -159,15 +181,21 @@ def roles_required(*roles):
     Usage:
         @app.route('/specific')
         @roles_required('owner', 'manager', 'tech')
+        # or
+        @roles_required(['owner', 'manager', 'tech'])
         def specific_roles():
             return 'Specific roles only'
     """
+    # Handle list passed as single argument
+    if len(roles) == 1 and isinstance(roles[0], (list, tuple)):
+        roles = roles[0]
+
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
             try:
                 verify_jwt_in_request()
-                identity = get_jwt_identity()
+                identity = parse_identity(get_jwt_identity())
                 g.current_user = identity
 
                 if identity.get('role') not in roles:
@@ -202,7 +230,7 @@ def same_tenant_required(f):
     def decorated_function(*args, **kwargs):
         try:
             verify_jwt_in_request()
-            identity = get_jwt_identity()
+            identity = parse_identity(get_jwt_identity())
             g.current_user = identity
 
             # Check if tenant_id in URL matches user's tenant
@@ -238,7 +266,7 @@ def permission_required(permission: Permission):
         def decorated_function(*args, **kwargs):
             try:
                 verify_jwt_in_request()
-                identity = get_jwt_identity()
+                identity = parse_identity(get_jwt_identity())
                 g.current_user = identity
 
                 if not can(identity, permission):

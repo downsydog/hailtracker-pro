@@ -36,7 +36,7 @@ class PDREstimate(db.Model):
     mileage = db.Column(db.Integer)
 
     # Customer/Lead linkage
-    customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'), nullable=True)
+    customer_id = db.Column(db.Integer, nullable=True)  # References customers table (FK constraint optional)
     lead_id = db.Column(db.Integer, db.ForeignKey('leads.id'), nullable=True)
     customer_name = db.Column(db.String(255))
 

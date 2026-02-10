@@ -7,7 +7,7 @@ Handles registration, login, and team management.
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity, create_access_token
 from app.services.auth_service import AuthService
-from app.api.middleware import login_required, manager_required, admin_required
+from app.api.middleware import login_required, manager_required, admin_required, parse_identity
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -133,7 +133,7 @@ def refresh():
     Returns:
         200: New access token
     """
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
     access_token = create_access_token(identity=identity)
     return jsonify({'access_token': access_token}), 200
 
@@ -150,7 +150,7 @@ def get_current_user():
     Returns:
         200: User, tenant, and permissions info
     """
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
 
     from app.models.master.user import User
     from app.models.master.tenant import Tenant
@@ -196,7 +196,7 @@ def update_profile():
         400: Validation error
     """
     data = request.get_json()
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
 
     if not data:
         return jsonify({'error': 'Request body required'}), 400
@@ -246,7 +246,7 @@ def change_password():
         400: Validation error
     """
     data = request.get_json()
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
 
     if not data:
         return jsonify({'error': 'Request body required'}), 400
@@ -305,7 +305,7 @@ def get_team():
     Returns:
         200: List of team members
     """
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
 
     members = AuthService.get_team_members(identity['tenant_id'])
 
@@ -324,7 +324,7 @@ def get_active_team():
     Returns:
         200: List of active team members
     """
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
 
     members = AuthService.get_active_team_members(identity['tenant_id'])
 
@@ -358,7 +358,7 @@ def add_team_member():
         403: Permission denied
     """
     data = request.get_json()
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
 
     if not data:
         return jsonify({'error': 'Request body required'}), 400
@@ -400,7 +400,7 @@ def get_team_member(user_id):
         200: Team member info
         404: User not found
     """
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
 
     from app.models.master.user import User
 
@@ -432,7 +432,7 @@ def update_team_member(user_id):
         403: Permission denied
     """
     data = request.get_json()
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
 
     if not data:
         return jsonify({'error': 'Request body required'}), 400
@@ -465,7 +465,7 @@ def deactivate_team_member(user_id):
         400: Cannot deactivate
         403: Permission denied
     """
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
 
     success, message = AuthService.deactivate_user(
         tenant_id=identity['tenant_id'],
@@ -491,7 +491,7 @@ def reactivate_team_member(user_id):
         400: Cannot reactivate
         403: Permission denied
     """
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
 
     success, message = AuthService.reactivate_user(
         tenant_id=identity['tenant_id'],
@@ -523,7 +523,7 @@ def reset_team_member_password(user_id):
         403: Permission denied
     """
     data = request.get_json()
-    identity = get_jwt_identity()
+    identity = parse_identity(get_jwt_identity())
 
     if not data or not data.get('new_password'):
         return jsonify({'error': 'new_password required'}), 400

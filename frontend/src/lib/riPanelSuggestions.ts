@@ -121,4 +121,35 @@ export function getPanelDisplayName(panelId: string): string {
     .join(' ')
 }
 
+/**
+ * Stage 8B: Get all operation codes that are relevant (mapped) to a panel.
+ * Returns a Set of operation codes for O(1) lookup.
+ */
+export function getPanelRelevantOperationCodes(panelNameOrCode: string): Set<string> {
+  const suggestions = getRiSuggestionsForPanel(panelNameOrCode)
+  return new Set(suggestions.map(s => s.code))
+}
+
+/**
+ * Stage 8B: Check if an operation code is relevant to the given panel.
+ */
+export function isOperationRelevantToPanel(operationCode: string, panelNameOrCode: string): boolean {
+  const relevantCodes = getPanelRelevantOperationCodes(panelNameOrCode)
+  return relevantCodes.has(operationCode)
+}
+
+/**
+ * Stage 8B: Get all unique operation codes from all panel mappings.
+ * Useful for determining if an operation is "known" to the mapping system.
+ */
+export function getAllMappedOperationCodes(): Set<string> {
+  const allCodes = new Set<string>()
+  for (const ops of Object.values(PANEL_RI_MAPPINGS)) {
+    for (const op of ops) {
+      allCodes.add(op.code)
+    }
+  }
+  return allCodes
+}
+
 export default getRiSuggestionsForPanel

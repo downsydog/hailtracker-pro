@@ -134,6 +134,13 @@ import {
   getDiagnosticsEnabled,
   setDiagnosticsEnabled
 } from '@/lib/riDiagnostics'
+import {
+  getSuggestedRiOpsForPanel,
+  getSuggestedTotalHours,
+  countRangeToNumber as heuristicCountRangeToNumber,
+  type SuggestedRiOp,
+  type PanelDamageContext
+} from '@/lib/riHeuristics'
 
 // ============================================================================
 // PHASE 7 FEATURE FLAGS
@@ -443,6 +450,15 @@ export function EstimateBuilder() {
   // Stage 7D: Panel-Driven R&I Quick Add state
   const [riAddingCode, setRiAddingCode] = useState<string | null>(null) // Currently adding
   const [riAddedCodes, setRiAddedCodes] = useState<Set<string>>(new Set()) // Already added this session
+
+  // Stage 8E: Bulk-add suggested access state
+  const [bulkAddProgress, setBulkAddProgress] = useState<{
+    isAdding: boolean
+    current: number
+    total: number
+    addedCount: number
+    failedCount: number
+  } | null>(null)
 
   // Stage 8C: Dev-only R&I Diagnostics toggle (persisted in localStorage)
   const [showRiDiagnostics, setShowRiDiagnostics] = useState(() => getDiagnosticsEnabled())
@@ -1205,6 +1221,34 @@ export function EstimateBuilder() {
     return new Set(estimateRiData.operations.map((op: { code: string }) => op.code))
   }, [estimateRiData?.operations])
 
+  // Stage 8E: Smart suggested R&I ops based on panel damage heuristics
+  const suggestedRiOps = useMemo((): SuggestedRiOp[] => {
+    if (!selectedPanelId) return []
+
+    const panelDamage = panels[selectedPanelId]
+    const dentCount = panelDamage?.countRange
+      ? heuristicCountRangeToNumber(panelDamage.countRange)
+      : 0
+
+    // Combine already added + session added
+    const allAddedCodes = new Set([...alreadyAddedRiCodes, ...riAddedCodes])
+
+    const ctx: PanelDamageContext = {
+      panelName: selectedPanelId,
+      dentCount,
+      dentSize: panelDamage?.dentSize || undefined,
+      oversizedCount: panelDamage?.oversizedCount || 0,
+      hasSunroof: false // Could be derived from vehicle info if available
+    }
+
+    return getSuggestedRiOpsForPanel(ctx, allAddedCodes)
+  }, [selectedPanelId, panels, alreadyAddedRiCodes, riAddedCodes])
+
+  // Stage 8E: Calculate total hours for suggested ops
+  const suggestedTotalHours = useMemo(() => {
+    return getSuggestedTotalHours(suggestedRiOps, riCatalog?.operations)
+  }, [suggestedRiOps, riCatalog?.operations])
+
   // Stage 8A: Handle R&I quick add with auto-save (creates estimate if needed)
   const handleRiQuickAdd = useCallback(async (suggestion: RISuggestion) => {
     setRiAddingCode(suggestion.code)
@@ -1295,6 +1339,145 @@ export function EstimateBuilder() {
       setRiAddingCode(null)
     }
   }, [estimateId, selectedPanelId, vehicleYear, vehicleMake, vehicleModel, vehicleVin, customerName, customerPhone, customerId, leadId, createEstimate, navigate, isSaving])
+
+  // Stage 8E: Handle bulk add of suggested access operations
+  const handleBulkAddSuggested = useCallback(async () => {
+    if (suggestedRiOps.length === 0) return
+
+    setBulkAddProgress({
+      isAdding: true,
+      current: 0,
+      total: suggestedRiOps.length,
+      addedCount: 0,
+      failedCount: 0
+    })
+
+    try {
+      let targetEstimateId = estimateId
+
+      // Stage 8E: Auto-create estimate if it doesn't exist yet (same as 8A)
+      if (!targetEstimateId) {
+        setSaveStatus('saving')
+        setIsSaving(true)
+
+        try {
+          const estimateData = {
+            vehicle_year: parseInt(vehicleYear) || new Date().getFullYear(),
+            vehicle_make: vehicleMake || 'Unknown',
+            vehicle_model: vehicleModel || 'Unknown',
+            vin: vehicleVin,
+            customer_name: customerName || 'New Customer',
+            customer_phone: customerPhone,
+            contact_id: customerId || undefined,
+            lead_id: leadId || undefined,
+            matrix_profile_id: 1,
+            status: 'draft' as const
+          }
+
+          const result = await createEstimate.mutateAsync(estimateData)
+          if (result.estimate?.id) {
+            targetEstimateId = result.estimate.id
+            navigate(`/estimates/${result.estimate.id}`, { replace: true })
+          } else {
+            throw new Error('Failed to create estimate')
+          }
+        } catch (createError) {
+          console.error('Failed to create estimate:', createError)
+          alert('Failed to create estimate. Please try again.')
+          setBulkAddProgress(null)
+          return
+        } finally {
+          setIsSaving(false)
+          setSaveStatus('idle')
+        }
+      } else if (pendingChangesRef.current || isSaving) {
+        // If there are pending changes, trigger save and wait
+        setSaveStatus('saving')
+        handleSaveRef.current()
+        await new Promise(resolve => setTimeout(resolve, 800))
+      }
+
+      if (!targetEstimateId) {
+        alert('Could not determine estimate ID. Please save the estimate first.')
+        setBulkAddProgress(null)
+        return
+      }
+
+      // Add ops with throttling (2 at a time)
+      let addedCount = 0
+      let failedCount = 0
+      const batchSize = 2
+
+      for (let i = 0; i < suggestedRiOps.length; i += batchSize) {
+        const batch = suggestedRiOps.slice(i, i + batchSize)
+
+        const results = await Promise.allSettled(
+          batch.map(async (op) => {
+            const response = await fetch(`/api/pdr-estimates/${targetEstimateId}/ri`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+              },
+              body: JSON.stringify({
+                operation_code: op.code,
+                selected_modifier_codes: [],
+                step_overrides: [],
+                notes: `Added via Apply Suggested Access (${op.reason})`
+              })
+            })
+
+            if (!response.ok) {
+              const error = await response.json()
+              throw new Error(error.error || `Failed to add ${op.label}`)
+            }
+
+            return op.code
+          })
+        )
+
+        // Update progress and state
+        for (const result of results) {
+          if (result.status === 'fulfilled') {
+            addedCount++
+            setRiAddedCodes(prev => new Set(prev).add(result.value))
+          } else {
+            failedCount++
+            console.error('Failed to add op:', result.reason)
+          }
+        }
+
+        setBulkAddProgress({
+          isAdding: true,
+          current: Math.min(i + batchSize, suggestedRiOps.length),
+          total: suggestedRiOps.length,
+          addedCount,
+          failedCount
+        })
+      }
+
+      // Show final result briefly
+      setBulkAddProgress({
+        isAdding: false,
+        current: suggestedRiOps.length,
+        total: suggestedRiOps.length,
+        addedCount,
+        failedCount
+      })
+
+      // Clear after 2 seconds
+      setTimeout(() => {
+        setBulkAddProgress(null)
+      }, 2000)
+
+      console.log(`Bulk add complete: ${addedCount} added, ${failedCount} failed`)
+
+    } catch (error) {
+      console.error('Bulk add failed:', error)
+      setBulkAddProgress(null)
+      alert('Bulk add failed. Please try again.')
+    }
+  }, [suggestedRiOps, estimateId, vehicleYear, vehicleMake, vehicleModel, vehicleVin, customerName, customerPhone, customerId, leadId, createEstimate, navigate, isSaving])
 
   // Stage 7A: Keyboard shortcuts handler
   useEffect(() => {
@@ -2504,23 +2687,82 @@ export function EstimateBuilder() {
                   )}
                 </div>
 
-                {/* Stage 8D: R&I Pills - context-first, no search */}
+                {/* Stage 8D/8E: R&I Pills + Suggested Access - context-first, no search */}
                 {riSuggestions.length > 0 ? (
                   <div className="space-y-2">
-                    {/* Compact hint for new estimates */}
-                    {!estimateId && (
-                      <div className="text-[10px] text-blue-500">
-                        Click to add access operations (auto-saves estimate)
+                    {/* Stage 8E: Apply Suggested Access button + Suggested row */}
+                    {suggestedRiOps.length > 0 && (
+                      <div className="bg-blue-50/80 rounded-lg p-2 space-y-2">
+                        {/* Suggested ops summary with tooltips */}
+                        <div className="flex items-center gap-2 text-xs">
+                          <Zap className="h-3.5 w-3.5 text-blue-600 flex-shrink-0" />
+                          <span className="text-blue-800 font-medium">Suggested:</span>
+                          <span className="text-blue-700 truncate flex-1">
+                            {suggestedRiOps.slice(0, 3).map((op, i) => (
+                              <span key={op.code} title={op.reason}>
+                                {i > 0 && ', '}{op.label}
+                              </span>
+                            ))}
+                            {suggestedRiOps.length > 3 && ` +${suggestedRiOps.length - 3} more`}
+                          </span>
+                          <span className="text-blue-600 font-medium flex-shrink-0">
+                            +{suggestedTotalHours.toFixed(1)}h
+                          </span>
+                        </div>
+
+                        {/* Apply Suggested Access button */}
+                        <button
+                          onClick={handleBulkAddSuggested}
+                          disabled={bulkAddProgress?.isAdding}
+                          className={`
+                            w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium
+                            transition-all duration-150
+                            ${bulkAddProgress?.isAdding
+                              ? 'bg-blue-100 text-blue-600 cursor-wait'
+                              : bulkAddProgress && !bulkAddProgress.isAdding
+                                ? 'bg-green-100 text-green-700'
+                                : 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'
+                            }
+                          `}
+                        >
+                          {bulkAddProgress?.isAdding ? (
+                            <>
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              Adding {bulkAddProgress.current}/{bulkAddProgress.total}...
+                            </>
+                          ) : bulkAddProgress && !bulkAddProgress.isAdding ? (
+                            <>
+                              <CheckCircle className="h-4 w-4" />
+                              {bulkAddProgress.failedCount > 0
+                                ? `${bulkAddProgress.addedCount} added, ${bulkAddProgress.failedCount} failed`
+                                : `${bulkAddProgress.addedCount} added!`
+                              }
+                            </>
+                          ) : (
+                            <>
+                              <Zap className="h-4 w-4" />
+                              Apply Suggested Access ({suggestedRiOps.length})
+                            </>
+                          )}
+                        </button>
                       </div>
                     )}
 
-                    {/* Pills with 3 states */}
+                    {/* Compact hint for new estimates (only if no suggestions) */}
+                    {!estimateId && suggestedRiOps.length === 0 && (
+                      <div className="text-[10px] text-blue-500">
+                        Enter dent damage to get smart access suggestions
+                      </div>
+                    )}
+
+                    {/* Pills with 3 states - manual add option */}
                     <div className="flex flex-wrap gap-1.5">
                       {riSuggestions.slice(0, 6).map((suggestion) => {
                         const isAddedToEstimate = alreadyAddedRiCodes.has(suggestion.code) || riAddedCodes.has(suggestion.code)
-                        const isAdding = riAddingCode === suggestion.code
+                        const isAdding = riAddingCode === suggestion.code || (bulkAddProgress?.isAdding && suggestedRiOps.some(s => s.code === suggestion.code))
                         const catalogOp = riCatalog?.operations?.find(op => op.code === suggestion.code)
                         const baseHours = catalogOp?.steps?.reduce((sum, step) => sum + (step.base_time_hours || 0), 0) || 0
+                        const suggestedOp = suggestedRiOps.find(s => s.code === suggestion.code)
 
                         return (
                           <button
@@ -2534,15 +2776,19 @@ export function EstimateBuilder() {
                                 ? 'bg-green-100 text-green-700 cursor-default ring-1 ring-green-200'
                                 : isAdding
                                   ? 'bg-blue-100 text-blue-600 cursor-wait'
-                                  : 'bg-white text-blue-700 hover:bg-blue-50 shadow-sm border border-blue-200 hover:border-blue-300'
+                                  : suggestedOp
+                                    ? 'bg-blue-50 text-blue-700 hover:bg-blue-100 shadow-sm border border-blue-300'
+                                    : 'bg-white text-blue-700 hover:bg-blue-50 shadow-sm border border-blue-200 hover:border-blue-300'
                               }
                             `}
-                            title={isAddedToEstimate ? 'Added to estimate' : suggestion.description}
+                            title={isAddedToEstimate ? 'Added to estimate' : suggestedOp ? suggestedOp.reason : suggestion.description}
                           >
                             {isAdding ? (
                               <Loader2 className="h-3 w-3 animate-spin" />
                             ) : isAddedToEstimate ? (
                               <CheckCircle className="h-3 w-3" />
+                            ) : suggestedOp ? (
+                              <Zap className="h-3 w-3" />
                             ) : (
                               <Plus className="h-3 w-3" />
                             )}

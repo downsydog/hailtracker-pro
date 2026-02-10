@@ -127,6 +127,13 @@ import { useLead, useConvertLead } from '@/hooks/use-leads'
 import { useCreateVehicle, useVehicle } from '@/hooks/use-vehicles'
 import { Customer, Vehicle } from '@/types'
 import { getRiSuggestionsForPanel, RISuggestion, getPanelRelevantOperationCodes, getPanelDisplayName } from '@/lib/riPanelSuggestions'
+import {
+  validatePanelMappingAgainstCatalog,
+  validateEstimateOpsMappedToPanels,
+  getPanelSuggestionsDiagnostics,
+  getDiagnosticsEnabled,
+  setDiagnosticsEnabled
+} from '@/lib/riDiagnostics'
 
 // ============================================================================
 // PHASE 7 FEATURE FLAGS
@@ -436,6 +443,9 @@ export function EstimateBuilder() {
   // Stage 7D: Panel-Driven R&I Quick Add state
   const [riAddingCode, setRiAddingCode] = useState<string | null>(null) // Currently adding
   const [riAddedCodes, setRiAddedCodes] = useState<Set<string>>(new Set()) // Already added this session
+
+  // Stage 8C: Dev-only R&I Diagnostics toggle (persisted in localStorage)
+  const [showRiDiagnostics, setShowRiDiagnostics] = useState(() => getDiagnosticsEnabled())
 
   // Debounced save state
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
@@ -2330,6 +2340,132 @@ export function EstimateBuilder() {
                 className="w-full max-w-md"
               />
             </div>
+
+            {/* Stage 8C: Dev-only R&I Mapping Diagnostics */}
+            {import.meta.env.DEV && (
+              <div className="border-t bg-amber-50/50 px-4 py-2">
+                <div className="flex items-center gap-2">
+                  <label className="flex items-center gap-2 cursor-pointer text-xs">
+                    <input
+                      type="checkbox"
+                      checked={showRiDiagnostics}
+                      onChange={(e) => {
+                        setShowRiDiagnostics(e.target.checked)
+                        setDiagnosticsEnabled(e.target.checked)
+                      }}
+                      className="h-3 w-3 rounded border-amber-400"
+                    />
+                    <span className="text-amber-800 font-medium">Show R&I Diagnostics</span>
+                  </label>
+                  <span className="text-[10px] text-amber-600 bg-amber-200 px-1.5 py-0.5 rounded">DEV ONLY</span>
+                </div>
+
+                {showRiDiagnostics && (
+                  <div className="mt-3 space-y-3 text-xs">
+                    {/* Loading state */}
+                    {!riCatalog ? (
+                      <div className="text-amber-600 flex items-center gap-2">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        Loading diagnostics...
+                      </div>
+                    ) : (
+                      <>
+                        {/* BLOCK 1: Mapping vs Catalog */}
+                        {(() => {
+                          const result = validatePanelMappingAgainstCatalog(riCatalog.operations)
+                          return (
+                            <div className="p-2 bg-white rounded border border-amber-200">
+                              <div className="font-medium text-amber-900 mb-1 flex items-center gap-1">
+                                {result.missing_in_catalog.length > 0 && (
+                                  <AlertCircle className="h-3 w-3 text-red-500" />
+                                )}
+                                Mapping vs Catalog
+                              </div>
+                              <div className="text-amber-700 space-y-1">
+                                <div>Mapped codes: {result.stats.mapped_total} | Catalog ops: {result.stats.catalog_total}</div>
+                                {result.missing_in_catalog.length > 0 ? (
+                                  <div className="text-red-600">
+                                    <span className="font-medium">Missing in catalog:</span>{' '}
+                                    {result.missing_in_catalog.join(', ')}
+                                  </div>
+                                ) : (
+                                  <div className="text-green-600">All mapped codes exist in catalog</div>
+                                )}
+                                {result.catalog_unmapped.length > 0 && (
+                                  <div className="text-amber-600">
+                                    <span className="font-medium">Catalog ops never mapped:</span>{' '}
+                                    {result.catalog_unmapped.slice(0, 5).join(', ')}
+                                    {result.catalog_unmapped.length > 5 && ` (+${result.catalog_unmapped.length - 5} more)`}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        })()}
+
+                        {/* BLOCK 2: This Panel Diagnostics */}
+                        {selectedPanelId && (() => {
+                          const result = getPanelSuggestionsDiagnostics(selectedPanelId, riCatalog.operations)
+                          return (
+                            <div className="p-2 bg-white rounded border border-amber-200">
+                              <div className="font-medium text-amber-900 mb-1 flex items-center gap-1">
+                                {result.invalid_codes_for_panel.length > 0 && (
+                                  <AlertCircle className="h-3 w-3 text-red-500" />
+                                )}
+                                Panel: {getPanelDisplayName(selectedPanelId)}
+                              </div>
+                              <div className="text-amber-700 space-y-1">
+                                <div>Suggestions: {result.suggestions_count}</div>
+                                {result.invalid_codes_for_panel.length > 0 ? (
+                                  <div className="text-red-600">
+                                    <span className="font-medium">Invalid codes:</span>{' '}
+                                    {result.invalid_codes_for_panel.join(', ')}
+                                  </div>
+                                ) : (
+                                  <div className="text-green-600">All panel suggestions valid</div>
+                                )}
+                                {result.valid_codes_for_panel.length > 0 && (
+                                  <div className="text-muted-foreground truncate">
+                                    Valid: {result.valid_codes_for_panel.join(', ')}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        })()}
+
+                        {/* BLOCK 3: This Estimate Diagnostics */}
+                        {estimateId && estimateRiData && (() => {
+                          const result = validateEstimateOpsMappedToPanels(estimateRiData.operations)
+                          return (
+                            <div className="p-2 bg-white rounded border border-amber-200">
+                              <div className="font-medium text-amber-900 mb-1">
+                                Estimate R&I Ops
+                              </div>
+                              <div className="text-amber-700 space-y-1">
+                                <div>Attached ops: {estimateRiData.operations?.length || 0}</div>
+                                {result.unmapped_estimate_ops.length > 0 ? (
+                                  <div className="text-amber-600">
+                                    <span className="font-medium">Not mapped to any panel:</span>{' '}
+                                    {result.unmapped_estimate_ops.map(op => op.display_name || op.code).join(', ')}
+                                  </div>
+                                ) : (
+                                  estimateRiData.operations && estimateRiData.operations.length > 0 ? (
+                                    <div className="text-green-600">All estimate ops are mapped</div>
+                                  ) : (
+                                    <div className="text-muted-foreground">No R&I ops on this estimate</div>
+                                  )
+                                )}
+                              </div>
+                            </div>
+                          )
+                        })()}
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Stage 8B: Inline R&I Panel Section - suggestions + included summary */}
             {selectedPanelId && riSuggestions.length > 0 && (

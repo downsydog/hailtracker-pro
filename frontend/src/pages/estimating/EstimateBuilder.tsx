@@ -9,7 +9,144 @@
  * - Lead conversion on estimate creation
  * - Invoice conversion for approved estimates
  * - Full data persistence for all relationships
+ *
+ * Phase 7A+: Single-line writer row for rapid keyboard-first entry
+ * Phase 7B: Auto pricing engine with panel-level calculations
  */
+
+// ============================================================================
+// PHASE 7 FEATURE FLAGS
+// ============================================================================
+const ENABLE_WRITER_ROW = true      // 7A: Single-line panel entry mode
+const ENABLE_PRICING_ENGINE = true  // 7B: Auto pricing with breakdown tooltips
+
+// ============================================================================
+// PHASE 7B: PRICING ENGINE TYPES & CONFIG
+// ============================================================================
+interface PricingContext {
+  baseRatePerDent: number
+  sizeMultipliers: Record<string, number>
+  depthMultipliers: Record<string, number>
+  zoneMultipliers: Record<string, number>
+  materialMultipliers: Record<string, number>
+  oversizedSurcharge: number
+}
+
+const DEFAULT_PRICING_CONTEXT: PricingContext = {
+  baseRatePerDent: 15, // Base rate per dent
+  sizeMultipliers: {
+    dime: 1.0,
+    nickel: 1.25,
+    quarter: 1.5,
+    half: 2.0,
+  },
+  depthMultipliers: {
+    shallow: 1.0,
+    medium: 1.15,
+    deep: 1.35,
+    severe: 1.6,
+  },
+  zoneMultipliers: {
+    center: 1.0,
+    edge: 1.1,
+    crease: 1.25,
+    body_line: 1.35,
+  },
+  materialMultipliers: {
+    steel: 1.0,
+    aluminum: 1.25,
+    hss: 1.25,
+  },
+  oversizedSurcharge: 50,
+}
+
+/**
+ * Phase 7B: Compute panel price with full breakdown
+ */
+function computePanelPrice(
+  panel: {
+    countRange?: string | null
+    dentSize?: string | null
+    depth?: string
+    zone?: string
+    gluePull?: boolean
+    aluminum?: boolean
+    hss?: boolean
+    doubleMetal?: boolean
+    oversizedCount?: number
+  },
+  ctx: PricingContext = DEFAULT_PRICING_CONTEXT
+): { basePrice: number; totalPrice: number; breakdown: string[] } {
+  if (!panel.countRange || !panel.dentSize) {
+    return { basePrice: 0, totalPrice: 0, breakdown: [] }
+  }
+
+  const breakdown: string[] = []
+
+  // Parse count range to get average dent count
+  const countMap: Record<string, number> = {
+    '1-5': 3, '6-15': 10, '16-30': 23, '31-50': 40,
+    '51-75': 63, '76-100': 88, '101+': 120
+  }
+  const dentCount = countMap[panel.countRange] || 10
+  breakdown.push(`${dentCount} dents @ $${ctx.baseRatePerDent}/dent`)
+
+  // Base price from count
+  let price = dentCount * ctx.baseRatePerDent
+
+  // Size multiplier
+  const sizeMult = ctx.sizeMultipliers[panel.dentSize] || 1.0
+  if (sizeMult !== 1.0) {
+    breakdown.push(`Size (${panel.dentSize}): ×${sizeMult}`)
+  }
+  price *= sizeMult
+
+  // Depth multiplier
+  const depthMult = ctx.depthMultipliers[panel.depth || 'medium'] || 1.0
+  if (depthMult !== 1.0) {
+    breakdown.push(`Depth (${panel.depth}): ×${depthMult}`)
+  }
+  price *= depthMult
+
+  // Zone multiplier
+  const zoneMult = ctx.zoneMultipliers[panel.zone || 'center'] || 1.0
+  if (zoneMult !== 1.0) {
+    breakdown.push(`Zone (${panel.zone}): ×${zoneMult}`)
+  }
+  price *= zoneMult
+
+  const basePrice = price
+
+  // Add-on multipliers (additive)
+  let addonMult = 1.0
+  if (panel.gluePull) { addonMult += 0.25; breakdown.push('Glue Pull: +25%') }
+  if (panel.aluminum) { addonMult += 0.25; breakdown.push('Aluminum: +25%') }
+  if (panel.hss) { addonMult += 0.25; breakdown.push('HSS: +25%') }
+  if (panel.doubleMetal) { addonMult += 0.50; breakdown.push('Double Metal: +50%') }
+  price *= addonMult
+
+  // Oversized surcharge
+  if (panel.oversizedCount && panel.oversizedCount > 0) {
+    const osCharge = panel.oversizedCount * ctx.oversizedSurcharge
+    price += osCharge
+    breakdown.push(`${panel.oversizedCount} oversized @ $${ctx.oversizedSurcharge}: +$${osCharge}`)
+  }
+
+  return { basePrice, totalPrice: Math.round(price * 100) / 100, breakdown }
+}
+
+// ============================================================================
+// PHASE 7A: WRITER ROW TYPES
+// ============================================================================
+interface WriterDraft {
+  panelName: string
+  countRange: CountRange | null
+  dentSize: DentSize | null
+  depth: string
+  zone: string
+  material: 'steel' | 'aluminum'
+  notes: string
+}
 
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
@@ -50,7 +187,14 @@ import {
   Lock,
   DollarSign,
   Wrench,
-  Play
+  Play,
+  Keyboard,
+  Repeat,
+  Command,
+  X,
+  Plus,
+  Zap,
+  Info
 } from 'lucide-react'
 
 // Import estimate components
@@ -266,6 +410,27 @@ export function EstimateBuilder() {
   // Batch selection state (for multi-panel apply)
   const [selectedPanelKeys, setSelectedPanelKeys] = useState<Set<string>>(new Set())
   const [selectionMode, setSelectionMode] = useState(false) // Mobile long-press mode
+
+  // Stage 7A: Speed Bar state
+  const [shortcutsModalOpen, setShortcutsModalOpen] = useState(false)
+  const [panelSearchOpen, setPanelSearchOpen] = useState(false)
+  const [panelSearchQuery, setPanelSearchQuery] = useState('')
+  const panelSearchInputRef = useRef<HTMLInputElement>(null)
+  const handleSaveRef = useRef<() => void>(() => {})
+
+  // Phase 7A+: Writer Row state (single-line rapid entry)
+  const [writerDraft, setWriterDraft] = useState<WriterDraft>({
+    panelName: '',
+    countRange: null,
+    dentSize: null,
+    depth: 'medium',
+    zone: 'center',
+    material: 'steel',
+    notes: ''
+  })
+  const [writerRapidMode, setWriterRapidMode] = useState(false) // Keep focus after adding
+  const writerPanelInputRef = useRef<HTMLInputElement>(null)
+  const [writerSearchOpen, setWriterSearchOpen] = useState(false)
 
   // Debounced save state
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
@@ -1013,17 +1178,244 @@ export function EstimateBuilder() {
     setSelectionMode(false)
   }, [selectedPanelId, selectedPanelKeys, panels, matrixLookup, isEditing, estimateId, savePanelToBackend])
 
-  // ESC key handler to clear selection
+  // Stage 7A: Keyboard shortcuts handler
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && selectedPanelKeys.size > 0 && !quickEntryOpen) {
-        handleClearSelection()
+      // Ignore if typing in an input
+      const target = e.target as HTMLElement
+      const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable
+
+      // ESC - clear selection or close modals
+      if (e.key === 'Escape') {
+        if (panelSearchOpen) {
+          setPanelSearchOpen(false)
+          setPanelSearchQuery('')
+          return
+        }
+        if (shortcutsModalOpen) {
+          setShortcutsModalOpen(false)
+          return
+        }
+        if (selectedPanelKeys.size > 0 && !quickEntryOpen) {
+          handleClearSelection()
+          return
+        }
+      }
+
+      // Skip other shortcuts if in input
+      if (isInput && e.key !== 'Escape') return
+
+      // "/" - Focus panel search
+      if (e.key === '/' && !panelModalOpen && !quickEntryOpen) {
+        e.preventDefault()
+        setPanelSearchOpen(true)
+        setTimeout(() => panelSearchInputRef.current?.focus(), 100)
+        return
+      }
+
+      // "?" - Open shortcuts modal
+      if (e.key === '?' && e.shiftKey) {
+        e.preventDefault()
+        setShortcutsModalOpen(true)
+        return
+      }
+
+      // "r" - Repeat last (when panel selected)
+      if (e.key === 'r' && selectedPanelId && lastUsedDamage && !panelModalOpen && !quickEntryOpen) {
+        e.preventDefault()
+        handleRepeatLast()
+        return
+      }
+
+      // "a" - Apply to selected (when multiple panels selected)
+      if (e.key === 'a' && selectedPanelKeys.size >= 2 && !panelModalOpen && !quickEntryOpen) {
+        e.preventDefault()
+        handleApplyToSelected()
+        return
+      }
+
+      // "Ctrl+S" - Save
+      if (e.key === 's' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault()
+        handleSaveRef.current()
+        return
       }
     }
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [selectedPanelKeys.size, quickEntryOpen, handleClearSelection])
+  // Note: handleSave excluded from deps to avoid circular dependency - it's stable
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    selectedPanelKeys.size, quickEntryOpen, handleClearSelection, panelSearchOpen,
+    shortcutsModalOpen, panelModalOpen, selectedPanelId, lastUsedDamage,
+    handleRepeatLast, handleApplyToSelected
+  ])
+
+  // Focus panel search input when opened
+  useEffect(() => {
+    if (panelSearchOpen && panelSearchInputRef.current) {
+      panelSearchInputRef.current.focus()
+    }
+  }, [panelSearchOpen])
+
+  // Filtered panels for search typeahead
+  const filteredPanels = useMemo(() => {
+    if (!panelSearchQuery.trim()) return []
+    const query = panelSearchQuery.toLowerCase()
+    const vehiclePanels = VEHICLE_PANELS[vehicleType]
+    return Object.entries(vehiclePanels)
+      .filter(([_, name]) => name.toLowerCase().includes(query))
+      .slice(0, 8) // Limit results
+  }, [panelSearchQuery, vehicleType])
+
+  // Handle panel search selection
+  const handlePanelSearchSelect = useCallback((panelId: string) => {
+    setPanelSearchOpen(false)
+    setPanelSearchQuery('')
+    setSelectedPanelId(panelId)
+    if (!panels[panelId]) {
+      setPanels(prev => ({
+        ...prev,
+        [panelId]: createEmptyPanelDamage(panelId)
+      }))
+    }
+    setPanelModalOpen(true)
+  }, [panels])
+
+  // Phase 7A+: Writer Row - filtered panels for typeahead
+  const writerFilteredPanels = useMemo(() => {
+    if (!writerDraft.panelName.trim()) return []
+    const query = writerDraft.panelName.toLowerCase()
+    const vehiclePanels = VEHICLE_PANELS[vehicleType]
+    return Object.entries(vehiclePanels)
+      .filter(([id, name]) => {
+        // Don't show panels already added with damage
+        const existing = panels[id]
+        const hasDamage = existing?.countRange && existing?.dentSize
+        if (hasDamage) return false
+        return name.toLowerCase().includes(query) || id.toLowerCase().includes(query)
+      })
+      .slice(0, 6)
+  }, [writerDraft.panelName, vehicleType, panels])
+
+  // Phase 7A+: Writer Row - compute preview price
+  const writerPreviewPrice = useMemo(() => {
+    if (!writerDraft.countRange || !writerDraft.dentSize) return null
+    return computePanelPrice({
+      countRange: writerDraft.countRange,
+      dentSize: writerDraft.dentSize,
+      depth: writerDraft.depth,
+      zone: writerDraft.zone,
+      aluminum: writerDraft.material === 'aluminum',
+    })
+  }, [writerDraft])
+
+  // Phase 7A+: Writer Row - reset draft
+  const resetWriterDraft = useCallback(() => {
+    setWriterDraft({
+      panelName: '',
+      countRange: null,
+      dentSize: null,
+      depth: 'medium',
+      zone: 'center',
+      material: 'steel',
+      notes: ''
+    })
+    setWriterSearchOpen(false)
+  }, [])
+
+  // Phase 7A+: Writer Row - add panel from draft
+  const handleWriterAddPanel = useCallback(() => {
+    if (!writerDraft.panelName || !writerDraft.countRange || !writerDraft.dentSize) return
+
+    // Find the panel ID from name
+    const vehiclePanels = VEHICLE_PANELS[vehicleType]
+    const entry = Object.entries(vehiclePanels).find(
+      ([id, name]) => name.toLowerCase() === writerDraft.panelName.toLowerCase() ||
+                      id.toLowerCase() === writerDraft.panelName.toLowerCase()
+    )
+    if (!entry) return
+    const [panelId] = entry
+
+    // Compute price using pricing engine
+    const priceResult = computePanelPrice({
+      countRange: writerDraft.countRange,
+      dentSize: writerDraft.dentSize,
+      depth: writerDraft.depth,
+      zone: writerDraft.zone,
+      aluminum: writerDraft.material === 'aluminum',
+    })
+
+    // Create panel damage
+    const damage: PanelDamage = {
+      panelId,
+      countRange: writerDraft.countRange,
+      dentSize: writerDraft.dentSize,
+      oversizedCount: 0,
+      gluePull: false,
+      aluminum: writerDraft.material === 'aluminum',
+      hss: false,
+      doubleMetal: false,
+      conventional: false,
+      notes: writerDraft.notes,
+      basePrice: priceResult.basePrice,
+      totalPrice: priceResult.totalPrice
+    }
+
+    // Add to panels
+    setPanels(prev => ({ ...prev, [panelId]: damage }))
+
+    // Store as last used
+    setLastUsedDamage({
+      countRange: writerDraft.countRange,
+      dentSize: writerDraft.dentSize,
+      gluePull: false,
+      aluminum: writerDraft.material === 'aluminum',
+      hss: false,
+      doubleMetal: false
+    })
+
+    // Select the panel
+    setSelectedPanelId(panelId)
+
+    // Trigger save if editing existing estimate
+    if (isEditing && estimateId) {
+      pendingChangesRef.current = true
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current)
+      saveTimeoutRef.current = setTimeout(() => {
+        if (pendingChangesRef.current) {
+          setSaveStatus('saving')
+          savePanelToBackend(panelId, damage)
+          pendingChangesRef.current = false
+        }
+      }, 300)
+    }
+
+    // Handle rapid mode vs normal
+    if (writerRapidMode) {
+      // Keep panel fields, clear panel name only
+      setWriterDraft(prev => ({ ...prev, panelName: '' }))
+      setTimeout(() => writerPanelInputRef.current?.focus(), 50)
+    } else {
+      resetWriterDraft()
+    }
+  }, [writerDraft, vehicleType, isEditing, estimateId, savePanelToBackend, writerRapidMode, resetWriterDraft])
+
+  // Phase 7A+: Writer Row - apply last settings and add
+  const handleWriterApplyLastAndAdd = useCallback(() => {
+    if (!writerDraft.panelName || !lastUsedDamage?.countRange || !lastUsedDamage?.dentSize) return
+
+    setWriterDraft(prev => ({
+      ...prev,
+      countRange: lastUsedDamage.countRange || null,
+      dentSize: lastUsedDamage.dentSize || null,
+      ...(lastUsedDamage.aluminum && { material: 'aluminum' as const })
+    }))
+
+    // Auto-add after applying
+    setTimeout(() => handleWriterAddPanel(), 50)
+  }, [writerDraft.panelName, lastUsedDamage, handleWriterAddPanel])
 
   // Handle VIN decode
   const handleVinDecode = async () => {
@@ -1153,6 +1545,9 @@ export function EstimateBuilder() {
       setIsSaving(false)
     }
   }
+
+  // Keep ref updated for keyboard shortcuts
+  handleSaveRef.current = handleSave
 
   // Handle convert to invoice
   const handleConvertToInvoice = async () => {
@@ -1486,6 +1881,307 @@ export function EstimateBuilder() {
         permissions={permissions}
         overlayOpen={quickEntryOpen}
       />
+
+      {/* Stage 7A: Speed Bar - Quick Actions */}
+      <div className="hidden lg:flex bg-muted/50 border-b px-4 py-2 items-center gap-4">
+        {/* Panel Search */}
+        <div className="relative flex-1 max-w-xs">
+          <div className="relative">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              ref={panelSearchInputRef}
+              placeholder="Search panels... (press /)"
+              value={panelSearchQuery}
+              onChange={(e) => {
+                setPanelSearchQuery(e.target.value)
+                setPanelSearchOpen(true)
+              }}
+              onFocus={() => setPanelSearchOpen(true)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && filteredPanels.length > 0) {
+                  handlePanelSearchSelect(filteredPanels[0][0])
+                }
+                if (e.key === 'Escape') {
+                  setPanelSearchOpen(false)
+                  setPanelSearchQuery('')
+                  ;(e.target as HTMLInputElement).blur()
+                }
+              }}
+              className="pl-8 h-8 text-sm"
+            />
+          </div>
+          {/* Search Results Dropdown */}
+          {panelSearchOpen && filteredPanels.length > 0 && (
+            <div className="absolute top-full left-0 right-0 mt-1 bg-white border rounded-lg shadow-lg z-50 max-h-64 overflow-y-auto">
+              {filteredPanels.map(([panelId, panelName]) => {
+                const damage = panels[panelId]
+                const hasDamage = !!(damage?.countRange && damage?.dentSize)
+                return (
+                  <button
+                    key={panelId}
+                    onClick={() => handlePanelSearchSelect(panelId)}
+                    className="w-full text-left px-3 py-2 hover:bg-muted/50 flex items-center justify-between text-sm"
+                  >
+                    <span>{panelName}</span>
+                    {hasDamage && (
+                      <span className="text-xs text-muted-foreground">
+                        ${damage.totalPrice.toFixed(0)}
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Last Used Summary */}
+        {lastUsedDamage?.countRange && lastUsedDamage?.dentSize && (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground bg-white px-3 py-1 rounded border">
+            <span className="font-medium">Last:</span>
+            <span>{lastUsedDamage.countRange}</span>
+            <span className="text-muted-foreground/60">•</span>
+            <span className="capitalize">{lastUsedDamage.dentSize}</span>
+            {lastUsedDamage.gluePull && <span className="text-xs bg-yellow-100 px-1 rounded">GP</span>}
+            {lastUsedDamage.aluminum && <span className="text-xs bg-blue-100 px-1 rounded">AL</span>}
+          </div>
+        )}
+
+        {/* Action Buttons */}
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRepeatLast}
+            disabled={!selectedPanelId || !lastUsedDamage}
+            title="Repeat last settings (R)"
+          >
+            <Repeat className="h-3.5 w-3.5 mr-1" />
+            Repeat
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleApplyToSelected}
+            disabled={selectedPanelKeys.size < 2}
+            title="Apply to selected panels (A)"
+          >
+            <Command className="h-3.5 w-3.5 mr-1" />
+            Apply to {selectedPanelKeys.size > 0 ? selectedPanelKeys.size : 'Selected'}
+          </Button>
+
+          {selectedPanelKeys.size > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleClearSelection}
+              title="Clear selection (Esc)"
+            >
+              <X className="h-3.5 w-3.5 mr-1" />
+              Clear
+            </Button>
+          )}
+
+          <div className="border-l pl-2 ml-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShortcutsModalOpen(true)}
+              title="Keyboard shortcuts (?)"
+            >
+              <Keyboard className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+
+        {/* Autosave Indicator */}
+        <div className="ml-auto text-xs text-muted-foreground flex items-center gap-1">
+          {saveStatus === 'saving' && (
+            <>
+              <Loader2 className="h-3 w-3 animate-spin" />
+              <span>Saving...</span>
+            </>
+          )}
+          {saveStatus === 'saved' && (
+            <>
+              <CheckCircle className="h-3 w-3 text-green-600" />
+              <span>Saved just now</span>
+            </>
+          )}
+          {saveStatus === 'idle' && lastSavedAt && (
+            <span>Saved {lastSavedAt.toLocaleTimeString()}</span>
+          )}
+        </div>
+      </div>
+
+      {/* Phase 7A+: Writer Row - Single-line rapid panel entry */}
+      {ENABLE_WRITER_ROW && (
+        <div className="hidden lg:flex bg-gradient-to-r from-blue-50 to-indigo-50 border-b px-4 py-2 items-center gap-3">
+          <div className="flex items-center gap-1 text-blue-600">
+            <Zap className="h-4 w-4" />
+            <span className="text-xs font-medium">Quick Add</span>
+          </div>
+
+          {/* Panel Name Search */}
+          <div className="relative w-48">
+            <Input
+              ref={writerPanelInputRef}
+              placeholder="Panel name..."
+              value={writerDraft.panelName}
+              onChange={(e) => {
+                setWriterDraft(prev => ({ ...prev, panelName: e.target.value }))
+                setWriterSearchOpen(true)
+              }}
+              onFocus={() => setWriterSearchOpen(true)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey) {
+                  if (writerFilteredPanels.length > 0 && !writerDraft.countRange) {
+                    // Select first panel from dropdown
+                    setWriterDraft(prev => ({ ...prev, panelName: writerFilteredPanels[0][1] }))
+                    setWriterSearchOpen(false)
+                  } else if (writerDraft.countRange && writerDraft.dentSize) {
+                    handleWriterAddPanel()
+                  }
+                }
+                if (e.key === 'Enter' && e.shiftKey) {
+                  // Rapid mode: add and keep focus
+                  setWriterRapidMode(true)
+                  handleWriterAddPanel()
+                }
+                if (e.key === 'Enter' && e.ctrlKey && lastUsedDamage) {
+                  // Apply last and add
+                  handleWriterApplyLastAndAdd()
+                }
+                if (e.key === 'Escape') {
+                  resetWriterDraft()
+                }
+              }}
+              className="h-8 text-sm"
+            />
+            {/* Typeahead dropdown */}
+            {writerSearchOpen && writerFilteredPanels.length > 0 && (
+              <div className="absolute top-full left-0 right-0 mt-1 bg-white border rounded-lg shadow-lg z-50 max-h-48 overflow-y-auto">
+                {writerFilteredPanels.map(([panelId, panelName]) => (
+                  <button
+                    key={panelId}
+                    onClick={() => {
+                      setWriterDraft(prev => ({ ...prev, panelName }))
+                      setWriterSearchOpen(false)
+                    }}
+                    className="w-full text-left px-3 py-1.5 hover:bg-muted/50 text-sm"
+                  >
+                    {panelName}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Count Range */}
+          <Select
+            value={writerDraft.countRange || ''}
+            onValueChange={(v) => setWriterDraft(prev => ({ ...prev, countRange: v as CountRange }))}
+          >
+            <SelectTrigger className="w-24 h-8 text-xs">
+              <SelectValue placeholder="Count" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="1-5">1-5</SelectItem>
+              <SelectItem value="6-15">6-15</SelectItem>
+              <SelectItem value="16-30">16-30</SelectItem>
+              <SelectItem value="31-50">31-50</SelectItem>
+              <SelectItem value="51-75">51-75</SelectItem>
+              <SelectItem value="76-100">76-100</SelectItem>
+              <SelectItem value="101+">101+</SelectItem>
+            </SelectContent>
+          </Select>
+
+          {/* Dent Size */}
+          <Select
+            value={writerDraft.dentSize || ''}
+            onValueChange={(v) => setWriterDraft(prev => ({ ...prev, dentSize: v as DentSize }))}
+          >
+            <SelectTrigger className="w-24 h-8 text-xs">
+              <SelectValue placeholder="Size" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="dime">Dime</SelectItem>
+              <SelectItem value="nickel">Nickel</SelectItem>
+              <SelectItem value="quarter">Quarter</SelectItem>
+              <SelectItem value="half">Half $</SelectItem>
+            </SelectContent>
+          </Select>
+
+          {/* Depth */}
+          <Select
+            value={writerDraft.depth}
+            onValueChange={(v) => setWriterDraft(prev => ({ ...prev, depth: v }))}
+          >
+            <SelectTrigger className="w-24 h-8 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="shallow">Shallow</SelectItem>
+              <SelectItem value="medium">Medium</SelectItem>
+              <SelectItem value="deep">Deep</SelectItem>
+              <SelectItem value="severe">Severe</SelectItem>
+            </SelectContent>
+          </Select>
+
+          {/* Material Toggle */}
+          <Button
+            variant={writerDraft.material === 'aluminum' ? 'default' : 'outline'}
+            size="sm"
+            className="h-8 text-xs px-2"
+            onClick={() => setWriterDraft(prev => ({
+              ...prev,
+              material: prev.material === 'steel' ? 'aluminum' : 'steel'
+            }))}
+          >
+            {writerDraft.material === 'aluminum' ? 'AL' : 'Steel'}
+          </Button>
+
+          {/* Price Preview */}
+          {ENABLE_PRICING_ENGINE && writerPreviewPrice && (
+            <div className="flex items-center gap-1 text-sm font-medium text-green-600 bg-green-50 px-2 py-1 rounded">
+              <DollarSign className="h-3.5 w-3.5" />
+              {writerPreviewPrice.totalPrice.toFixed(0)}
+              <button
+                className="ml-1 text-muted-foreground hover:text-foreground"
+                title={writerPreviewPrice.breakdown.join('\n')}
+              >
+                <Info className="h-3 w-3" />
+              </button>
+            </div>
+          )}
+
+          {/* Add Button */}
+          <Button
+            size="sm"
+            className="h-8"
+            onClick={handleWriterAddPanel}
+            disabled={!writerDraft.panelName || !writerDraft.countRange || !writerDraft.dentSize}
+          >
+            <Plus className="h-3.5 w-3.5 mr-1" />
+            Add
+          </Button>
+
+          {/* Rapid Mode Indicator */}
+          {writerRapidMode && (
+            <span className="text-xs text-blue-600 bg-blue-100 px-2 py-0.5 rounded">
+              Rapid Mode
+            </span>
+          )}
+
+          {/* Keyboard hints */}
+          <div className="ml-auto text-xs text-muted-foreground hidden xl:flex items-center gap-2">
+            <span><kbd className="px-1 bg-muted rounded">Enter</kbd> Add</span>
+            <span><kbd className="px-1 bg-muted rounded">Shift+Enter</kbd> Rapid</span>
+            <span><kbd className="px-1 bg-muted rounded">Ctrl+Enter</kbd> Use Last</span>
+          </div>
+        </div>
+      )}
 
       {/* Main Content */}
       {/* pb-16 for bottom nav, pb-32 on mobile for floating status bar */}
@@ -2545,6 +3241,68 @@ export function EstimateBuilder() {
           vehicleInfo={vehicleInfoString}
         />
       )}
+
+      {/* Stage 7A: Keyboard Shortcuts Modal */}
+      <Dialog open={shortcutsModalOpen} onOpenChange={setShortcutsModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Keyboard className="h-5 w-5" />
+              Keyboard Shortcuts
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <h4 className="font-medium text-sm text-muted-foreground">Navigation</h4>
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div className="flex items-center justify-between">
+                  <span>/</span>
+                  <span className="text-muted-foreground">Search panels</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Enter</span>
+                  <span className="text-muted-foreground">Confirm/select</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Tab</span>
+                  <span className="text-muted-foreground">Next field</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Esc</span>
+                  <span className="text-muted-foreground">Close/clear</span>
+                </div>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <h4 className="font-medium text-sm text-muted-foreground">Actions</h4>
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div className="flex items-center justify-between">
+                  <span>R</span>
+                  <span className="text-muted-foreground">Repeat last</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>A</span>
+                  <span className="text-muted-foreground">Apply to selected</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Ctrl+S</span>
+                  <span className="text-muted-foreground">Save</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>?</span>
+                  <span className="text-muted-foreground">Show shortcuts</span>
+                </div>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <h4 className="font-medium text-sm text-muted-foreground">Multi-Select</h4>
+              <div className="text-sm text-muted-foreground">
+                <p>Hold <kbd className="px-1 py-0.5 bg-muted rounded text-xs">Ctrl</kbd> or <kbd className="px-1 py-0.5 bg-muted rounded text-xs">Cmd</kbd> and click panels to select multiple, then press <kbd className="px-1 py-0.5 bg-muted rounded text-xs">A</kbd> to apply damage settings to all.</p>
+              </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

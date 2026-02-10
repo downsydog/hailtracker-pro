@@ -430,7 +430,11 @@ def update_panel_matrix(estimate_id, panel_id):
     """
     Update panel with matrix-based pricing.
 
-    Body: Same as add_panel_matrix
+    Body: Same as add_panel_matrix, plus optional depth/zone for multipliers:
+    {
+        "depth": "shallow|medium|deep|severe",  // optional, multiplier
+        "zone": "center|edge|crease|body_line"  // optional, multiplier
+    }
     """
     tenant_id = get_current_tenant_id()
     data = request.get_json() or {}
@@ -467,6 +471,10 @@ def update_panel_matrix(estimate_id, panel_id):
     is_hss = data.get('is_hss')
     requires_glue_pull = data.get('requires_glue_pull')
     is_tall_roof = data.get('is_tall_roof')
+
+    # Depth and zone multipliers
+    depth = data.get('depth', 'medium')
+    zone = data.get('zone', 'center')
 
     # Get current values for non-updated fields
     cursor.execute("""

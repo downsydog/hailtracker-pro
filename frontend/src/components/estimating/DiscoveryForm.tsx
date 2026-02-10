@@ -9,13 +9,14 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+// Select imports available for future use
+// import {
+//   Select,
+//   SelectContent,
+//   SelectItem,
+//   SelectTrigger,
+//   SelectValue,
+// } from '@/components/ui/select'
 import {
   Dialog,
   DialogContent,
@@ -23,7 +24,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Camera, Plus, Clock, DollarSign, AlertCircle, X, Image } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -117,8 +118,7 @@ export function DiscoveryForm({
   const [photoPreview, setPhotoPreview] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Get selected type info
-  const selectedType = DISCOVERY_TYPES.find(t => t.type === discoveryType)
+  // Selected type info available via: DISCOVERY_TYPES.find(t => t.type === discoveryType)
 
   // Handle type selection - auto-fill defaults
   const handleTypeSelect = (type: string) => {

@@ -1630,6 +1630,8 @@ def get_estimate_dispute_pack(estimate_id):
     from app.models.tenant.estimate_activity import EstimateActivity
     from app.models.tenant.pdr_estimate import PDREstimate
     from app.models.tenant.pdr_estimate_panel import PDREstimatePanel
+    from app.models.tenant.part_request import PartRequest
+    from app.services.ri_service import RIService
 
     identity = get_jwt_identity()
     user_id = identity.get('user_id')
@@ -1691,6 +1693,25 @@ def get_estimate_dispute_pack(estimate_id):
     except Exception:
         activities_data = []
 
+    # Phase 7C: Fetch R&I summary and denial pack
+    ri_summary = None
+    ri_denial_pack = None
+    try:
+        ri_data = RIService.get_estimate_ri_summary(estimate_id, identity['tenant_id'])
+        if ri_data:
+            ri_summary = ri_data
+            ri_denial_pack = ri_data.get('ri_denial_pack')
+    except Exception:
+        pass  # R&I data optional
+
+    # Phase 7C: Fetch parts requests
+    parts_requests_data = []
+    try:
+        parts = PartRequest.query.filter_by(estimate_id=estimate_id).all()
+        parts_requests_data = [p.to_dict() for p in parts]
+    except Exception:
+        pass  # Parts data optional
+
     try:
         # Generate the ZIP
         zip_buffer = generate_dispute_pack_zip(
@@ -1699,7 +1720,10 @@ def get_estimate_dispute_pack(estimate_id):
             photos=photos_data,
             supplements=supplements_data,
             activities=activities_data,
-            tenant_name=tenant_name
+            tenant_name=tenant_name,
+            ri_summary=ri_summary,
+            ri_denial_pack=ri_denial_pack,
+            parts_requests=parts_requests_data
         )
 
         # Log activity
@@ -2159,6 +2183,8 @@ def download_shared_dispute_pack(token):
     from app.models.tenant.estimate_supplement import EstimateSupplement
     from app.models.tenant.estimate_activity import EstimateActivity
     from app.models.master.tenant import Tenant
+    from app.models.tenant.part_request import PartRequest
+    from app.services.ri_service import RIService
 
     try:
         payload = verify_estimate_share_token(token)
@@ -2213,6 +2239,25 @@ def download_shared_dispute_pack(token):
     except Exception:
         activities_data = []
 
+    # Phase 7C: Fetch R&I summary and denial pack
+    ri_summary = None
+    ri_denial_pack = None
+    try:
+        ri_data = RIService.get_estimate_ri_summary(estimate_id, tenant_id)
+        if ri_data:
+            ri_summary = ri_data
+            ri_denial_pack = ri_data.get('ri_denial_pack')
+    except Exception:
+        pass  # R&I data optional
+
+    # Phase 7C: Fetch parts requests
+    parts_requests_data = []
+    try:
+        parts = PartRequest.query.filter_by(estimate_id=estimate_id).all()
+        parts_requests_data = [p.to_dict() for p in parts]
+    except Exception:
+        pass  # Parts data optional
+
     try:
         zip_buffer = generate_dispute_pack_zip(
             estimate_data=estimate_data,
@@ -2220,7 +2265,10 @@ def download_shared_dispute_pack(token):
             photos=photos_data,
             supplements=supplements_data,
             activities=activities_data,
-            tenant_name=tenant_name
+            tenant_name=tenant_name,
+            ri_summary=ri_summary,
+            ri_denial_pack=ri_denial_pack,
+            parts_requests=parts_requests_data
         )
 
         # Log download

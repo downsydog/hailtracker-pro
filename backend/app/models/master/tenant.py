@@ -18,6 +18,8 @@ class Tenant(db.Model):
     max_users = db.Column(db.Integer, default=8)
     database_name = db.Column(db.String(100))  # tenant-specific database
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    settings_json = db.Column(db.JSON, default=dict)  # Tenant-configurable settings
+    timezone = db.Column(db.String(50), default='America/Chicago')  # Tenant timezone
 
     # Relationships
     users = db.relationship('User', backref='tenant', lazy='dynamic', cascade='all, delete-orphan')
@@ -33,6 +35,69 @@ class Tenant(db.Model):
     def get_plan_limits(self):
         """Get limits for current plan."""
         return self.PLAN_LIMITS.get(self.plan, self.PLAN_LIMITS['free'])
+
+    # Default auto-nudges configuration
+    DEFAULT_AUTO_NUDGES = {
+        'enabled': False,
+        'digest_schedule': 'daily',  # 'daily' or 'hourly'
+        'digest_time_local': '08:30',
+        'recipients': {
+            'mode': 'roles',  # 'roles' or 'explicit'
+            'roles': ['owner', 'manager', 'desk'],
+            'emails': [],
+        },
+        'thresholds': {
+            'send_if_at_least': {'warn': 5, 'high': 2, 'critical': 1},
+            'include_types': None,  # None = all types
+        },
+        'rate_limits': {
+            'per_entity_per_type_hours': {'critical': 12, 'high': 24, 'warn': 48},
+            'max_emails_per_run': 30,
+        },
+        'dry_run': True,
+    }
+
+    def get_auto_nudges_config(self):
+        """Get auto-nudges configuration with defaults."""
+        settings = self.settings_json or {}
+        config = settings.get('auto_nudges', {})
+        # Merge with defaults
+        result = {**self.DEFAULT_AUTO_NUDGES}
+        for key, value in config.items():
+            if isinstance(value, dict) and key in result and isinstance(result[key], dict):
+                result[key] = {**result[key], **value}
+            else:
+                result[key] = value
+        return result
+
+    def set_auto_nudges_config(self, config):
+        """Update auto-nudges configuration."""
+        if self.settings_json is None:
+            self.settings_json = {}
+        self.settings_json['auto_nudges'] = config
+
+    # Default labor rates configuration (Stage 6E)
+    DEFAULT_LABOR_RATES = {
+        'default_ri_rate': 85.0,
+        'currency': 'USD',
+        'rules': [],
+    }
+
+    def get_labor_rates_config(self):
+        """Get labor rates configuration with defaults."""
+        settings = self.settings_json or {}
+        config = settings.get('labor_rates', {})
+        # Merge with defaults
+        result = {**self.DEFAULT_LABOR_RATES}
+        for key, value in config.items():
+            result[key] = value
+        return result
+
+    def set_labor_rates_config(self, config):
+        """Update labor rates configuration."""
+        if self.settings_json is None:
+            self.settings_json = {}
+        self.settings_json['labor_rates'] = config
 
     def to_dict(self):
         """Convert to dictionary."""

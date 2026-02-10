@@ -142,18 +142,21 @@ def refresh():
 @login_required
 def get_current_user():
     """
-    Get current logged-in user info.
+    Get current logged-in user info with permissions.
 
     Headers:
         Authorization: Bearer <access_token>
 
     Returns:
-        200: User and tenant info
+        200: User, tenant, and permissions info
     """
     identity = get_jwt_identity()
 
     from app.models.master.user import User
     from app.models.master.tenant import Tenant
+    from app.services.permissions_service import (
+        get_user_permissions, get_role_permissions_summary, get_role_display_name
+    )
 
     user = User.query.get(identity['user_id'])
     tenant = Tenant.query.get(identity['tenant_id'])
@@ -161,9 +164,17 @@ def get_current_user():
     if not user:
         return jsonify({'error': 'User not found'}), 404
 
+    # Get permissions for this user's role
+    role = user.role
+    permissions_list = get_user_permissions(role)
+    permissions_summary = get_role_permissions_summary(role)
+
     return jsonify({
         'user': user.to_dict(),
-        'tenant': tenant.to_dict() if tenant else None
+        'tenant': tenant.to_dict() if tenant else None,
+        'permissions': permissions_list,
+        'can': permissions_summary,
+        'role_display': get_role_display_name(role)
     }), 200
 
 

@@ -213,7 +213,8 @@ interface SignaturePadInlineProps {
   error?: string
 }
 
-export function SignaturePadInline({ value, onChange, error }: SignaturePadInlineProps) {
+export function SignaturePadInline({ value: _value, onChange, error }: SignaturePadInlineProps) {
+  // _value available for pre-populating signature if needed
   return (
     <div className="space-y-1">
       <SignaturePad

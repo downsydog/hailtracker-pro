@@ -75,6 +75,8 @@ export interface Vehicle {
 export interface Job {
   id: number
   job_number: string
+  tenant_id?: number
+  estimate_id?: number | null
   customer_id: number
   customer_name: string
   customer_email?: string

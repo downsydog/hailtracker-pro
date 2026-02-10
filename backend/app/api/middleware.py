@@ -8,6 +8,9 @@ from functools import wraps
 from flask import jsonify, g
 from flask_jwt_extended import verify_jwt_in_request, get_jwt_identity
 from app.models.master.user import User
+from app.services.permissions_service import (
+    can, Permission, get_permission_denied_message, get_role_display_name
+)
 
 
 def get_current_user():
@@ -218,3 +221,70 @@ def same_tenant_required(f):
                 'message': str(e)
             }), 401
     return decorated_function
+
+
+def permission_required(permission: Permission):
+    """
+    Decorator to require a specific permission for a route.
+
+    Usage:
+        @app.route('/estimates/<id>/send')
+        @permission_required(Permission.ESTIMATE_SEND_EMAIL)
+        def send_estimate(id):
+            return 'Email sent'
+    """
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            try:
+                verify_jwt_in_request()
+                identity = get_jwt_identity()
+                g.current_user = identity
+
+                if not can(identity, permission):
+                    role = identity.get('role', 'unknown')
+                    role_display = get_role_display_name(role)
+                    message = get_permission_denied_message(permission)
+                    return jsonify({
+                        'error': 'Permission denied',
+                        'code': 'permission_denied',
+                        'permission': permission.value,
+                        'message': message,
+                        'your_role': role_display
+                    }), 403
+
+                return f(*args, **kwargs)
+            except Exception as e:
+                return jsonify({
+                    'error': 'Authentication required',
+                    'code': 'auth_required',
+                    'message': str(e)
+                }), 401
+        return decorated_function
+    return decorator
+
+
+def check_permission(identity: dict, permission: Permission) -> tuple:
+    """
+    Check if user has permission and return error response if not.
+
+    Usage in routes where decorator is not appropriate:
+        error = check_permission(identity, Permission.ESTIMATE_SEND_EMAIL)
+        if error:
+            return error
+
+    Returns:
+        None if permitted, or (jsonify response, 403) tuple if denied
+    """
+    if not can(identity, permission):
+        role = identity.get('role', 'unknown')
+        role_display = get_role_display_name(role)
+        message = get_permission_denied_message(permission)
+        return jsonify({
+            'error': 'Permission denied',
+            'code': 'permission_denied',
+            'permission': permission.value,
+            'message': message,
+            'your_role': role_display
+        }), 403
+    return None

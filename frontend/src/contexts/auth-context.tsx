@@ -6,6 +6,31 @@ const DEV_MODE = import.meta.env.VITE_DEV_MODE !== 'false'
 
 export type UserRole = 'admin' | 'owner' | 'manager' | 'technician' | 'viewer' | string
 
+/**
+ * Permission summary returned by /api/auth/me endpoint.
+ * These match the backend's get_role_permissions_summary() output.
+ */
+export interface UserPermissions {
+  canSendEmail: boolean
+  canCreateShareLink: boolean
+  canDownloadDisputePack: boolean
+  canCreateSupplement: boolean
+  canSendSupplement: boolean
+  canEditPricing: boolean
+  canEditDamage: boolean
+  canManageUsers: boolean
+  canManageSettings: boolean
+  // Customer authorization workflow
+  canRequestSignature: boolean
+  // Legacy (for backward compatibility)
+  canApproveEstimate: boolean
+  canDeclineEstimate: boolean
+  // Insurer workflow
+  canSubmitToInsurer: boolean
+  canInsurerApprove: boolean
+  canInsurerDecline: boolean
+}
+
 export interface User {
   id: number | string
   email: string
@@ -18,6 +43,7 @@ export interface User {
   permissions?: string[]
   tenant_id?: number
   role_name?: string
+  role_display?: string
 }
 
 export interface Tenant {
@@ -39,10 +65,14 @@ export interface AuthContextType {
   register: (data: RegisterData) => Promise<void>
   refreshUser: () => Promise<void>
   refreshToken: () => Promise<boolean>
+  // Legacy permission checks
   canManageTeam: boolean
   canManageSettings: boolean
   canViewAllLeads: boolean
   isDevMode: boolean
+  // Estimating-specific permissions (from backend)
+  permissions: UserPermissions
+  roleDisplay: string
 }
 
 interface RegisterData {
@@ -66,12 +96,33 @@ interface AuthResponse {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
+// Default permissions for unauthenticated or when backend doesn't provide them
+const DEFAULT_PERMISSIONS: UserPermissions = {
+  canSendEmail: false,
+  canCreateShareLink: false,
+  canDownloadDisputePack: false,
+  canCreateSupplement: false,
+  canSendSupplement: false,
+  canEditPricing: false,
+  canEditDamage: false,
+  canManageUsers: false,
+  canManageSettings: false,
+  canRequestSignature: false,
+  canApproveEstimate: false,
+  canDeclineEstimate: false,
+  canSubmitToInsurer: false,
+  canInsurerApprove: false,
+  canInsurerDecline: false,
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [tenant, setTenant] = useState<Tenant | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [permissions, setPermissions] = useState<UserPermissions>(DEFAULT_PERMISSIONS)
+  const [roleDisplay, setRoleDisplay] = useState<string>('')
 
-  // Permission helpers
+  // Legacy permission helpers (based on role)
   const canManageTeam = user?.role === 'admin' || user?.role === 'owner' || user?.role === 'manager'
   const canManageSettings = user?.role === 'admin' || user?.role === 'owner'
   const canViewAllLeads = user?.role === 'admin' || user?.role === 'owner' || user?.role === 'manager'
@@ -87,14 +138,51 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       })
 
       if (response.ok) {
-        const userData = await response.json()
+        const data = await response.json()
+        // Backend returns { user, tenant, permissions, can, role_display }
+        const userData = data.user || data
         setUser(userData)
-        if (userData.tenant_id) {
+
+        // Update tenant from response
+        const tenantData = data.tenant
+        if (tenantData) {
+          setTenant({
+            id: tenantData.id,
+            name: tenantData.company_name || tenantData.name || 'My Company',
+            plan: tenantData.plan || 'free'
+          })
+        } else if (userData.tenant_id) {
           setTenant({
             id: userData.tenant_id,
             name: userData.tenant_name || 'My Company',
             plan: userData.plan || 'free'
           })
+        }
+
+        // Update permissions from backend's "can" summary
+        if (data.can) {
+          setPermissions({
+            canSendEmail: data.can.canSendEmail ?? false,
+            canCreateShareLink: data.can.canCreateShareLink ?? false,
+            canDownloadDisputePack: data.can.canDownloadDisputePack ?? false,
+            canCreateSupplement: data.can.canCreateSupplement ?? false,
+            canSendSupplement: data.can.canSendSupplement ?? false,
+            canEditPricing: data.can.canEditPricing ?? false,
+            canEditDamage: data.can.canEditDamage ?? false,
+            canManageUsers: data.can.canManageUsers ?? false,
+            canManageSettings: data.can.canManageSettings ?? false,
+            canRequestSignature: data.can.canRequestSignature ?? false,
+            canApproveEstimate: data.can.canApproveEstimate ?? false,
+            canDeclineEstimate: data.can.canDeclineEstimate ?? false,
+            canSubmitToInsurer: data.can.canSubmitToInsurer ?? false,
+            canInsurerApprove: data.can.canInsurerApprove ?? false,
+            canInsurerDecline: data.can.canInsurerDecline ?? false,
+          })
+        }
+
+        // Update role display name
+        if (data.role_display) {
+          setRoleDisplay(data.role_display)
         }
       } else if (response.status === 401) {
         // Token expired, try to refresh
@@ -253,6 +341,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem('refresh_token')
     setUser(null)
     setTenant(null)
+    setPermissions(DEFAULT_PERMISSIONS)
+    setRoleDisplay('')
 
     // Call logout endpoint (fire and forget)
     fetch('/api/auth/logout', { method: 'POST' }).catch(() => {})
@@ -280,6 +370,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       canManageSettings,
       canViewAllLeads,
       isDevMode: DEV_MODE,
+      permissions,
+      roleDisplay,
     }}>
       {children}
     </AuthContext.Provider>

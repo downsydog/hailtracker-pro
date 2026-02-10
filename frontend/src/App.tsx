@@ -137,6 +137,9 @@ const DealershipUploadPage = lazy(() => import("./pages/dealership/upload").then
 const DealershipLocationsPage = lazy(() => import("./pages/dealership/locations").then(m => ({ default: m.DealershipLocationsPage })))
 const DealershipApiPage = lazy(() => import("./pages/dealership/api").then(m => ({ default: m.DealershipApiPage })))
 
+// Public Share - no auth required
+const SharedEstimatePage = lazy(() => import("./pages/share/SharedEstimate").then(m => ({ default: m.SharedEstimate })))
+
 function App() {
   return (
     <Suspense fallback={<PageLoader />}>
@@ -313,6 +316,9 @@ function App() {
           <Route path="locations" element={<Suspense fallback={<PageLoader />}><DealershipLocationsPage /></Suspense>} />
           <Route path="api" element={<Suspense fallback={<PageLoader />}><DealershipApiPage /></Suspense>} />
         </Route>
+
+        {/* Public Share Portal - no auth required */}
+        <Route path="/share/estimate/:token" element={<Suspense fallback={<PageLoader />}><SharedEstimatePage /></Suspense>} />
       </Routes>
     </Suspense>
   )

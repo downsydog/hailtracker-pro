@@ -1,6 +1,5 @@
 import { useState } from "react"
-import { Link } from "react-router-dom"
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { Link, useNavigate } from "react-router-dom"
 import { PageHeader } from "@/components/app/page-header"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -21,7 +20,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { invoicesApi, Invoice } from "@/api/invoices"
+import {
+  useInvoices,
+  useIssueInvoice,
+  Invoice,
+  InvoiceStatus,
+  PayerType,
+  invoiceStatusColors,
+  invoiceStatusLabels,
+  payerTypeLabels,
+  allocationTypeLabels,
+  allocationTypeColors,
+  AllocationType,
+} from "@/hooks/use-invoices"
 import {
   Plus,
   Search,
@@ -30,66 +41,61 @@ import {
   DollarSign,
   AlertCircle,
   CheckCircle,
+  Loader2,
+  Download,
+  ChevronDown,
 } from "lucide-react"
-
-// Extended invoice type for list view with additional fields
-interface InvoiceListItem extends Invoice {
-  job_number?: string
-  invoice_date?: string
-}
-
-const STATUS_COLORS: Record<string, string> = {
-  draft: "bg-gray-100 text-gray-800",
-  sent: "bg-blue-100 text-blue-800",
-  viewed: "bg-purple-100 text-purple-800",
-  partial_paid: "bg-yellow-100 text-yellow-800",
-  paid: "bg-green-100 text-green-800",
-  overdue: "bg-red-100 text-red-800",
-  cancelled: "bg-gray-100 text-gray-800",
-  refunded: "bg-orange-100 text-orange-800",
-}
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu"
+import { Label } from "@/components/ui/label"
+import {
+  useExportInvoicesCSV,
+  useExportPaymentsCSV,
+  getDefaultDateRange,
+} from "@/hooks/use-exports"
 
 export function InvoicesPage() {
-  const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState<string>("all")
+  const [payerFilter, setPayerFilter] = useState<string>("all")
 
-  // Fetch invoices using typed API
-  const { data, isLoading } = useQuery({
-    queryKey: ["invoices", page, statusFilter],
-    queryFn: () =>
-      invoicesApi.getInvoices({
-        page,
-        per_page: 20,
-        status: statusFilter !== "all" ? statusFilter : undefined,
-      }),
+  // Export state
+  const defaultDates = getDefaultDateRange()
+  const [exportStartDate, setExportStartDate] = useState(defaultDates.start)
+  const [exportEndDate, setExportEndDate] = useState(defaultDates.end)
+
+  // Export hooks
+  const exportInvoices = useExportInvoicesCSV()
+  const exportPayments = useExportPaymentsCSV()
+
+  // Fetch invoices using new hooks
+  const { data, isLoading } = useInvoices({
+    status: statusFilter !== "all" ? (statusFilter as InvoiceStatus) : undefined,
+    payer_type: payerFilter !== "all" ? (payerFilter as PayerType) : undefined,
+    page,
+    per_page: 20,
   })
 
-  // Fetch invoice stats using typed API
-  const { data: statsData } = useQuery({
-    queryKey: ["invoices-stats"],
-    queryFn: () => invoicesApi.getStats(),
-  })
+  // Issue invoice mutation
+  const issueInvoice = useIssueInvoice()
 
-  // Send invoice using typed API
-  const sendInvoice = useMutation({
-    mutationFn: (invoiceId: number) => invoicesApi.sendInvoice(invoiceId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["invoices"] })
-    },
-  })
+  const invoices = data?.invoices || []
+  const totalPages = data?.pages || 1
 
-  const invoices = (data?.invoices || []) as InvoiceListItem[]
-  const totalPages = data?.total ? Math.ceil(data.total / 20) : 1
-  const countByStatus = statsData?.count_by_status || {}
+  // Calculate stats from loaded invoices
   const stats = {
-    draft_count: countByStatus.draft || 0,
-    sent_count: countByStatus.sent || 0,
-    overdue_count: countByStatus.overdue || 0,
-    paid_count: countByStatus.paid || 0,
-    total_paid: statsData?.total_this_month || 0,
-    total_outstanding: statsData?.total_outstanding || 0,
+    draft_count: invoices.filter(i => i.status === 'draft').length,
+    issued_count: invoices.filter(i => i.status === 'issued').length,
+    overdue_count: invoices.filter(i => i.is_overdue).length,
+    paid_count: invoices.filter(i => i.status === 'paid').length,
+    total_outstanding: invoices.reduce((sum, i) => sum + (i.balance_due || 0), 0),
   }
 
   const formatCurrency = (amount: number | null) => {
@@ -100,15 +106,21 @@ export function InvoicesPage() {
     }).format(amount)
   }
 
+  // Client-side search filtering
   const filteredInvoices = invoices.filter((inv) => {
     if (!search) return true
     const searchLower = search.toLowerCase()
     return (
       inv.invoice_number?.toLowerCase().includes(searchLower) ||
-      inv.customer_name?.toLowerCase().includes(searchLower) ||
-      inv.job_number?.toLowerCase().includes(searchLower)
+      inv.payer_name?.toLowerCase().includes(searchLower) ||
+      inv.estimate?.customer_name?.toLowerCase().includes(searchLower) ||
+      inv.estimate?.vehicle_display?.toLowerCase().includes(searchLower)
     )
   })
+
+  const handleIssue = async (invoice: Invoice) => {
+    await issueInvoice.mutateAsync(invoice.id)
+  }
 
   return (
     <div className="space-y-6">
@@ -117,12 +129,83 @@ export function InvoicesPage() {
           title="Invoices"
           description="Manage customer invoices and payments"
         />
-        <Button asChild>
-          <Link to="/invoices/new">
-            <Plus className="h-4 w-4 mr-2" />
-            New Invoice
-          </Link>
-        </Button>
+        <div className="flex items-center gap-2">
+          {/* Export Dropdown */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline">
+                <Download className="h-4 w-4 mr-2" />
+                Export
+                <ChevronDown className="h-4 w-4 ml-2" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-72">
+              <div className="p-3 space-y-3">
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Start Date</Label>
+                    <Input
+                      type="date"
+                      value={exportStartDate}
+                      onChange={(e) => setExportStartDate(e.target.value)}
+                      className="h-8"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">End Date</Label>
+                    <Input
+                      type="date"
+                      value={exportEndDate}
+                      onChange={(e) => setExportEndDate(e.target.value)}
+                      className="h-8"
+                    />
+                  </div>
+                </div>
+              </div>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={() => exportInvoices.mutate({
+                  start: exportStartDate,
+                  end: exportEndDate,
+                  status: statusFilter !== 'all' ? statusFilter : undefined,
+                  payer_type: payerFilter !== 'all' ? payerFilter : undefined,
+                })}
+                disabled={exportInvoices.isPending}
+                className="cursor-pointer"
+              >
+                {exportInvoices.isPending ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <FileText className="h-4 w-4 mr-2" />
+                )}
+                Export Invoices CSV
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => exportPayments.mutate({
+                  start: exportStartDate,
+                  end: exportEndDate,
+                  payer_type: payerFilter !== 'all' ? payerFilter : undefined,
+                })}
+                disabled={exportPayments.isPending}
+                className="cursor-pointer"
+              >
+                {exportPayments.isPending ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <DollarSign className="h-4 w-4 mr-2" />
+                )}
+                Export Payments CSV
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <Button asChild>
+            <Link to="/invoices/new">
+              <Plus className="h-4 w-4 mr-2" />
+              New Invoice
+            </Link>
+          </Button>
+        </div>
       </div>
 
       {/* Stats Cards */}
@@ -133,16 +216,16 @@ export function InvoicesPage() {
             <FileText className="h-4 w-4 text-gray-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.draft_count || 0}</div>
+            <div className="text-2xl font-bold">{stats.draft_count}</div>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Sent</CardTitle>
+            <CardTitle className="text-sm font-medium">Issued</CardTitle>
             <Send className="h-4 w-4 text-blue-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.sent_count || 0}</div>
+            <div className="text-2xl font-bold">{stats.issued_count}</div>
           </CardContent>
         </Card>
         <Card>
@@ -152,7 +235,7 @@ export function InvoicesPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-red-600">
-              {stats.overdue_count || 0}
+              {stats.overdue_count}
             </div>
           </CardContent>
         </Card>
@@ -163,11 +246,8 @@ export function InvoicesPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-green-600">
-              {stats.paid_count || 0}
+              {stats.paid_count}
             </div>
-            <p className="text-xs text-muted-foreground">
-              {formatCurrency(stats.total_paid || 0)} collected
-            </p>
           </CardContent>
         </Card>
       </div>
@@ -181,7 +261,7 @@ export function InvoicesPage() {
                 Total Outstanding
               </p>
               <p className="text-3xl font-bold">
-                {formatCurrency(stats.total_outstanding || 0)}
+                {formatCurrency(stats.total_outstanding)}
               </p>
             </div>
             <DollarSign className="h-12 w-12 text-blue-500 opacity-50" />
@@ -207,10 +287,22 @@ export function InvoicesPage() {
           <SelectContent>
             <SelectItem value="all">All Status</SelectItem>
             <SelectItem value="draft">Draft</SelectItem>
-            <SelectItem value="sent">Sent</SelectItem>
+            <SelectItem value="issued">Issued</SelectItem>
             <SelectItem value="partial_paid">Partial Paid</SelectItem>
             <SelectItem value="paid">Paid</SelectItem>
-            <SelectItem value="overdue">Overdue</SelectItem>
+            <SelectItem value="void">Void</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={payerFilter} onValueChange={setPayerFilter}>
+          <SelectTrigger className="w-[180px]">
+            <SelectValue placeholder="Filter by payer" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Payers</SelectItem>
+            <SelectItem value="customer">Customer</SelectItem>
+            <SelectItem value="insurer">Insurance</SelectItem>
+            <SelectItem value="dealership">Dealership</SelectItem>
+            <SelectItem value="other">Other</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -222,13 +314,13 @@ export function InvoicesPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Invoice #</TableHead>
-                <TableHead>Customer</TableHead>
-                <TableHead>Job</TableHead>
-                <TableHead>Date</TableHead>
-                <TableHead>Due Date</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead>Payer</TableHead>
+                <TableHead>Customer / Vehicle</TableHead>
                 <TableHead className="text-right">Total</TableHead>
+                <TableHead className="text-right">Paid</TableHead>
                 <TableHead className="text-right">Balance</TableHead>
+                <TableHead>Issued</TableHead>
                 <TableHead>Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -236,6 +328,7 @@ export function InvoicesPage() {
               {isLoading ? (
                 <TableRow>
                   <TableCell colSpan={9} className="text-center py-8">
+                    <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />
                     Loading invoices...
                   </TableCell>
                 </TableRow>
@@ -251,47 +344,55 @@ export function InvoicesPage() {
                 </TableRow>
               ) : (
                 filteredInvoices.map((invoice) => (
-                  <TableRow key={invoice.id}>
+                  <TableRow
+                    key={invoice.id}
+                    className="cursor-pointer hover:bg-muted/50"
+                    onClick={() => navigate(`/invoices/${invoice.id}`)}
+                  >
                     <TableCell>
-                      <Link
-                        to={`/invoices/${invoice.id}`}
-                        className="font-medium text-primary hover:underline"
-                      >
+                      <span className="font-medium text-primary">
                         {invoice.invoice_number}
-                      </Link>
+                      </span>
                     </TableCell>
-                    <TableCell>{invoice.customer_name || "—"}</TableCell>
                     <TableCell>
-                      {invoice.job_number ? (
-                        <Link
-                          to={`/jobs/${invoice.job_number}`}
-                          className="text-muted-foreground hover:underline"
-                        >
-                          {invoice.job_number}
-                        </Link>
-                      ) : (
-                        "—"
+                      <Badge className={invoiceStatusColors[invoice.status]}>
+                        {invoiceStatusLabels[invoice.status]}
+                      </Badge>
+                      {invoice.is_overdue && invoice.status !== 'paid' && invoice.status !== 'void' && (
+                        <Badge variant="destructive" className="ml-1 text-xs">
+                          Overdue
+                        </Badge>
                       )}
                     </TableCell>
                     <TableCell>
-                      {invoice.invoice_date
-                        ? new Date(invoice.invoice_date).toLocaleDateString()
-                        : "—"}
+                      <div className="flex flex-col gap-1">
+                        <Badge variant="outline">
+                          {payerTypeLabels[invoice.payer_type]}
+                        </Badge>
+                        {invoice.allocation_type && invoice.allocation_type !== 'other' && (
+                          <Badge className={`text-xs ${allocationTypeColors[invoice.allocation_type as AllocationType]}`}>
+                            {allocationTypeLabels[invoice.allocation_type as AllocationType]}
+                          </Badge>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell>
-                      {invoice.due_date
-                        ? new Date(invoice.due_date).toLocaleDateString()
-                        : "—"}
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        className={STATUS_COLORS[invoice.status] || "bg-gray-100"}
-                      >
-                        {invoice.status?.replace(/_/g, " ")}
-                      </Badge>
+                      <div>
+                        <p className="font-medium">
+                          {invoice.payer_name || invoice.estimate?.customer_name || "—"}
+                        </p>
+                        {invoice.estimate?.vehicle_display && (
+                          <p className="text-sm text-muted-foreground">
+                            {invoice.estimate.vehicle_display}
+                          </p>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="text-right font-medium">
                       {formatCurrency(invoice.total)}
+                    </TableCell>
+                    <TableCell className="text-right text-green-600">
+                      {formatCurrency(invoice.amount_paid)}
                     </TableCell>
                     <TableCell className="text-right">
                       {invoice.balance_due > 0 ? (
@@ -303,19 +404,34 @@ export function InvoicesPage() {
                       )}
                     </TableCell>
                     <TableCell>
+                      {invoice.issued_at
+                        ? new Date(invoice.issued_at).toLocaleDateString()
+                        : "—"}
+                    </TableCell>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-2">
-                        <Button variant="ghost" size="sm" asChild>
-                          <Link to={`/invoices/${invoice.id}`}>View</Link>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => navigate(`/invoices/${invoice.id}`)}
+                        >
+                          View
                         </Button>
                         {invoice.status === "draft" && (
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => sendInvoice.mutate(invoice.id)}
-                            disabled={sendInvoice.isPending}
+                            onClick={() => handleIssue(invoice)}
+                            disabled={issueInvoice.isPending}
                           >
-                            <Send className="h-3 w-3 mr-1" />
-                            Send
+                            {issueInvoice.isPending ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <>
+                                <Send className="h-3 w-3 mr-1" />
+                                Issue
+                              </>
+                            )}
                           </Button>
                         )}
                       </div>

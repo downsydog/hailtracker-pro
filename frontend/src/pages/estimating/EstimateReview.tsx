@@ -44,7 +44,13 @@ import {
   Shield,
   FileSpreadsheet,
   CircleDot,
-  Plus
+  Plus,
+  FileText,
+  Package,
+  Sparkles,
+  Check,
+  X,
+  Archive
 } from 'lucide-react'
 
 import { SignaturePad } from '@/components/estimating/SignaturePad'
@@ -52,12 +58,39 @@ import { SignaturePad } from '@/components/estimating/SignaturePad'
 import {
   usePDREstimate,
   useApprovePDREstimate,
+  useSignEstimate,
   useCreateWorkOrder,
+  useEstimateJob,
+  useCreateJobFromEstimate,
+  useDownloadEstimateDisputePack,
+  useEstimateSupplements,
   PANEL_NAMES,
   SIZE_LABELS,
   Panel
 } from '@/hooks/use-pdr-estimates'
+import {
+  useEstimateInvoices,
+  useCreateInvoiceFromEstimate,
+  useEstimateBillingSummary,
+  useUpdateBilling,
+  useCreateInsurerInvoice,
+  useCreateCustomerInvoice,
+  allocationTypeLabels
+} from '@/hooks/use-invoices'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
+import { WorkflowCard } from '@/components/workflow/WorkflowCard'
+import { useEstimateWorkflow, useCloseClaim } from '@/hooks/use-workflow'
+import {
+  useEstimatePartsSuggestions,
+  useEstimatePartsRequests,
+  useCreateEstimatePartsRequests,
+  PartsSuggestion
+} from '@/hooks/use-jobs'
+import { PARTS_STATUS_OPTIONS, PartsPricingPreview } from '@/hooks/use-ops'
+import { Checkbox } from '@/components/ui/checkbox'
+import { useEstimateRI } from '@/hooks/use-ri'
 
 const STATUS_STYLES: Record<string, string> = {
   draft: 'bg-slate-100 text-slate-700 border-slate-300',
@@ -84,8 +117,59 @@ export function EstimateReview() {
 
   // API hooks
   const { data: estimate, isLoading, refetch } = usePDREstimate(id ? parseInt(id) : null)
+  const signEstimate = useSignEstimate()
   const approveEstimate = useApprovePDREstimate()
   const createWorkOrder = useCreateWorkOrder()
+
+  // Job hooks
+  const estimateId = id ? parseInt(id) : undefined
+  const { data: jobData, isLoading: isLoadingJob } = useEstimateJob(estimateId)
+  const createJob = useCreateJobFromEstimate()
+
+  // Invoice hooks
+  const { data: invoicesData } = useEstimateInvoices(estimateId || null)
+  const createInvoice = useCreateInvoiceFromEstimate()
+
+  // Split billing hooks
+  const { data: billingData, refetch: refetchBilling } = useEstimateBillingSummary(estimateId || null)
+  const updateBilling = useUpdateBilling()
+  const createInsurerInvoice = useCreateInsurerInvoice()
+  const createCustomerInvoice = useCreateCustomerInvoice()
+
+  // Workflow hooks
+  const { data: workflow, isLoading: isLoadingWorkflow, refetch: refetchWorkflow } = useEstimateWorkflow(estimateId || null)
+  const closeClaim = useCloseClaim()
+  const [actionLoadingKey, setActionLoadingKey] = useState<string | null>(null)
+
+  // Billing state (local edits before saving)
+  const [deductibleInput, setDeductibleInput] = useState<string>('')
+  const [oopInput, setOopInput] = useState<string>('')
+  const [billingDirty, setBillingDirty] = useState(false)
+
+  // Parts requests state (Stage 5R)
+  const [showPartsSuggestionsModal, setShowPartsSuggestionsModal] = useState(false)
+  const [selectedSuggestions, setSelectedSuggestions] = useState<Set<number>>(new Set())
+
+  // Parts hooks (Stage 5R)
+  const { data: partsSuggestionsData, isLoading: isLoadingSuggestions, refetch: refetchSuggestions } = useEstimatePartsSuggestions(estimateId || null)
+  const { data: partsRequestsData, refetch: refetchPartsRequests } = useEstimatePartsRequests(estimateId || null)
+  const createPartsRequests = useCreateEstimatePartsRequests()
+
+  // R&I Justification hooks (Phase 6B)
+  const { data: riData } = useEstimateRI(estimateId || 0)
+
+  // Stage 7E: Adjuster Pack / Supplements
+  const downloadDisputePack = useDownloadEstimateDisputePack()
+  const { data: supplementsData } = useEstimateSupplements(estimateId || null)
+  const supplementCount = supplementsData?.count || 0
+
+  // Sync billing inputs when data loads
+  useMemo(() => {
+    if (billingData?.billing_summary) {
+      setDeductibleInput(String(billingData.billing_summary.deductible || 0))
+      setOopInput(String(billingData.billing_summary.customer_oop || 0))
+    }
+  }, [billingData?.billing_summary])
 
   // Calculate stats
   const stats = useMemo(() => {
@@ -106,13 +190,20 @@ export function EstimateReview() {
     }
   }, [estimate])
 
-  // Handle approve
+  // Handle approve (sign then approve)
   const handleApprove = async () => {
     if (!estimate || !signature) return
 
     setIsApproving(true)
     try {
-      await approveEstimate.mutateAsync({ id: estimate.id, signature })
+      // First sign the estimate
+      await signEstimate.mutateAsync({
+        id: estimate.id,
+        signatureBase64: signature,
+        signedByName: estimate.customer_name || 'Customer'
+      })
+      // Then approve it
+      await approveEstimate.mutateAsync(estimate.id)
       refetch()
     } finally {
       setIsApproving(false)
@@ -126,6 +217,170 @@ export function EstimateReview() {
     await createWorkOrder.mutateAsync({ estimateId: estimate.id })
     navigate(`/estimates/${estimate.id}/work-order`)
   }
+
+  // Handle create job from approved estimate
+  const handleCreateJob = async () => {
+    if (!estimate || !estimate.is_insurer_approved) return
+
+    try {
+      const result = await createJob.mutateAsync({ estimateId: estimate.id })
+      // Navigate to the job
+      navigate(`/jobs/${result.job.id}`)
+    } catch {
+      // Error handled by mutation
+    }
+  }
+
+  // Handle create invoice from approved estimate
+  const handleCreateInvoice = async () => {
+    if (!estimate || !estimate.is_insurer_approved) return
+
+    try {
+      const invoice = await createInvoice.mutateAsync({
+        estimateId: estimate.id,
+        params: { payer_type: 'insurer' }
+      })
+      navigate(`/invoices/${invoice.id}`)
+    } catch {
+      // Error handled by mutation
+    }
+  }
+
+  // Handle save billing changes
+  const handleSaveBilling = async () => {
+    if (!estimate) return
+
+    try {
+      await updateBilling.mutateAsync({
+        estimateId: estimate.id,
+        params: {
+          deductible: parseFloat(deductibleInput) || 0,
+          customer_oop: parseFloat(oopInput) || 0
+        }
+      })
+      setBillingDirty(false)
+      refetchBilling()
+    } catch {
+      // Error handled by mutation
+    }
+  }
+
+  // Handle create insurer invoice (split billing)
+  const handleCreateInsurerInvoice = async () => {
+    if (!estimate || !estimate.is_insurer_approved) return
+
+    try {
+      const result = await createInsurerInvoice.mutateAsync({
+        estimateId: estimate.id
+      })
+      navigate(`/invoices/${result.invoice.id}`)
+    } catch {
+      // Error handled by mutation
+    }
+  }
+
+  // Handle create customer invoice (split billing)
+  const handleCreateCustomerInvoice = async () => {
+    if (!estimate || !estimate.is_insurer_approved) return
+
+    try {
+      const result = await createCustomerInvoice.mutateAsync({
+        estimateId: estimate.id,
+        includeOop: true
+      })
+      navigate(`/invoices/${result.invoice.id}`)
+    } catch {
+      // Error handled by mutation
+    }
+  }
+
+  // Handle workflow actions
+  const handleWorkflowAction = async (actionKey: string) => {
+    if (!estimate) return
+
+    setActionLoadingKey(actionKey)
+
+    try {
+      switch (actionKey) {
+        case 'request_customer_auth':
+          // Switch to customer view for signature
+          setActiveTab('customer')
+          break
+
+        case 'submit_to_insurer':
+          // TODO: Implement submit to insurer flow
+          console.log('Submit to insurer - not yet implemented')
+          break
+
+        case 'mark_insurer_approved':
+          // TODO: Implement insurer approval
+          console.log('Mark insurer approved - not yet implemented')
+          break
+
+        case 'create_job':
+          await handleCreateJob()
+          break
+
+        case 'start_job':
+          if (linkedJob) {
+            navigate(`/jobs/${linkedJob.id}`)
+          }
+          break
+
+        case 'complete_job':
+          if (linkedJob) {
+            navigate(`/jobs/${linkedJob.id}`)
+          }
+          break
+
+        case 'create_insurer_invoice':
+          await handleCreateInsurerInvoice()
+          break
+
+        case 'create_customer_invoice':
+          await handleCreateCustomerInvoice()
+          break
+
+        case 'collect_payment':
+          // Navigate to the first invoice
+          if (latestInvoice) {
+            navigate(`/invoices/${latestInvoice.id}`)
+          }
+          break
+
+        case 'close_claim':
+          await closeClaim.mutateAsync(estimate.id)
+          refetch()
+          refetchWorkflow()
+          break
+
+        default:
+          console.log('Unknown action:', actionKey)
+      }
+    } catch (error: unknown) {
+      const err = error as { message?: string; response?: { data?: { error?: string } } }
+      console.error('Workflow action failed:', err?.response?.data?.error || err?.message)
+    } finally {
+      setActionLoadingKey(null)
+      refetchWorkflow()
+    }
+  }
+
+  // Computed values for job UI
+  const hasJob = !isLoadingJob && jobData?.has_job
+  const linkedJob = jobData?.job
+  const canCreateJob = estimate?.is_insurer_approved && !hasJob
+
+  // Computed values for invoice UI
+  const hasInvoice = invoicesData?.invoices && invoicesData.invoices.length > 0
+  const latestInvoice = hasInvoice ? invoicesData.invoices[0] : null
+  const canCreateInvoice = estimate?.is_insurer_approved && !hasInvoice
+
+  // Computed values for split billing UI
+  const billingSummary = billingData?.billing_summary
+  const hasInsurerInvoice = billingData?.has_insurer_invoice ?? false
+  const hasCustomerInvoice = billingData?.has_customer_invoice ?? false
+  const existingInvoices = billingData?.invoices ?? []
 
   // Get panel modifiers as badges
   const getPanelModifiers = (panel: Panel) => {
@@ -195,15 +450,90 @@ export function EstimateReview() {
               <Printer className="h-4 w-4 mr-1" />
               Print
             </Button>
+
+            {/* Job button - only show when insurer approved */}
+            {estimate.is_insurer_approved && (
+              hasJob && linkedJob ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => navigate(`/jobs/${linkedJob.id}`)}
+                >
+                  <Wrench className="h-4 w-4 mr-1" />
+                  <span className="hidden sm:inline">{linkedJob.job_number}</span>
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      'ml-2 text-xs',
+                      linkedJob.status === 'completed' && 'bg-green-100 text-green-700 border-green-300',
+                      linkedJob.status === 'in_progress' && 'bg-blue-100 text-blue-700 border-blue-300',
+                      linkedJob.status === 'scheduled' && 'bg-amber-100 text-amber-700 border-amber-300'
+                    )}
+                  >
+                    {linkedJob.status.replace('_', ' ')}
+                  </Badge>
+                </Button>
+              ) : canCreateJob ? (
+                <Button
+                  size="sm"
+                  onClick={handleCreateJob}
+                  disabled={createJob.isPending}
+                >
+                  {createJob.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
+                  <Plus className="h-4 w-4 mr-1" />
+                  Create Job
+                </Button>
+              ) : null
+            )}
+
+            {/* Invoice button - only show when insurer approved */}
+            {estimate.is_insurer_approved && (
+              hasInvoice && latestInvoice ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => navigate(`/invoices/${latestInvoice.id}`)}
+                >
+                  <FileText className="h-4 w-4 mr-1" />
+                  <span className="hidden sm:inline">{latestInvoice.invoice_number}</span>
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      'ml-2 text-xs',
+                      latestInvoice.status === 'paid' && 'bg-green-100 text-green-700 border-green-300',
+                      latestInvoice.status === 'issued' && 'bg-blue-100 text-blue-700 border-blue-300',
+                      latestInvoice.status === 'partial_paid' && 'bg-yellow-100 text-yellow-700 border-yellow-300',
+                      latestInvoice.status === 'draft' && 'bg-gray-100 text-gray-700 border-gray-300'
+                    )}
+                  >
+                    {latestInvoice.status.replace('_', ' ')}
+                  </Badge>
+                </Button>
+              ) : canCreateInvoice ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleCreateInvoice}
+                  disabled={createInvoice.isPending}
+                >
+                  {createInvoice.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
+                  <FileText className="h-4 w-4 mr-1" />
+                  Generate Invoice
+                </Button>
+              ) : null
+            )}
+
+            {/* Create Work Order - legacy button */}
             {estimate.status === 'approved' && (
               <Button
+                variant="outline"
                 size="sm"
                 onClick={handleCreateWorkOrder}
                 disabled={createWorkOrder.isPending}
               >
                 {createWorkOrder.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
                 <Wrench className="h-4 w-4 mr-1" />
-                Create Work Order
+                Work Order
               </Button>
             )}
           </div>
@@ -398,6 +728,17 @@ export function EstimateReview() {
 
           {/* Detail View Tab */}
           <TabsContent value="detail">
+            {/* Workflow Progress Card */}
+            {workflow && (
+              <WorkflowCard
+                workflow={workflow}
+                isLoading={isLoadingWorkflow}
+                onAction={handleWorkflowAction}
+                actionLoadingKey={actionLoadingKey}
+                className="mb-6"
+              />
+            )}
+
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {/* Left: Info & Stats */}
               <div className="space-y-4">
@@ -517,6 +858,369 @@ export function EstimateReview() {
                   </CardContent>
                 </Card>
 
+                {/* Billing - Split Billing Card (show when insurer approved) */}
+                {estimate.is_insurer_approved && billingSummary && (
+                  <Card className="shadow-sm border-purple-200 bg-purple-50/30">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <DollarSign className="h-4 w-4 text-purple-600" />
+                        Billing Allocation
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      {/* Approved Total */}
+                      <div className="bg-white rounded-lg p-3 border">
+                        <div className="flex justify-between items-center">
+                          <span className="text-muted-foreground text-sm">Insurer Approved</span>
+                          <span className="font-bold text-lg text-emerald-600">
+                            ${billingSummary.approved_total?.toFixed(2) || grandTotal.toFixed(2)}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Deductible Input */}
+                      <div className="space-y-2">
+                        <Label htmlFor="deductible" className="text-sm text-muted-foreground">
+                          Customer Deductible
+                        </Label>
+                        <div className="relative">
+                          <span className="absolute left-3 top-2.5 text-muted-foreground">$</span>
+                          <Input
+                            id="deductible"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={deductibleInput}
+                            onChange={(e) => {
+                              setDeductibleInput(e.target.value)
+                              setBillingDirty(true)
+                            }}
+                            className="pl-7"
+                            placeholder="0.00"
+                          />
+                        </div>
+                      </div>
+
+                      {/* OOP Input */}
+                      <div className="space-y-2">
+                        <Label htmlFor="oop" className="text-sm text-muted-foreground">
+                          Customer Out-of-Pocket
+                        </Label>
+                        <div className="relative">
+                          <span className="absolute left-3 top-2.5 text-muted-foreground">$</span>
+                          <Input
+                            id="oop"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={oopInput}
+                            onChange={(e) => {
+                              setOopInput(e.target.value)
+                              setBillingDirty(true)
+                            }}
+                            className="pl-7"
+                            placeholder="0.00"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Save button when dirty */}
+                      {billingDirty && (
+                        <Button
+                          size="sm"
+                          className="w-full"
+                          onClick={handleSaveBilling}
+                          disabled={updateBilling.isPending}
+                        >
+                          {updateBilling.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                          Save Billing Changes
+                        </Button>
+                      )}
+
+                      <Separator />
+
+                      {/* Suggested Invoice Amounts */}
+                      <div className="space-y-2 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Suggested Insurer Invoice</span>
+                          <span className="font-medium text-purple-600">
+                            ${billingSummary.insurer_suggested?.toFixed(2) || '0.00'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Suggested Customer Invoice</span>
+                          <span className="font-medium text-orange-600">
+                            ${billingSummary.customer_suggested?.toFixed(2) || '0.00'}
+                          </span>
+                        </div>
+                        {billingSummary.short_paid > 0 && (
+                          <div className="flex justify-between text-red-600">
+                            <span>Short Paid</span>
+                            <span className="font-medium">${billingSummary.short_paid.toFixed(2)}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      <Separator />
+
+                      {/* Existing Invoices */}
+                      {existingInvoices.length > 0 && (
+                        <div className="space-y-2">
+                          <p className="text-xs text-muted-foreground font-medium">Existing Invoices</p>
+                          {existingInvoices.map(inv => (
+                            <div
+                              key={inv.id}
+                              className="flex justify-between items-center p-2 bg-white rounded border cursor-pointer hover:bg-slate-50"
+                              onClick={() => navigate(`/invoices/${inv.id}`)}
+                            >
+                              <div className="flex items-center gap-2">
+                                <Badge variant="outline" className="text-xs">
+                                  {allocationTypeLabels[inv.allocation_type as keyof typeof allocationTypeLabels] || inv.allocation_type}
+                                </Badge>
+                                <span className="text-sm">{inv.invoice_number}</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium">${inv.total?.toFixed(2)}</span>
+                                <Badge
+                                  variant="outline"
+                                  className={cn(
+                                    'text-xs',
+                                    inv.status === 'paid' && 'bg-green-100 text-green-700',
+                                    inv.status === 'issued' && 'bg-blue-100 text-blue-700',
+                                    inv.status === 'draft' && 'bg-gray-100 text-gray-700'
+                                  )}
+                                >
+                                  {inv.status}
+                                </Badge>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Create Invoice Buttons */}
+                      <div className="space-y-2">
+                        {!hasInsurerInvoice && billingSummary.insurer_suggested > 0 && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-full border-purple-300 text-purple-700 hover:bg-purple-100"
+                            onClick={handleCreateInsurerInvoice}
+                            disabled={createInsurerInvoice.isPending || billingDirty}
+                          >
+                            {createInsurerInvoice.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                            <FileText className="h-4 w-4 mr-2" />
+                            Create Insurer Invoice (${billingSummary.insurer_suggested.toFixed(0)})
+                          </Button>
+                        )}
+                        {!hasCustomerInvoice && billingSummary.customer_suggested > 0 && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-full border-orange-300 text-orange-700 hover:bg-orange-100"
+                            onClick={handleCreateCustomerInvoice}
+                            disabled={createCustomerInvoice.isPending || billingDirty}
+                          >
+                            {createCustomerInvoice.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                            <FileText className="h-4 w-4 mr-2" />
+                            Create Customer Invoice (${billingSummary.customer_suggested.toFixed(0)})
+                          </Button>
+                        )}
+                        {billingDirty && (
+                          <p className="text-xs text-amber-600 text-center">
+                            Save billing changes before creating invoices
+                          </p>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Parts Requests Card (Stage 5R) */}
+                <Card className="shadow-sm border-amber-200 bg-amber-50/30">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <Package className="h-4 w-4 text-amber-600" />
+                      Parts Requests
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {/* Summary stats */}
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Active Requests</span>
+                      <span className="font-medium">{partsRequestsData?.count || 0}</span>
+                    </div>
+
+                    {/* Stage 5T: Approval status summary */}
+                    {(() => {
+                      const requests = partsRequestsData?.requests as Array<{
+                        id: number
+                        approved_to_order?: boolean
+                      }>[] | undefined
+                      if (!requests?.length) return null
+
+                      const approvedCount = (requests as Array<{ approved_to_order?: boolean }>).filter(r => r.approved_to_order).length
+                      const pendingCount = requests.length - approvedCount
+
+                      return (
+                        <div className="flex items-center gap-2">
+                          <Badge className="bg-green-100 text-green-700 text-xs" title="Approved ≠ Ordered. Approval is internal only.">
+                            {approvedCount} approved
+                          </Badge>
+                          <Badge variant="outline" className="text-xs">
+                            {pendingCount} pending
+                          </Badge>
+                        </div>
+                      )
+                    })()}
+
+                    {/* Stage 5S: Parts exposure summary */}
+                    {(() => {
+                      const requests = partsRequestsData?.requests as Array<{
+                        id: number
+                        description: string
+                        parts_status: string
+                        qty: number
+                        pricing_preview?: PartsPricingPreview
+                      }> | undefined
+                      if (!requests?.length) return null
+
+                      const totalTypical = requests.reduce((sum, req) => {
+                        return sum + (req.pricing_preview?.typical_estimate || 0)
+                      }, 0)
+
+                      if (totalTypical <= 0) return null
+
+                      return (
+                        <div
+                          className="p-2 bg-amber-100 rounded-lg"
+                          title="Estimates only. Final pricing may vary."
+                        >
+                          <span className="text-sm text-amber-800">
+                            Estimated parts exposure: <strong>~${Math.round(totalTypical).toLocaleString()}</strong>
+                            <span className="text-xs text-amber-600 ml-1">(preview)</span>
+                          </span>
+                        </div>
+                      )
+                    })()}
+
+                    {/* Existing requests list */}
+                    {partsRequestsData?.requests && partsRequestsData.requests.length > 0 && (
+                      <div className="space-y-2">
+                        {(partsRequestsData.requests as Array<{
+                          id: number
+                          description: string
+                          parts_status: string
+                          qty: number
+                        }>).slice(0, 3).map(req => {
+                          const statusOption = PARTS_STATUS_OPTIONS.find(o => o.value === req.parts_status)
+                          return (
+                            <div key={req.id} className="flex items-center justify-between p-2 bg-white rounded border text-sm">
+                              <span className="truncate flex-1 mr-2">{req.description}</span>
+                              <Badge className={`${statusOption?.color || 'bg-gray-100'} text-xs`}>
+                                {statusOption?.label || req.parts_status}
+                              </Badge>
+                            </div>
+                          )
+                        })}
+                        {partsRequestsData.requests.length > 3 && (
+                          <p className="text-xs text-muted-foreground text-center">
+                            +{partsRequestsData.requests.length - 3} more
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Suggestions preview */}
+                    {(partsSuggestionsData?.stats?.new_suggestions ?? 0) > 0 && (
+                      <div className="flex items-center gap-2 p-2 bg-amber-100 rounded-lg">
+                        <Sparkles className="h-4 w-4 text-amber-600" />
+                        <span className="text-sm text-amber-800">
+                          {partsSuggestionsData?.stats?.new_suggestions ?? 0} parts suggestion{(partsSuggestionsData?.stats?.new_suggestions ?? 0) !== 1 ? 's' : ''} available
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Generate Parts button */}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full border-amber-300 text-amber-700 hover:bg-amber-100"
+                      onClick={() => {
+                        refetchSuggestions()
+                        setShowPartsSuggestionsModal(true)
+                        // Pre-select all new suggestions
+                        const newSet = new Set<number>()
+                        partsSuggestionsData?.suggestions?.forEach((s: PartsSuggestion, i: number) => {
+                          if (!s.already_exists) newSet.add(i)
+                        })
+                        setSelectedSuggestions(newSet)
+                      }}
+                      disabled={isLoadingSuggestions}
+                    >
+                      {isLoadingSuggestions ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <Sparkles className="h-4 w-4 mr-2" />
+                      )}
+                      Generate Parts List
+                    </Button>
+                  </CardContent>
+                </Card>
+
+                {/* R&I Justification Card (Phase 6B) */}
+                {riData && riData.operation_count > 0 && (
+                  <Card className="shadow-sm border-blue-200 bg-blue-50/30">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <Clock className="h-4 w-4 text-blue-600" />
+                        R&I Justification
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      {/* Summary */}
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Operations</span>
+                        <span className="font-medium">{riData.operation_count}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Total R&I Time</span>
+                        <span className="font-medium text-blue-700">
+                          {riData.total_ri_time_hours.toFixed(2)} hrs
+                        </span>
+                      </div>
+
+                      {/* Operations list */}
+                      <div className="space-y-2">
+                        {riData.operations.slice(0, 2).map(op => (
+                          <div key={op.estimate_ri_operation_id} className="flex items-center justify-between p-2 bg-white rounded border text-sm">
+                            <span className="truncate flex-1 mr-2">{op.display_name}</span>
+                            <Badge className="bg-blue-100 text-blue-700 text-xs">
+                              {op.totals.total_time} hrs
+                            </Badge>
+                          </div>
+                        ))}
+                        {riData.operations.length > 2 && (
+                          <p className="text-xs text-muted-foreground text-center">
+                            +{riData.operations.length - 2} more
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Edit R&I button */}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full border-blue-300 text-blue-700 hover:bg-blue-100"
+                        onClick={() => navigate(`/estimating/${estimateId}?tab=ri`)}
+                      >
+                        <Wrench className="h-4 w-4 mr-2" />
+                        Edit R&I Operations
+                      </Button>
+                    </CardContent>
+                  </Card>
+                )}
+
                 {/* Actions */}
                 <div className="space-y-2">
                   <Button
@@ -541,6 +1245,30 @@ export function EstimateReview() {
                       Email to Insurance
                     </Button>
                   )}
+
+                  {/* Stage 7E: Adjuster Pack Button */}
+                  <Button
+                    variant="default"
+                    className="w-full bg-blue-600 hover:bg-blue-700"
+                    onClick={() => {
+                      if (estimateId) {
+                        downloadDisputePack.mutate(estimateId)
+                      }
+                    }}
+                    disabled={downloadDisputePack.isPending}
+                  >
+                    {downloadDisputePack.isPending ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Archive className="h-4 w-4 mr-2" />
+                    )}
+                    Generate Adjuster Pack
+                    {supplementCount > 0 && (
+                      <span className="ml-1 text-xs opacity-75">
+                        ({supplementCount} supp{supplementCount !== 1 ? 's' : ''})
+                      </span>
+                    )}
+                  </Button>
                 </div>
               </div>
 
@@ -827,6 +1555,179 @@ export function EstimateReview() {
               Export to Excel
             </Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Parts Suggestions Modal (Stage 5R) */}
+      <Dialog open={showPartsSuggestionsModal} onOpenChange={setShowPartsSuggestionsModal}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Package className="h-5 w-5 text-amber-600" />
+              Parts Suggestions
+            </DialogTitle>
+          </DialogHeader>
+
+          {isLoadingSuggestions ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <>
+              {/* Stats summary */}
+              <div className="grid grid-cols-3 gap-4 p-4 bg-slate-100 rounded-lg mb-4">
+                <div className="text-center">
+                  <p className="text-2xl font-bold text-slate-700">
+                    {partsSuggestionsData?.stats?.total_suggestions || 0}
+                  </p>
+                  <p className="text-xs text-muted-foreground">Total Found</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-2xl font-bold text-amber-600">
+                    {partsSuggestionsData?.stats?.new_suggestions || 0}
+                  </p>
+                  <p className="text-xs text-muted-foreground">New</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-2xl font-bold text-slate-400">
+                    {partsSuggestionsData?.stats?.duplicates || 0}
+                  </p>
+                  <p className="text-xs text-muted-foreground">Already Exist</p>
+                </div>
+              </div>
+
+              {/* Suggestions list */}
+              {partsSuggestionsData?.suggestions && partsSuggestionsData.suggestions.length > 0 ? (
+                <div className="space-y-2">
+                  {/* Select all toggle */}
+                  <div className="flex items-center justify-between pb-2 border-b">
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        id="select-all"
+                        checked={selectedSuggestions.size === partsSuggestionsData.new_suggestions?.length}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            const newSet = new Set<number>()
+                            partsSuggestionsData.suggestions.forEach((s: PartsSuggestion, i: number) => {
+                              if (!s.already_exists) newSet.add(i)
+                            })
+                            setSelectedSuggestions(newSet)
+                          } else {
+                            setSelectedSuggestions(new Set())
+                          }
+                        }}
+                      />
+                      <Label htmlFor="select-all" className="text-sm font-medium">
+                        Select all new ({partsSuggestionsData.stats?.new_suggestions || 0})
+                      </Label>
+                    </div>
+                    <Badge variant="outline" className="text-xs">
+                      {selectedSuggestions.size} selected
+                    </Badge>
+                  </div>
+
+                  {/* Individual suggestions */}
+                  {partsSuggestionsData.suggestions.map((suggestion: PartsSuggestion, index: number) => (
+                    <div
+                      key={index}
+                      className={cn(
+                        "flex items-start gap-3 p-3 rounded-lg border",
+                        suggestion.already_exists
+                          ? "bg-slate-50 opacity-60"
+                          : selectedSuggestions.has(index)
+                            ? "bg-amber-50 border-amber-300"
+                            : "bg-white hover:bg-slate-50"
+                      )}
+                    >
+                      <Checkbox
+                        checked={selectedSuggestions.has(index)}
+                        onCheckedChange={(checked) => {
+                          const newSet = new Set(selectedSuggestions)
+                          if (checked) {
+                            newSet.add(index)
+                          } else {
+                            newSet.delete(index)
+                          }
+                          setSelectedSuggestions(newSet)
+                        }}
+                        disabled={suggestion.already_exists}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-sm truncate">{suggestion.description}</span>
+                          {suggestion.already_exists && (
+                            <Badge variant="outline" className="text-xs bg-slate-100">
+                              <Check className="h-3 w-3 mr-1" />
+                              Exists
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">{suggestion.reason}</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <Badge variant="outline" className="text-xs">
+                            {suggestion.source_type === 'panel_ri' && 'R&I Operation'}
+                            {suggestion.source_type === 'supplement' && 'Supplement'}
+                            {suggestion.source_type === 'panel_cr' && 'Conv. Repair'}
+                          </Badge>
+                          {suggestion.part_number && (
+                            <span className="text-xs text-muted-foreground font-mono">
+                              #{suggestion.part_number}
+                            </span>
+                          )}
+                          {suggestion.qty > 1 && (
+                            <span className="text-xs text-muted-foreground">
+                              Qty: {suggestion.qty}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Package className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                  <p>No parts suggestions found</p>
+                  <p className="text-sm mt-1">This estimate doesn't have R&I operations or supplements that typically require parts.</p>
+                </div>
+              )}
+
+              {/* Action buttons */}
+              <div className="flex justify-end gap-2 mt-4 pt-4 border-t">
+                <Button variant="outline" onClick={() => setShowPartsSuggestionsModal(false)}>
+                  <X className="h-4 w-4 mr-2" />
+                  Cancel
+                </Button>
+                <Button
+                  onClick={async () => {
+                    if (!estimateId || selectedSuggestions.size === 0) return
+                    try {
+                      await createPartsRequests.mutateAsync({
+                        estimateId,
+                        selectedIndices: Array.from(selectedSuggestions),
+                        skipDuplicates: true,
+                      })
+                      refetchPartsRequests()
+                      refetchSuggestions()
+                      setShowPartsSuggestionsModal(false)
+                      setSelectedSuggestions(new Set())
+                    } catch {
+                      // Error handled by mutation
+                    }
+                  }}
+                  disabled={selectedSuggestions.size === 0 || createPartsRequests.isPending}
+                  className="bg-amber-600 hover:bg-amber-700"
+                >
+                  {createPartsRequests.isPending ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Plus className="h-4 w-4 mr-2" />
+                  )}
+                  Create {selectedSuggestions.size} Request{selectedSuggestions.size !== 1 ? 's' : ''}
+                </Button>
+              </div>
+            </>
+          )}
         </DialogContent>
       </Dialog>
     </div>

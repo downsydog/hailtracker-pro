@@ -24,7 +24,8 @@ def create_celery_app(app=None):
         backend=Config.CELERY_RESULT_BACKEND,
         include=[
             'backend.app.tasks.storm_tasks',
-            'backend.app.tasks.cleanup_tasks'
+            'backend.app.tasks.cleanup_tasks',
+            'backend.app.tasks.auto_nudges'
         ]
     )
 
@@ -52,6 +53,10 @@ def create_celery_app(app=None):
             'cleanup-expired-storms': {
                 'task': 'backend.app.tasks.cleanup_tasks.cleanup_expired_storms',
                 'schedule': 86400.0,  # Once per day
+            },
+            'process-auto-nudges': {
+                'task': 'backend.app.tasks.auto_nudges.process_auto_nudges',
+                'schedule': 900.0,  # Every 15 minutes
             },
         }
     )

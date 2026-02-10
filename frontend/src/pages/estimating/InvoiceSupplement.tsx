@@ -24,7 +24,6 @@ import {
   Clock,
   DollarSign,
   Car,
-  Camera,
   Copy,
   Loader2,
   Layers,
@@ -36,7 +35,8 @@ import { SIZE_LABELS, PANEL_NAMES } from '@/hooks/use-pdr-estimates'
 
 import {
   usePDREstimate,
-  useSupplement,
+  useEstimateSupplements,
+  EstimateSupplement,
 } from '@/hooks/use-pdr-estimates'
 import { cn } from '@/lib/utils'
 
@@ -49,7 +49,14 @@ export function InvoiceSupplement() {
 
   // API hooks
   const { data: estimate, isLoading: isLoadingEstimate } = usePDREstimate(id ? parseInt(id) : null)
-  const { data: supplementData } = useSupplement(id ? parseInt(id) : null)
+  const { data: supplementsData } = useEstimateSupplements(id ? parseInt(id) : null)
+
+  // Get the latest supplement (if any)
+  const latestSupplement: EstimateSupplement | null = useMemo(() => {
+    if (!supplementsData?.supplements?.length) return null
+    // Get the most recent supplement by supplement_number
+    return [...supplementsData.supplements].sort((a, b) => b.supplement_number - a.supplement_number)[0]
+  }, [supplementsData])
 
   // Calculate totals - matrix based
   const totals = useMemo(() => {
@@ -80,19 +87,26 @@ export function InvoiceSupplement() {
     })
 
     const originalTotal = panelTotal + riTotal
-    const supplementTotal = supplementData?.supplement_total || 0
-    const grandTotal = supplementData?.grand_total || originalTotal
+    const supplementTotal = latestSupplement?.delta_amount || 0
+    const grandTotal = latestSupplement?.revised_total || originalTotal
 
     return { panelTotal, riTotal, originalTotal, supplementTotal, grandTotal, totalDents, crPanels }
-  }, [estimate, supplementData])
+  }, [estimate, latestSupplement])
 
   // Check if has supplements
-  const hasSupplements = supplementData && supplementData.discoveries && supplementData.discoveries.length > 0
+  const hasSupplements = !!latestSupplement
+
+  // Parse discoveries from delta_json if available
+  const discoveries = useMemo(() => {
+    if (!latestSupplement?.delta_json) return []
+    const delta = latestSupplement.delta_json as { changes?: Array<{ type: string; panel?: string; description: string; amount: number }> }
+    return delta.changes || []
+  }, [latestSupplement])
 
   // Copy narrative
   const copyNarrative = () => {
-    if (supplementData?.narrative) {
-      navigator.clipboard.writeText(supplementData.narrative)
+    if (latestSupplement?.narrative) {
+      navigator.clipboard.writeText(latestSupplement.narrative)
       setNarrativeCopied(true)
       setTimeout(() => setNarrativeCopied(false), 2000)
     }
@@ -247,7 +261,7 @@ export function InvoiceSupplement() {
                 {hasSupplements && (
                   <div className="flex justify-between text-orange-600">
                     <span>Discoveries</span>
-                    <span className="font-medium">{supplementData?.discoveries?.length || 0}</span>
+                    <span className="font-medium">{discoveries.length}</span>
                   </div>
                 )}
               </CardContent>
@@ -579,7 +593,7 @@ export function InvoiceSupplement() {
                     </CardHeader>
                     <CardContent>
                       <pre className="whitespace-pre-wrap text-sm font-mono bg-muted p-4 rounded-lg">
-                        {supplementData?.narrative || 'Generating narrative...'}
+                        {latestSupplement?.narrative || 'Generating narrative...'}
                       </pre>
                     </CardContent>
                   </Card>
@@ -590,49 +604,30 @@ export function InvoiceSupplement() {
                       <CardTitle className="text-base">Discovery Details</CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-3">
-                      {supplementData?.discoveries?.map((discovery, idx) => (
-                        <div key={discovery.id} className="p-4 border rounded-lg">
+                      {discoveries.map((discovery: { type: string; panel?: string; description: string; amount: number }, idx: number) => (
+                        <div key={idx} className="p-4 border rounded-lg">
                           <div className="flex items-start justify-between mb-2">
                             <div>
                               <h4 className="font-medium flex items-center gap-2">
                                 <span className="bg-orange-100 text-orange-700 text-xs px-2 py-0.5 rounded">
                                   #{idx + 1}
                                 </span>
-                                {discovery.discovery_type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
+                                {discovery.type.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())}
                               </h4>
-                              {discovery.panel_name && (
+                              {discovery.panel && (
                                 <p className="text-sm text-muted-foreground">
-                                  {getPanelDisplayName(discovery.panel_name)}
+                                  {getPanelDisplayName(discovery.panel)}
                                 </p>
                               )}
                             </div>
                             <Badge className="bg-orange-100 text-orange-700">
-                              +${(discovery.additional_cost || 0).toFixed(0)}
+                              +${(discovery.amount || 0).toFixed(0)}
                             </Badge>
                           </div>
 
                           {discovery.description && (
                             <p className="text-sm mb-3">{discovery.description}</p>
                           )}
-
-                          {discovery.narrative && (
-                            <p className="text-sm text-muted-foreground italic">
-                              {discovery.narrative}
-                            </p>
-                          )}
-
-                          <div className="flex items-center gap-4 text-sm text-muted-foreground mt-3">
-                            <span className="flex items-center gap-1">
-                              <Clock className="h-4 w-4" />
-                              {discovery.additional_time_hours || 0} hours
-                            </span>
-                            {discovery.photo_url && (
-                              <span className="flex items-center gap-1">
-                                <Camera className="h-4 w-4" />
-                                Photo attached
-                              </span>
-                            )}
-                          </div>
                         </div>
                       ))}
                     </CardContent>
@@ -645,9 +640,9 @@ export function InvoiceSupplement() {
                     </CardHeader>
                     <CardContent>
                       <div className="space-y-2">
-                        {supplementData?.discoveries?.map((discovery, idx) => (
+                        {discoveries.map((discovery: { type: string; panel?: string; description: string; amount: number }, idx: number) => (
                           <div
-                            key={discovery.id}
+                            key={idx}
                             className="flex items-center gap-3 p-2 bg-muted/50 rounded"
                           >
                             <div className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center text-orange-700 font-bold text-sm shrink-0">
@@ -655,14 +650,16 @@ export function InvoiceSupplement() {
                             </div>
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-medium truncate">
-                                {discovery.discovery_type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
+                                {discovery.type.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())}
                               </p>
-                              <p className="text-xs text-muted-foreground">
-                                {new Date(discovery.created_at).toLocaleString()}
-                              </p>
+                              {discovery.panel && (
+                                <p className="text-xs text-muted-foreground">
+                                  {getPanelDisplayName(discovery.panel)}
+                                </p>
+                              )}
                             </div>
                             <span className="text-sm font-medium text-orange-600 shrink-0">
-                              +${(discovery.additional_cost || 0).toFixed(0)}
+                              +${(discovery.amount || 0).toFixed(0)}
                             </span>
                           </div>
                         ))}

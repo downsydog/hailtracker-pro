@@ -61,10 +61,11 @@ export function RISuggestions({
   vehicleTier = 'standard',
   laborRate = 75,
   onAdd,
-  onRemove,
+  onRemove: _onRemove,
   onViewLibrary,
   isLoading = false
 }: RISuggestionsProps) {
+  // _onRemove available for future use
   const [expandedItem, setExpandedItem] = useState<string | null>(null)
 
   const tierMult = TIER_MULTIPLIERS[vehicleTier] || 1.0

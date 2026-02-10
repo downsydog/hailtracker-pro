@@ -288,7 +288,7 @@ export function WorkOrder() {
     })
 
     setIsTimerRunning(false)
-    navigate(`/estimating/invoice/${workOrder.estimate_id}`)
+    navigate(`/estimates/${workOrder.estimate_id}/invoice`)
   }
 
   // Get display name for panel

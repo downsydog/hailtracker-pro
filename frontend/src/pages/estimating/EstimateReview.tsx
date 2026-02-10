@@ -1212,7 +1212,7 @@ export function EstimateReview() {
                         variant="outline"
                         size="sm"
                         className="w-full border-blue-300 text-blue-700 hover:bg-blue-100"
-                        onClick={() => navigate(`/estimating/${estimateId}?tab=ri`)}
+                        onClick={() => navigate(`/estimates/${estimateId}?tab=ri`)}
                       >
                         <Wrench className="h-4 w-4 mr-2" />
                         Edit R&I Operations

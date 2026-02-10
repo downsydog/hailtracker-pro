@@ -1536,7 +1536,7 @@ export function EstimateBuilder() {
             }
           }
 
-          navigate(`/estimating/${result.estimate.id}`)
+          navigate(`/estimates/${result.estimate.id}`)
         }
       }
     } catch (error) {

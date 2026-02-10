@@ -85,7 +85,7 @@ export function CustomerDetailPage() {
               <Link to={`/customers/${id}/edit`}>Edit</Link>
             </Button>
             <Button asChild>
-              <Link to={`/estimating/new?customer_id=${id}`}>
+              <Link to={`/estimates/new?customer_id=${id}`}>
                 <Plus className="h-4 w-4 mr-2" />
                 Create Estimate
               </Link>
@@ -168,7 +168,7 @@ export function CustomerDetailPage() {
               Estimates
             </CardTitle>
             <Button size="sm" asChild>
-              <Link to={`/estimating/new?customer_id=${id}`}>
+              <Link to={`/estimates/new?customer_id=${id}`}>
                 <Plus className="h-4 w-4 mr-1" />
                 New Estimate
               </Link>
@@ -184,7 +184,7 @@ export function CustomerDetailPage() {
                 <FileText className="h-10 w-10 text-muted-foreground mx-auto mb-3" />
                 <p className="text-muted-foreground mb-3">No estimates yet</p>
                 <Button variant="outline" size="sm" asChild>
-                  <Link to={`/estimating/new?customer_id=${id}`}>
+                  <Link to={`/estimates/new?customer_id=${id}`}>
                     Create First Estimate
                   </Link>
                 </Button>
@@ -206,7 +206,7 @@ export function CustomerDetailPage() {
                       <tr key={estimate.id} className="hover:bg-accent/50">
                         <td className="p-3">
                           <Link
-                            to={`/estimating/${estimate.id}`}
+                            to={`/estimates/${estimate.id}`}
                             className="font-medium text-primary hover:underline"
                           >
                             {estimate.estimate_number || `EST-${estimate.id}`}

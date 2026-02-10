@@ -70,7 +70,7 @@ export function EstimatesPage() {
           <h1 className="text-2xl font-bold">Estimates</h1>
           <p className="text-muted-foreground">{total} total estimates</p>
         </div>
-        <Button onClick={() => navigate('/estimating/new')}>
+        <Button onClick={() => navigate('/estimates/new')}>
           <Plus className="h-4 w-4 mr-2" />
           New Estimate
         </Button>
@@ -131,7 +131,7 @@ export function EstimatesPage() {
             {searchTerm ? 'Try a different search term' : 'Create your first estimate to get started'}
           </p>
           {!searchTerm && (
-            <Button onClick={() => navigate('/estimating/new')}>
+            <Button onClick={() => navigate('/estimates/new')}>
               <Plus className="h-4 w-4 mr-2" />
               New Estimate
             </Button>
@@ -159,7 +159,7 @@ export function EstimatesPage() {
                 <tr key={estimate.id} className="hover:bg-accent/50">
                   <td className="p-4">
                     <Link
-                      to={`/estimating/${estimate.id}`}
+                      to={`/estimates/${estimate.id}`}
                       className="flex items-center gap-2 hover:text-primary"
                     >
                       <FileText className="h-4 w-4 text-primary" />
@@ -186,7 +186,7 @@ export function EstimatesPage() {
                   <td className="p-4">
                     <div className="flex items-center gap-2">
                       <Link
-                        to={`/estimating/${estimate.id}`}
+                        to={`/estimates/${estimate.id}`}
                         className="p-1 hover:bg-accent rounded"
                         title="View/Edit"
                       >

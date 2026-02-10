@@ -35,7 +35,7 @@ export function VehiclePicker({
   const [searchTerm, setSearchTerm] = useState('')
 
   // Fetch customer's vehicles
-  const { vehicles, loading } = useVehicles(
+  const { vehicles = [], loading } = useVehicles(
     customerId ? { customer_id: customerId } : {}
   )
 

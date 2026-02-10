@@ -32,7 +32,7 @@ export function CustomerPicker({
   selectedCustomerId
 }: CustomerPickerProps) {
   const [searchTerm, setSearchTerm] = useState('')
-  const { customers, loading } = useCustomers({ search: searchTerm })
+  const { customers = [], loading } = useCustomers({ search: searchTerm })
 
   // Clear search when dialog opens
   useEffect(() => {

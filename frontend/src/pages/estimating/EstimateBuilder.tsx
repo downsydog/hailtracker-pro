@@ -1203,10 +1203,15 @@ export function EstimateBuilder() {
       return
     }
 
-    // If there are pending changes, save first
-    if (pendingChangesRef.current || isSaving) {
+    // If there are pending changes, trigger save and wait
+    if (pendingChangesRef.current) {
       setSaveStatus('saving')
-      // Wait for any pending save
+      // Trigger the actual save via ref
+      handleSaveRef.current()
+      // Wait for save to complete (isSaving will go true then false)
+      await new Promise(resolve => setTimeout(resolve, 800))
+    } else if (isSaving) {
+      // Already saving, just wait for it
       await new Promise(resolve => setTimeout(resolve, 500))
     }
 

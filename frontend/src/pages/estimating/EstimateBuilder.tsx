@@ -1195,46 +1195,96 @@ export function EstimateBuilder() {
     return new Set(estimateRiData.operations.map((op: { code: string }) => op.code))
   }, [estimateRiData?.operations])
 
-  // Stage 7D: Handle R&I quick add with auto-save
+  // Stage 8A: Handle R&I quick add with auto-save (creates estimate if needed)
   const handleRiQuickAdd = useCallback(async (suggestion: RISuggestion) => {
-    if (!estimateId) {
-      // For new estimates, show toast to save first
-      alert('Please save the estimate first to add R&I operations.')
-      return
-    }
-
-    // If there are pending changes, trigger save and wait
-    if (pendingChangesRef.current) {
-      setSaveStatus('saving')
-      // Trigger the actual save via ref
-      handleSaveRef.current()
-      // Wait for save to complete (isSaving will go true then false)
-      await new Promise(resolve => setTimeout(resolve, 800))
-    } else if (isSaving) {
-      // Already saving, just wait for it
-      await new Promise(resolve => setTimeout(resolve, 500))
-    }
-
     setRiAddingCode(suggestion.code)
 
     try {
-      await addEstimateRI.mutateAsync({
-        operationCode: suggestion.code,
-        notes: `Added via panel suggestion for ${selectedPanelId}`
+      let targetEstimateId = estimateId
+
+      // Stage 8A: Auto-create estimate if it doesn't exist yet
+      if (!targetEstimateId) {
+        setSaveStatus('saving')
+        setIsSaving(true)
+
+        try {
+          // Create estimate with current form data
+          const estimateData = {
+            vehicle_year: parseInt(vehicleYear) || new Date().getFullYear(),
+            vehicle_make: vehicleMake || 'Unknown',
+            vehicle_model: vehicleModel || 'Unknown',
+            vin: vehicleVin,
+            customer_name: customerName || 'New Customer',
+            customer_phone: customerPhone,
+            contact_id: customerId || undefined,
+            lead_id: leadId || undefined,
+            matrix_profile_id: 1,
+            status: 'draft' as const
+          }
+
+          const result = await createEstimate.mutateAsync(estimateData)
+          if (result.estimate?.id) {
+            targetEstimateId = result.estimate.id
+            // Navigate to the new estimate URL
+            navigate(`/estimates/${result.estimate.id}`, { replace: true })
+          } else {
+            throw new Error('Failed to create estimate')
+          }
+        } catch (createError) {
+          console.error('Failed to create estimate:', createError)
+          alert('Failed to create estimate. Please try again.')
+          return
+        } finally {
+          setIsSaving(false)
+          setSaveStatus('idle')
+        }
+      } else if (pendingChangesRef.current || isSaving) {
+        // If there are pending changes, trigger save and wait
+        setSaveStatus('saving')
+        handleSaveRef.current()
+        await new Promise(resolve => setTimeout(resolve, 800))
+      }
+
+      // Now add the R&I operation
+      if (!targetEstimateId) {
+        alert('Could not determine estimate ID. Please save the estimate first.')
+        return
+      }
+
+      // Use a direct API call since we may have a new estimate ID
+      const response = await fetch(`/api/pdr-estimates/${targetEstimateId}/ri`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({
+          operation_code: suggestion.code,
+          selected_modifier_codes: [],
+          step_overrides: [],
+          notes: `Added via panel suggestion for ${selectedPanelId}`
+        })
       })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || 'Failed to add R&I operation')
+      }
 
       // Mark as added this session
       setRiAddedCodes(prev => new Set(prev).add(suggestion.code))
 
-      // Success feedback - brief toast would go here
+      // Invalidate queries to refresh R&I data
+      // The page navigation will trigger a refetch anyway
+
       console.log(`Added R&I: ${suggestion.label}`)
     } catch (error) {
       console.error('Failed to add R&I:', error)
-      alert(`Failed to add ${suggestion.label}. It may already exist or the operation code may not be in the catalog.`)
+      alert(`Failed to add ${suggestion.label}. ${error instanceof Error ? error.message : 'Please try again.'}`)
     } finally {
       setRiAddingCode(null)
     }
-  }, [estimateId, selectedPanelId, addEstimateRI, isSaving])
+  }, [estimateId, selectedPanelId, vehicleYear, vehicleMake, vehicleModel, vehicleVin, customerName, customerPhone, customerId, leadId, createEstimate, navigate, isSaving])
 
   // Stage 7A: Keyboard shortcuts handler
   useEffect(() => {
@@ -2281,25 +2331,35 @@ export function EstimateBuilder() {
               />
             </div>
 
-            {/* Stage 7D: R&I Suggestions Strip - shown when panel selected */}
-            {selectedPanelId && riSuggestions.length > 0 && isEditing && (
+            {/* Stage 8A: Inline R&I Suggestions - shown when panel selected (works for new and existing estimates) */}
+            {selectedPanelId && riSuggestions.length > 0 && (
               <div className="border-t bg-blue-50/50 px-4 py-2">
                 <div className="flex items-center gap-2 mb-2">
                   <Wrench className="h-4 w-4 text-blue-600" />
                   <span className="text-sm font-medium text-blue-900">
-                    R&I for {selectedPanelId.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
+                    Access / R&I for {selectedPanelId.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
                   </span>
-                  <button
-                    onClick={() => setActiveServiceTab('ri')}
-                    className="text-xs text-blue-600 hover:underline ml-auto"
-                  >
-                    View R&I Tab →
-                  </button>
+                  {estimateId && (
+                    <button
+                      onClick={() => setActiveServiceTab('ri')}
+                      className="text-xs text-blue-600 hover:underline ml-auto"
+                    >
+                      View R&I Details →
+                    </button>
+                  )}
+                  {!estimateId && (
+                    <span className="text-xs text-blue-500 ml-auto">
+                      Click to add (auto-saves)
+                    </span>
+                  )}
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {riSuggestions.slice(0, 6).map((suggestion) => {
                     const isAdded = alreadyAddedRiCodes.has(suggestion.code) || riAddedCodes.has(suggestion.code)
                     const isAdding = riAddingCode === suggestion.code
+                    // Get catalog hours for this operation
+                    const catalogOp = riCatalog?.operations?.find(op => op.code === suggestion.code)
+                    const baseHours = catalogOp?.steps?.reduce((sum, step) => sum + (step.base_time_hours || 0), 0) || 0
 
                     return (
                       <button
@@ -2313,7 +2373,7 @@ export function EstimateBuilder() {
                             ? 'bg-green-100 text-green-700 cursor-default'
                             : isAdding
                               ? 'bg-blue-100 text-blue-700 cursor-wait'
-                              : 'bg-white border border-blue-200 text-blue-700 hover:bg-blue-100 hover:border-blue-300'
+                              : 'bg-white border border-blue-200 text-blue-700 hover:bg-blue-100 hover:border-blue-300 shadow-sm'
                           }
                         `}
                         title={suggestion.description}
@@ -2326,6 +2386,9 @@ export function EstimateBuilder() {
                           <Plus className="h-3 w-3" />
                         )}
                         {suggestion.label}
+                        {baseHours > 0 && !isAdded && (
+                          <span className="text-xs opacity-70">+{baseHours.toFixed(1)}h</span>
+                        )}
                       </button>
                     )
                   })}

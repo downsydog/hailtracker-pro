@@ -14,6 +14,119 @@
  * Phase 7B: Auto pricing engine with panel-level calculations
  */
 
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { useAuth } from '@/contexts/auth-context'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  ArrowLeft,
+  Save,
+  Search,
+  User,
+  Loader2,
+  UserPlus,
+  Car,
+  Receipt,
+  CheckCircle,
+  Clock,
+  Send,
+  FileText,
+  AlertCircle,
+  Download,
+  Archive,
+  PenLine,
+  Lock,
+  DollarSign,
+  Wrench,
+  Play,
+  Keyboard,
+  Repeat,
+  Command,
+  X,
+  Plus,
+  Zap,
+  Info
+} from 'lucide-react'
+
+// Import estimate components
+import {
+  VehicleDiagram,
+  VehicleType,
+  PanelState,
+  PanelClickEvent,
+  PanelClickWithModifiers,
+  VEHICLE_PANELS,
+  PanelEntryModal,
+  PanelDamage,
+  CountRange,
+  DentSize,
+  PanelListSidebar,
+  EstimateBottomNav,
+  ServiceTab,
+  CustomerPicker,
+  VehiclePicker,
+  QuickEntryOverlay,
+  QuickEntryValue,
+  EstimateStatusBar,
+  SendToAdjusterModal,
+  CreateSupplementModal,
+  CreateShareLinkModal
+} from '@/components/estimates'
+import { computeSeverity } from '@/components/estimates/VehicleDiagram/severity'
+
+// Import hooks
+import {
+  usePDREstimate,
+  useCreatePDREstimate,
+  useUpdatePDREstimate,
+  useMatrixProfiles,
+  useDecodeVIN,
+  useLinkToCRM,
+  useConvertToInvoice,
+  useAddPanelMatrix,
+  useUpdatePanelMatrix,
+  countRangeToNumber,
+  useDownloadEstimatePDF,
+  useDownloadEstimatePhotoSheetPDF,
+  useDownloadEstimateDisputePack,
+  useEstimateActivities
+} from '@/hooks/use-pdr-estimates'
+import {
+  useRiCatalog,
+  useEstimateRI,
+  useAddEstimateRI,
+  useRemoveEstimateRI,
+  useDenialCodes,
+  useDenialSimulator,
+  useSupplementWriter,
+  RIOperation,
+  DenialRebuttal,
+  SupplementLetter
+} from '@/hooks/use-ri'
+import {
+  useEstimateLaborRate,
+  useSetLaborRateOverride,
+} from '@/hooks/use-labor-rates'
+import { useCustomer } from '@/hooks/use-customers'
+import { useLead, useConvertLead } from '@/hooks/use-leads'
+import { useCreateVehicle, useVehicle } from '@/hooks/use-vehicles'
+import { Customer, Vehicle } from '@/types'
+
 // ============================================================================
 // PHASE 7 FEATURE FLAGS
 // ============================================================================
@@ -147,119 +260,6 @@ interface WriterDraft {
   material: 'steel' | 'aluminum'
   notes: string
 }
-
-import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { useAuth } from '@/contexts/auth-context'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import {
-  ArrowLeft,
-  Save,
-  Search,
-  User,
-  Loader2,
-  UserPlus,
-  Car,
-  Receipt,
-  CheckCircle,
-  Clock,
-  Send,
-  FileText,
-  AlertCircle,
-  Download,
-  Archive,
-  PenLine,
-  Lock,
-  DollarSign,
-  Wrench,
-  Play,
-  Keyboard,
-  Repeat,
-  Command,
-  X,
-  Plus,
-  Zap,
-  Info
-} from 'lucide-react'
-
-// Import estimate components
-import {
-  VehicleDiagram,
-  VehicleType,
-  PanelState,
-  PanelClickEvent,
-  PanelClickWithModifiers,
-  VEHICLE_PANELS,
-  PanelEntryModal,
-  PanelDamage,
-  CountRange,
-  DentSize,
-  PanelListSidebar,
-  EstimateBottomNav,
-  ServiceTab,
-  CustomerPicker,
-  VehiclePicker,
-  QuickEntryOverlay,
-  QuickEntryValue,
-  EstimateStatusBar,
-  SendToAdjusterModal,
-  CreateSupplementModal,
-  CreateShareLinkModal
-} from '@/components/estimates'
-import { computeSeverity } from '@/components/estimates/VehicleDiagram/severity'
-
-// Import hooks
-import {
-  usePDREstimate,
-  useCreatePDREstimate,
-  useUpdatePDREstimate,
-  useMatrixProfiles,
-  useDecodeVIN,
-  useLinkToCRM,
-  useConvertToInvoice,
-  useAddPanelMatrix,
-  useUpdatePanelMatrix,
-  countRangeToNumber,
-  useDownloadEstimatePDF,
-  useDownloadEstimatePhotoSheetPDF,
-  useDownloadEstimateDisputePack,
-  useEstimateActivities
-} from '@/hooks/use-pdr-estimates'
-import {
-  useRiCatalog,
-  useEstimateRI,
-  useAddEstimateRI,
-  useRemoveEstimateRI,
-  useDenialCodes,
-  useDenialSimulator,
-  useSupplementWriter,
-  RIOperation,
-  DenialRebuttal,
-  SupplementLetter
-} from '@/hooks/use-ri'
-import {
-  useEstimateLaborRate,
-  useSetLaborRateOverride,
-} from '@/hooks/use-labor-rates'
-import { useCustomer } from '@/hooks/use-customers'
-import { useLead, useConvertLead } from '@/hooks/use-leads'
-import { useCreateVehicle, useVehicle } from '@/hooks/use-vehicles'
-import { Customer, Vehicle } from '@/types'
 
 // Default empty panel damage
 const createEmptyPanelDamage = (panelId: string): PanelDamage => ({

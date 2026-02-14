@@ -6,6 +6,7 @@ Continuously monitors radar data and generates alerts for hail events.
 
 import os
 import sys
+import math
 import time
 import tempfile
 import threading
@@ -504,6 +505,12 @@ class StormMonitor:
             self.stats['scans_processed'] += 1
             self.processed_scans.add(scan_key)
 
+            # Cap processed_scans to prevent unbounded memory growth
+            if len(self.processed_scans) > 500:
+                # Keep only the most recent entries (convert to sorted list, trim, back to set)
+                sorted_keys = sorted(self.processed_scans)
+                self.processed_scans = set(sorted_keys[-500:])
+
             # Generate alert if threshold met
             if analysis and analysis.get('should_alert'):
                 self._generate_alert(radar_id, analysis)
@@ -517,6 +524,94 @@ class StormMonitor:
         except Exception as e:
             print(f"  {radar_id}: Error - {e}")
 
+    def _extract_top_peaks(self, radar, radar_id: str, top_n: int = 10,
+                           min_separation_km: float = 10.0) -> List[Dict]:
+        """
+        Extract top-N reflectivity peaks from radar scan with minimum separation.
+
+        Returns list of detection dicts suitable for StormCellTracker.process_radar_scan().
+        """
+        radar_lat = float(radar.latitude['data'][0])
+        radar_lon = float(radar.longitude['data'][0])
+
+        # Collect all high-reflectivity points across lowest sweeps
+        candidates = []
+        for sweep_idx in range(min(radar.nsweeps, 3)):
+            for field_name in ['reflectivity', 'REF', 'DBZ']:
+                if field_name not in radar.fields:
+                    continue
+                data = radar.get_field(sweep_idx, field_name)
+                if data.count() == 0:
+                    continue
+
+                sweep_slice = radar.get_slice(sweep_idx)
+                azimuths = radar.azimuth['data'][sweep_slice]
+                ranges_km = radar.range['data'] / 1000.0
+
+                # Flatten and find indices above threshold
+                flat = np.ma.filled(data, fill_value=0)
+                threshold = self.config.min_reflectivity_dbz
+                above = np.argwhere(flat >= threshold)
+
+                for az_idx, rng_idx in above:
+                    ref_val = float(flat[az_idx, rng_idx])
+                    az = float(azimuths[az_idx])
+                    rng = float(ranges_km[rng_idx])
+                    lat, lon = self._az_range_to_latlon(radar_lat, radar_lon, az, rng)
+                    candidates.append({
+                        'lat': lat, 'lon': lon,
+                        'reflectivity': ref_val,
+                        'range_km': rng,
+                    })
+                break  # use first matching field name
+
+        if not candidates:
+            return []
+
+        # Sort by reflectivity descending and pick top-N with minimum separation
+        candidates.sort(key=lambda c: c['reflectivity'], reverse=True)
+        selected = []
+
+        for c in candidates:
+            if len(selected) >= top_n:
+                break
+            # Check minimum separation from already-selected peaks
+            too_close = False
+            for s in selected:
+                dlat = c['lat'] - s['lat']
+                dlon = c['lon'] - s['lon']
+                # Quick distance approximation in km
+                approx_km = ((dlat * 111) ** 2 + (dlon * 111 * math.cos(math.radians(c['lat']))) ** 2) ** 0.5
+                if approx_km < min_separation_km:
+                    too_close = True
+                    break
+            if not too_close:
+                # Approximate MESH from reflectivity
+                ref = c['reflectivity']
+                mesh_mm = max(0, 2.54 * np.exp(0.1 * (ref - 40))) if ref >= 40 else 0
+                mesh_mm = min(mesh_mm, 120)
+                selected.append({
+                    'lat': c['lat'],
+                    'lon': c['lon'],
+                    'reflectivity': c['reflectivity'],
+                    'mesh_mm': mesh_mm,
+                    'area_km2': 50,  # rough default
+                    'radar_id': radar_id,
+                })
+
+        return selected
+
+    def _feed_tracker(self, detections: List[Dict], scan_time: datetime):
+        """Feed detections into the global StormCellTracker instance."""
+        try:
+            from src.web.routes.storm_tracking_api import get_tracker
+            tracker = get_tracker()
+            cells = tracker.process_radar_scan(detections, scan_time)
+            if cells:
+                print(f"    Tracker: {len(cells)} cells from {len(detections)} detections")
+        except Exception as e:
+            print(f"    Tracker feed error: {e}")
+
     def _analyze_radar(self, radar, radar_id: str) -> Optional[Dict]:
         """Analyze radar data for hail signatures."""
         try:
@@ -524,6 +619,13 @@ class StormMonitor:
             radar_lat = float(radar.latitude['data'][0])
             radar_lon = float(radar.longitude['data'][0])
 
+            # --- Multi-detection extraction: feed top-N peaks to tracker ---
+            peaks = self._extract_top_peaks(radar, radar_id, top_n=10, min_separation_km=10.0)
+            if peaks:
+                scan_time = datetime.utcnow()
+                self._feed_tracker(peaks, scan_time)
+
+            # --- Original single-max analysis for alerting ---
             # Find max reflectivity
             max_ref = 0
             storm_lat, storm_lon = radar_lat, radar_lon
@@ -624,7 +726,8 @@ class StormMonitor:
                 'zdr_min': zdr_min,
                 'cc_min': cc_min,
                 'classification': classification,
-                'should_alert': classification['pdr_score'] >= self.config.min_pdr_score
+                'should_alert': classification['pdr_score'] >= self.config.min_pdr_score,
+                'detections_fed': len(peaks),
             }
 
         except Exception as e:

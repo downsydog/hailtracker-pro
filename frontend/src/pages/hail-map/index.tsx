@@ -525,6 +525,31 @@ export function HailMapPage() {
     updateStats()
   }, [events, swaths, layers.swaths, updateStats, selectedDate])
 
+  // Fetch forecasts from API when forecasts layer is enabled
+  const activeCellIds = activeCells.filter(c => c.lat && c.lon).map(c => c.cell_id ?? c.id).filter(Boolean)
+  const { data: forecastsData } = useQuery({
+    queryKey: ['cell-forecasts', activeCellIds.join(',')],
+    queryFn: async () => {
+      if (!activeCellIds.length) return {}
+      const results: Record<number, { lat: number; lon: number; timestamp: string }[]> = {}
+      const ids = activeCellIds.slice(0, 10)
+      await Promise.all(ids.map(async (cellId) => {
+        try {
+          const data = await stormCellsApi.getCellForecast(cellId, 30)
+          if (data?.positions) {
+            results[cellId] = data.positions
+          }
+        } catch {
+          // Cell may lack velocity data — skip
+        }
+      }))
+      return results
+    },
+    enabled: layers.forecasts && activeCellIds.length > 0,
+    refetchInterval: 30000,
+    staleTime: 15000,
+  })
+
   // Render active storm cells
   useEffect(() => {
     if (!activeCellsLayerRef.current) return
@@ -571,75 +596,60 @@ export function HailMapPage() {
       `)
 
       activeCellsLayerRef.current?.addLayer(marker)
-
-      // Draw motion vector if available
-      if (cell.motion_speed && cell.motion_direction && layers.forecasts) {
-        const forecastMinutes = 30
-        const distanceMiles = (cell.motion_speed * forecastMinutes) / 60
-        const distanceMeters = distanceMiles * 1609.34
-
-        // Calculate forecast position
-        const bearing = cell.motion_direction * (Math.PI / 180)
-        const lat1 = cell.lat * (Math.PI / 180)
-        const lon1 = cell.lon * (Math.PI / 180)
-        const R = 6371000 // Earth radius in meters
-
-        const lat2 = Math.asin(
-          Math.sin(lat1) * Math.cos(distanceMeters / R) +
-          Math.cos(lat1) * Math.sin(distanceMeters / R) * Math.cos(bearing)
-        )
-        const lon2 = lon1 + Math.atan2(
-          Math.sin(bearing) * Math.sin(distanceMeters / R) * Math.cos(lat1),
-          Math.cos(distanceMeters / R) - Math.sin(lat1) * Math.sin(lat2)
-        )
-
-        const forecastLat = lat2 * (180 / Math.PI)
-        const forecastLon = lon2 * (180 / Math.PI)
-
-        // Draw motion vector line
-        const line = L.polyline(
-          [[cell.lat, cell.lon], [forecastLat, forecastLon]],
-          {
-            color: "#f97316",
-            weight: 2,
-            dashArray: "5, 5",
-            opacity: 0.7,
-          }
-        )
-
-        // Forecast position circle
-        const forecastCircle = L.circle([forecastLat, forecastLon], {
-          radius: 3000,
-          color: "#f97316",
-          fillColor: "rgba(249, 115, 22, 0.2)",
-          fillOpacity: 0.3,
-          weight: 1,
-          dashArray: "3, 3",
-        })
-
-        forecastCircle.bindPopup(`
-          <div style="text-align: center;">
-            <strong>30-min Forecast</strong><br/>
-            Cell #${cell.id}
-          </div>
-        `)
-
-        forecastLayerRef.current?.addLayer(line)
-        forecastLayerRef.current?.addLayer(forecastCircle)
-      }
     })
-  }, [activeCells, layers.activeCells, layers.forecasts, handleCellClick])
+  }, [activeCells, layers.activeCells, handleCellClick])
 
-  // Render forecasts layer
+  // Render forecast vectors from API data
   useEffect(() => {
     if (!forecastLayerRef.current || !mapInstanceRef.current) return
 
-    if (layers.forecasts) {
-      forecastLayerRef.current.addTo(mapInstanceRef.current)
-    } else {
+    forecastLayerRef.current.clearLayers()
+
+    if (!layers.forecasts || !forecastsData) {
       forecastLayerRef.current.remove()
+      return
     }
-  }, [layers.forecasts])
+
+    for (const [cellIdStr, positions] of Object.entries(forecastsData)) {
+      const cellId = Number(cellIdStr)
+      const cell = activeCells.find(c => (c.cell_id ?? c.id) === cellId)
+      if (!cell || !cell.lat || !cell.lon || !positions?.length) continue
+
+      const pathCoords: [number, number][] = [[cell.lat, cell.lon]]
+      for (const pos of positions) {
+        pathCoords.push([pos.lat, pos.lon])
+      }
+
+      const line = L.polyline(pathCoords, {
+        color: "#f97316",
+        weight: 2,
+        dashArray: "5, 5",
+        opacity: 0.7,
+      })
+      forecastLayerRef.current.addLayer(line)
+
+      for (const pos of positions) {
+        const dot = L.circle([pos.lat, pos.lon], {
+          radius: 2000,
+          color: "#f97316",
+          fillColor: "rgba(249, 115, 22, 0.25)",
+          fillOpacity: 0.4,
+          weight: 1,
+          dashArray: "3, 3",
+        })
+        dot.bindPopup(`
+          <div style="text-align: center;">
+            <strong>Forecast</strong><br/>
+            Cell #${cellId}<br/>
+            <small>${pos.timestamp}</small>
+          </div>
+        `)
+        forecastLayerRef.current.addLayer(dot)
+      }
+    }
+
+    forecastLayerRef.current.addTo(mapInstanceRef.current)
+  }, [layers.forecasts, forecastsData, activeCells])
 
   // Render leads with clustering
   useEffect(() => {

@@ -185,6 +185,39 @@ export interface SwathCollection {
   count: number
 }
 
+export interface ActiveEventFeature {
+  type: 'Feature'
+  geometry: {
+    type: 'Polygon'
+    coordinates: number[][][]
+  }
+  properties: {
+    event_id: string
+    severity: string
+    status: string
+    phase: string
+    confidence: number
+    impact_window_minutes: number
+    max_mesh_inches: number
+    max_reflectivity: number
+    track_length_km: number
+    event_quality_score: number
+    event_quality_reasons: string[]
+    swath_quality_score: number
+    swath_quality_reasons: string[]
+    method: string
+    cell_ids: number[]
+    radar_ids: string[]
+    event_time: string
+  }
+}
+
+export interface ActiveEventFeedCollection {
+  type: 'FeatureCollection'
+  features: ActiveEventFeature[]
+  count: number
+}
+
 // Storm Monitor Types
 export interface MonitorStatus {
   running: boolean
@@ -632,6 +665,20 @@ export const stormCellsApi = {
     }>('/storm-cells/simulate', params),
 
   reset: () => api.post<{ success: boolean }>('/storm-cells/reset'),
+
+  // Active Event Feed ("now feed")
+  getActiveEventFeed: (params?: {
+    lookback?: number
+    join_km?: number
+    limit?: number
+    buffer_km?: number
+  }) =>
+    api.get<ActiveEventFeedCollection>('/storm-cells/events/active', {
+      lookback: params?.lookback ?? 180,
+      join_km: params?.join_km ?? 25,
+      limit: params?.limit ?? 10,
+      buffer_km: params?.buffer_km ?? 3,
+    }),
 }
 
 // =============================================================================

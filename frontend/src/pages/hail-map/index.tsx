@@ -34,6 +34,7 @@ import {
   SwathFeature,
   RadarSite,
   CalendarDayEvent,
+  ActiveEventFeature,
 } from "@/api/weather"
 import {
   RefreshCw,
@@ -69,6 +70,7 @@ interface LayerState {
   activeCells: boolean
   radar: boolean
   forecasts: boolean
+  activeEvents: boolean
 }
 
 // 10-level hail size color scale (1/2" to 3"+ in 1/4" increments)
@@ -101,6 +103,7 @@ export function HailMapPage() {
   const activeCellsLayerRef = useRef<L.LayerGroup | null>(null)
   const radarLayerRef = useRef<L.LayerGroup | null>(null)
   const forecastLayerRef = useRef<L.LayerGroup | null>(null)
+  const activeEventsLayerRef = useRef<L.LayerGroup | null>(null)
 
   const [layers, setLayers] = useState<LayerState>({
     swaths: true,
@@ -108,6 +111,7 @@ export function HailMapPage() {
     activeCells: true,
     radar: false,
     forecasts: false,
+    activeEvents: false,
   })
 
   const [stats, setStats] = useState({
@@ -270,6 +274,7 @@ export function HailMapPage() {
     activeCellsLayerRef.current = L.layerGroup().addTo(map)
     radarLayerRef.current = L.layerGroup()
     forecastLayerRef.current = L.layerGroup()
+    activeEventsLayerRef.current = L.layerGroup()
 
     // Initialize marker cluster group with custom styling
     leadsClusterRef.current = L.markerClusterGroup({
@@ -370,7 +375,8 @@ export function HailMapPage() {
 
     swathLayerRef.current.clearLayers()
 
-    if (!layers.swaths) return
+    // Hide per-cell swaths when active events layer is ON to avoid double overlays
+    if (!layers.swaths || layers.activeEvents) return
 
     // Only show swaths when a date is selected from the calendar
     // Note: swaths use start_time (ISO timestamp), not event_date
@@ -523,7 +529,7 @@ export function HailMapPage() {
     })
 
     updateStats()
-  }, [events, swaths, layers.swaths, updateStats, selectedDate])
+  }, [events, swaths, layers.swaths, layers.activeEvents, updateStats, selectedDate])
 
   // Fetch forecasts from API when forecasts layer is enabled
   const activeCellIds = activeCells.filter(c => c.lat && c.lon).map(c => c.cell_id ?? c.id).filter(Boolean)
@@ -650,6 +656,89 @@ export function HailMapPage() {
 
     forecastLayerRef.current.addTo(mapInstanceRef.current)
   }, [layers.forecasts, forecastsData, activeCells])
+
+  // Active event feed params
+  const eventFeedParams = { lookback: 180, join_km: 25, limit: 10, buffer_km: 3 } as const
+
+  // Fetch active event feed ("now feed")
+  const { data: activeEventsData } = useQuery({
+    queryKey: ['active-event-feed', eventFeedParams.lookback, eventFeedParams.join_km, eventFeedParams.limit, eventFeedParams.buffer_km],
+    queryFn: () => stormCellsApi.getActiveEventFeed(eventFeedParams),
+    enabled: layers.activeEvents,
+    staleTime: 15000,
+    refetchInterval: 30000,
+  })
+
+  // Render active event feed layer
+  useEffect(() => {
+    if (!activeEventsLayerRef.current || !mapInstanceRef.current) return
+
+    activeEventsLayerRef.current.clearLayers()
+
+    if (!layers.activeEvents || !activeEventsData?.features?.length) {
+      activeEventsLayerRef.current.remove()
+      return
+    }
+
+    const severityColors: Record<string, { border: string; fill: string }> = {
+      severe: { border: '#ef4444', fill: 'rgba(239, 68, 68, 0.30)' },
+      moderate: { border: '#f59e0b', fill: 'rgba(245, 158, 11, 0.25)' },
+      light: { border: '#22c55e', fill: 'rgba(34, 197, 94, 0.20)' },
+    }
+
+    activeEventsData.features.forEach((feature: ActiveEventFeature) => {
+      if (!feature.geometry || feature.geometry.type !== 'Polygon') return
+      const props = feature.properties
+      const colors = severityColors[props.severity] ?? severityColors.light
+
+      const polygon = L.geoJSON(feature as any, {
+        style: {
+          color: colors.border,
+          fillColor: colors.fill,
+          fillOpacity: 0.5,
+          weight: 2.5,
+        },
+      })
+
+      polygon.bindPopup(`
+        <div style="min-width: 220px;">
+          <div style="padding: 10px 14px; border-bottom: 1px solid #e5e7eb; background: ${colors.fill};">
+            <strong>${props.severity.toUpperCase()} Event</strong>
+            <span style="float:right; font-size:12px;">${props.status}</span>
+          </div>
+          <div style="padding: 10px 14px; font-size: 13px; line-height: 1.6;">
+            <p><strong>Event ID:</strong> ${props.event_id}</p>
+            <p><strong>Phase:</strong> ${props.phase} | <strong>Impact:</strong> ${props.impact_window_minutes} min</p>
+            <p><strong>MESH:</strong> ${props.max_mesh_inches}" | <strong>Ref:</strong> ${props.max_reflectivity?.toFixed(1)} dBZ</p>
+            <p><strong>Track:</strong> ${props.track_length_km?.toFixed(1)} km</p>
+            <p><strong>Event Quality:</strong> ${props.event_quality_score}/100</p>
+            <p><strong>Swath Quality:</strong> ${props.swath_quality_score}/100</p>
+            <p style="margin-top:4px; font-size:11px; color:#6b7280;">${props.event_quality_reasons?.join(', ') || ''}</p>
+          </div>
+        </div>
+      `)
+
+      activeEventsLayerRef.current?.addLayer(polygon)
+
+      // Compute simple centroid of polygon vertices for label
+      const coords = feature.geometry.coordinates[0]
+      if (coords?.length) {
+        let cLat = 0, cLon = 0
+        for (const [lon, lat] of coords) { cLat += lat; cLon += lon }
+        cLat /= coords.length; cLon /= coords.length
+
+        const label = L.divIcon({
+          html: `<div style="background: ${colors.border}; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,0.3);">${props.severity.toUpperCase()} ${props.event_quality_score}</div>`,
+          className: '',
+          iconAnchor: [30, 10],
+        })
+        const marker = L.marker([cLat, cLon], { icon: label, interactive: false })
+        activeEventsLayerRef.current?.addLayer(marker)
+      }
+    })
+
+    activeEventsLayerRef.current.addTo(mapInstanceRef.current)
+  }, [layers.activeEvents, activeEventsData])
 
   // Render leads with clustering
   useEffect(() => {
@@ -928,6 +1017,16 @@ export function HailMapPage() {
               />
               <Activity className="h-3 w-3 text-purple-500" />
               Cell Forecasts
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer text-sm">
+              <input
+                type="checkbox"
+                checked={layers.activeEvents}
+                onChange={() => toggleLayer("activeEvents")}
+                className="rounded"
+              />
+              <AlertTriangle className="h-3 w-3 text-red-500" />
+              Active Events
             </label>
             <label className="flex items-center gap-2 cursor-pointer text-sm">
               <input

@@ -8,6 +8,7 @@ import os
 import sys
 import math
 import time
+from collections import deque
 import tempfile
 import threading
 from datetime import datetime, timedelta
@@ -111,6 +112,10 @@ class MonitorConfig:
     email_from: Optional[str] = None
     email_to: List[str] = field(default_factory=list)
     email_min_level: str = 'WARNING'
+
+    # Dual-pol hail gating thresholds
+    max_rhohv_for_hail: float = 0.97   # RHOHV below this suggests hail (decorrelation)
+    max_abs_zdr_for_hail: float = 1.2  # |ZDR| above this suggests hail (tumbling)
 
     # Database settings
     database_enabled: bool = True  # Enable by default
@@ -524,6 +529,200 @@ class StormMonitor:
         except Exception as e:
             print(f"  {radar_id}: Error - {e}")
 
+    def _extract_storm_objects(
+        self,
+        radar,
+        radar_id: str,
+        top_n: int = 10,
+        min_pixels: int = 40,
+        dbz_threshold: float = None,
+    ) -> List[Dict]:
+        """
+        Segment lowest-sweep reflectivity into storm objects via connected components.
+
+        Optionally gates on dual-pol fields (ZDR, RHOHV) when available to
+        sharpen hail signatures and computes a per-object hail_score (0-1).
+
+        Returns list of detection dicts for StormCellTracker.process_radar_scan():
+        [{lat, lon, reflectivity, mesh_mm, area_km2, radar_id, obj_pixels,
+          hail_score, min_rhohv, mean_zdr}, ...]
+        """
+        radar_lat = float(radar.latitude['data'][0])
+        radar_lon = float(radar.longitude['data'][0])
+
+        threshold = float(dbz_threshold if dbz_threshold is not None else self.config.min_reflectivity_dbz)
+
+        # --- Reflectivity field ---
+        field_name = None
+        for fn in ['reflectivity', 'REF', 'DBZ']:
+            if fn in radar.fields:
+                field_name = fn
+                break
+        if not field_name:
+            return []
+
+        sweep_idx = 0
+        data = radar.get_field(sweep_idx, field_name)
+        if data.count() == 0:
+            return []
+
+        sweep_slice = radar.get_slice(sweep_idx)
+        azimuths = radar.azimuth['data'][sweep_slice]
+        ranges_km = radar.range['data'] / 1000.0
+
+        arr = np.ma.filled(data, fill_value=-9999.0).astype(float)
+        mask = arr >= threshold
+
+        # --- Dual-pol field extraction (optional) ---
+        zdr_arr = None
+        rhohv_arr = None
+
+        for zdr_field in ['differential_reflectivity', 'ZDR']:
+            if zdr_field in radar.fields:
+                try:
+                    zdr_data = radar.get_field(sweep_idx, zdr_field)
+                    zdr_arr = np.ma.filled(zdr_data, fill_value=np.nan).astype(float)
+                except Exception:
+                    pass
+                break
+
+        for cc_field in ['cross_correlation_ratio', 'RHOHV']:
+            if cc_field in radar.fields:
+                try:
+                    rhohv_data = radar.get_field(sweep_idx, cc_field)
+                    rhohv_arr = np.ma.filled(rhohv_data, fill_value=np.nan).astype(float)
+                except Exception:
+                    pass
+                break
+
+        # --- Apply dual-pol mask gating ---
+        if rhohv_arr is not None:
+            valid_rhohv = ~np.isnan(rhohv_arr)
+            mask = mask & (~valid_rhohv | (rhohv_arr <= self.config.max_rhohv_for_hail))
+
+        if zdr_arr is not None:
+            valid_zdr = ~np.isnan(zdr_arr)
+            mask = mask & (~valid_zdr | (np.abs(zdr_arr) >= self.config.max_abs_zdr_for_hail))
+
+        if not mask.any():
+            return []
+
+        # --- Connected-component BFS ---
+        H, W = mask.shape
+        visited = np.zeros((H, W), dtype=np.uint8)
+        q = deque()
+        comps = []
+
+        for r in range(H):
+            for c in range(W):
+                if not mask[r, c] or visited[r, c]:
+                    continue
+                visited[r, c] = 1
+                q.clear()
+                q.append((r, c))
+                pts = []
+                while q:
+                    rr, cc = q.popleft()
+                    pts.append((rr, cc))
+                    if rr > 0 and mask[rr - 1, cc] and not visited[rr - 1, cc]:
+                        visited[rr - 1, cc] = 1; q.append((rr - 1, cc))
+                    if rr < H - 1 and mask[rr + 1, cc] and not visited[rr + 1, cc]:
+                        visited[rr + 1, cc] = 1; q.append((rr + 1, cc))
+                    if cc > 0 and mask[rr, cc - 1] and not visited[rr, cc - 1]:
+                        visited[rr, cc - 1] = 1; q.append((rr, cc - 1))
+                    if cc < W - 1 and mask[rr, cc + 1] and not visited[rr, cc + 1]:
+                        visited[rr, cc + 1] = 1; q.append((rr, cc + 1))
+                if len(pts) >= min_pixels:
+                    comps.append(pts)
+
+        if not comps:
+            return []
+
+        # --- Per-object summary with dual-pol stats and hail scoring ---
+        summaries = []
+        for pts in comps:
+            max_ref = -9999.0
+            sr = 0.0
+            sc = 0.0
+            rhohv_vals = []
+            zdr_vals = []
+
+            for rr, cc in pts:
+                sr += rr
+                sc += cc
+                v = float(arr[rr, cc])
+                if v > max_ref:
+                    max_ref = v
+                if rhohv_arr is not None and not np.isnan(rhohv_arr[rr, cc]):
+                    rhohv_vals.append(float(rhohv_arr[rr, cc]))
+                if zdr_arr is not None and not np.isnan(zdr_arr[rr, cc]):
+                    zdr_vals.append(float(zdr_arr[rr, cc]))
+
+            cr = sr / len(pts)
+            cc_avg = sc / len(pts)
+
+            az = float(azimuths[int(round(cr))])
+            rng = float(ranges_km[int(round(cc_avg))])
+            lat, lon = self._az_range_to_latlon(radar_lat, radar_lon, az, rng)
+
+            # Rough gate area estimate
+            try:
+                gate_km = float(radar.range['meters_between_gates']) / 1000.0
+            except Exception:
+                gate_km = 0.25
+            dtheta = math.radians(1.0)
+            gate_area_km2 = max(0.01, (max(rng, 1.0) * dtheta) * gate_km)
+            area_km2 = gate_area_km2 * len(pts)
+
+            # Approximate MESH from peak reflectivity
+            ref = max_ref
+            mesh_mm = max(0, 2.54 * np.exp(0.1 * (ref - 40))) if ref >= 40 else 0
+            mesh_mm = min(mesh_mm, 120)
+
+            # Dual-pol per-object stats
+            min_rhohv = float(min(rhohv_vals)) if rhohv_vals else float('nan')
+            mean_zdr = float(np.mean(zdr_vals)) if zdr_vals else float('nan')
+
+            # --- Hail score (0-1) combining reflectivity + MESH + RHOHV + ZDR ---
+            score = 0.0
+
+            # Reflectivity contribution (0-0.30): ramps 50->65 dBZ
+            ref_contrib = np.clip((max_ref - 50.0) / 15.0, 0.0, 1.0) * 0.30
+            score += ref_contrib
+
+            # MESH contribution (0-0.30): ramps 15->50 mm
+            mesh_contrib = np.clip((mesh_mm - 15.0) / 35.0, 0.0, 1.0) * 0.30
+            score += mesh_contrib
+
+            # RHOHV contribution (0-0.20): low RHOHV = hail tumbling
+            if rhohv_vals:
+                rhohv_contrib = np.clip((0.97 - min_rhohv) / 0.12, 0.0, 1.0) * 0.20
+                score += rhohv_contrib
+
+            # ZDR contribution (0-0.20): near-zero ZDR = tumbling hail
+            if zdr_vals:
+                abs_zdr = abs(mean_zdr)
+                zdr_contrib = np.clip((1.5 - abs_zdr) / 1.5, 0.0, 1.0) * 0.20
+                score += zdr_contrib
+
+            hail_score = float(np.clip(score, 0.0, 1.0))
+
+            summaries.append({
+                'lat': lat,
+                'lon': lon,
+                'reflectivity': float(max_ref),
+                'mesh_mm': float(mesh_mm),
+                'area_km2': float(area_km2),
+                'radar_id': radar_id,
+                'obj_pixels': len(pts),
+                'hail_score': hail_score,
+                'min_rhohv': min_rhohv,
+                'mean_zdr': mean_zdr,
+            })
+
+        summaries.sort(key=lambda d: d['hail_score'], reverse=True)
+        return summaries[:top_n]
+
     def _extract_top_peaks(self, radar, radar_id: str, top_n: int = 10,
                            min_separation_km: float = 10.0) -> List[Dict]:
         """
@@ -619,8 +818,10 @@ class StormMonitor:
             radar_lat = float(radar.latitude['data'][0])
             radar_lon = float(radar.longitude['data'][0])
 
-            # --- Multi-detection extraction: feed top-N peaks to tracker ---
-            peaks = self._extract_top_peaks(radar, radar_id, top_n=10, min_separation_km=10.0)
+            # --- Multi-detection extraction: storm objects first, fallback to peaks ---
+            peaks = self._extract_storm_objects(radar, radar_id, top_n=10, min_pixels=40)
+            if not peaks:
+                peaks = self._extract_top_peaks(radar, radar_id, top_n=10, min_separation_km=10.0)
             if peaks:
                 scan_time = datetime.utcnow()
                 self._feed_tracker(peaks, scan_time)

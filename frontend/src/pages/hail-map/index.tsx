@@ -111,7 +111,7 @@ export function HailMapPage() {
     activeCells: true,
     radar: false,
     forecasts: false,
-    activeEvents: false,
+    activeEvents: import.meta.env.DEV,
   })
 
   const [stats, setStats] = useState({

@@ -46,12 +46,10 @@ def main():
 
     args = parser.parse_args()
 
-    # Configure logging
-    log_level = logging.DEBUG if args.debug else logging.INFO
-    logging.basicConfig(
-        level=log_level,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
+    # Configure logging (HARDEN-3: structured logging support)
+    from src.observability.logging_config import configure_logging
+    log_level_str = 'DEBUG' if args.debug else 'INFO'
+    configure_logging(log_level=log_level_str)
 
     logger = logging.getLogger('HailTrackerPro')
 
@@ -115,6 +113,9 @@ def main():
         if monitor:
             logger.info("Stopping StormMonitor...")
             monitor.stop()
+        # Close DB connection pool
+        from src.db.engine import close_engine
+        close_engine()
 
 
 if __name__ == '__main__':

@@ -87,6 +87,15 @@ def create_app(config=None):
     (PROJECT_ROOT / 'static').mkdir(exist_ok=True)
 
     # ====================
+    # Security Hardening (HARDEN-5)
+    # ====================
+    try:
+        from src.security.hardening import apply_security
+        apply_security(app)
+    except Exception as e:
+        logger.warning("Security hardening failed (non-fatal): %s", e)
+
+    # ====================
     # Initialize Flask-Login
     # ====================
     login_manager = LoginManager()
@@ -215,10 +224,17 @@ def create_app(config=None):
             logger.warning(f"Error loading ML models: {e}")
 
     def get_db():
-        """Get database connection."""
-        conn = sqlite3.connect(app.config['DATABASE_PATH'])
-        conn.row_factory = sqlite3.Row
-        return conn
+        """Get database connection via central engine."""
+        from src.db.engine import get_connection, _get_database_url, _parse_url, _sqlite_connect
+        url = _get_database_url()
+        parsed = _parse_url(url)
+        if parsed['backend'] == 'sqlite':
+            # For Flask request-scoped usage, return a plain connection
+            # (caller is responsible for closing)
+            return _sqlite_connect(parsed['path'])
+        else:
+            from src.db.engine import _pg_connect
+            return _pg_connect()
 
     # ====================
     # Web Routes
@@ -2415,6 +2431,26 @@ def create_app(config=None):
 
     app.register_blueprint(app_bp)
     logger.info("Unified App routes registered at /app")
+
+    # Register health checks (HARDEN-3)
+    try:
+        from src.observability.health import get_health_check
+        from src.db.engine import get_connection
+
+        hc = get_health_check()
+
+        def _check_db():
+            try:
+                with get_connection() as conn:
+                    conn.cursor().execute('SELECT 1')
+                return {'ok': True}
+            except Exception as e:
+                return {'ok': False, 'error': str(e)}
+
+        hc.register('database', _check_db)
+        logger.info("Health checks registered (database)")
+    except Exception as e:
+        logger.warning("Could not register health checks: %s", e)
 
     return app
 

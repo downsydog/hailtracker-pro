@@ -552,6 +552,45 @@ def get_system_mode_alias():
     return jsonify(_build_system_mode_payload())
 
 
+# ---------------------------------------------------------------------------
+# Health / Ready / Metrics (HARDEN-3)
+# ---------------------------------------------------------------------------
+
+@system_api_bp.route('/health', methods=['GET'])
+def get_health():
+    """GET /api/system/health — Liveness probe (always 200 if alive)."""
+    from src.observability.health import get_health_check
+    return jsonify(get_health_check().get_health())
+
+
+@system_api_bp.route('/ready', methods=['GET'])
+def get_ready():
+    """GET /api/system/ready — Readiness probe (checks subsystems)."""
+    from src.observability.health import get_health_check
+    result = get_health_check().check_all()
+    status_code = 200 if result['healthy'] else 503
+    return jsonify(result), status_code
+
+
+@system_api_bp.route('/metrics', methods=['GET'])
+def get_metrics():
+    """GET /api/system/metrics — Lightweight application metrics."""
+    from src.observability.health import get_health_check
+    from src.db.engine import get_engine_info
+    from src.workers.task_queue import get_task_queue
+
+    hc = get_health_check()
+    metrics = hc.get_metrics()
+    metrics['db'] = get_engine_info()
+
+    try:
+        metrics['workers'] = get_task_queue().get_status()
+    except Exception:
+        metrics['workers'] = {'backend': 'unavailable'}
+
+    return jsonify(metrics)
+
+
 @storm_monitor_api_bp.route('/radar/loop', methods=['GET'])
 @login_required
 def get_radar_loop():

@@ -15,12 +15,57 @@ services:
       - ENABLE_MRMS=${ENABLE_MRMS:-false}
       - MRMS_REFRESH_SECONDS=${MRMS_REFRESH_SECONDS:-120}
       - MRMS_PROVIDER=${MRMS_PROVIDER:-aws}
+      - DATABASE_URL=${DATABASE_URL:-sqlite:///database/hailtracker_pro.db}
+      - DB_POOL_MIN=${DB_POOL_MIN:-2}
+      - DB_POOL_MAX=${DB_POOL_MAX:-10}
+      - LOG_FORMAT=${LOG_FORMAT:-text}
+      - RATE_LIMIT_DEFAULT=${RATE_LIMIT_DEFAULT:-60/minute}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
     volumes:
       - ./data:/app/data
       - ./database:/app/database
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:5000/api/system/mode"]
+      test: ["CMD", "curl", "-sf", "http://localhost:5000/api/system/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    profiles:
+      - postgres
+    environment:
+      POSTGRES_DB: hailtracker
+      POSTGRES_USER: hailtracker
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hailtracker_dev}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hailtracker"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    profiles:
+      - workers
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

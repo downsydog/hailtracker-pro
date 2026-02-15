@@ -6,6 +6,10 @@ Downloads multiple recent NEXRAD Level II scans chronologically,
 feeds each through _analyze_radar -> StormCellTracker, and checks
 the active event feed after all scans are processed.
 
+NOTE: This script validates radar parsing and cell tracking only.
+      It does NOT persist events to the CRM database or test calendar population.
+      Persistence + calendar E2E is validated by: scripts/test_e2e_persist_calendar.py
+
 Usage:
     python scripts/dev_run_real_radar_validation.py
     python scripts/dev_run_real_radar_validation.py --radar_id KTLX --minutes 180 --max_scans 12
@@ -277,6 +281,8 @@ def run(radar_id: str, minutes: int, max_scans: int, min_dbz: float, top_n: int)
                   f"ZDR={'Y' if r['has_zdr'] else 'N'} RHOHV={'Y' if r['has_rhohv'] else 'N'}")
 
     print(f"{'=' * 70}")
+    print(f"\nNOTE: This script validates radar parsing/tracking only.")
+    print(f"      Persistence + calendar E2E -> scripts/test_e2e_persist_calendar.py")
     return ok
 
 

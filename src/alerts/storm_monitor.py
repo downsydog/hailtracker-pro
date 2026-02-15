@@ -1324,29 +1324,25 @@ class StormMonitor:
                         max_hail_size = ev.authoritative_hail_inches
                         avg_hail_size = round(max_hail_size * 0.65, 2) if max_hail_size > 0 else 0.0
 
-                        # Compute bbox from swath GeoJSON
-                        bbox_min_lat = bbox_max_lat = ev.centroid_lat
-                        bbox_min_lon = bbox_max_lon = ev.centroid_lon
+                        # Compute bbox from swath GeoJSON (with fallback radius for points)
+                        from src.radar.geo_utils import compute_bbox_from_geojson
                         try:
                             geoj = json.loads(swath_json)
-                            coords = []
-                            gtype = geoj.get('type', '')
-                            if gtype == 'Point':
-                                coords = [geoj['coordinates']]
-                            elif gtype == 'Polygon':
-                                coords = geoj['coordinates'][0]
-                            elif gtype == 'MultiPolygon':
-                                for poly in geoj['coordinates']:
-                                    coords.extend(poly[0])
-                            if coords:
-                                lons = [c[0] for c in coords]
-                                lats = [c[1] for c in coords]
-                                bbox_min_lat = min(lats)
-                                bbox_max_lat = max(lats)
-                                bbox_min_lon = min(lons)
-                                bbox_max_lon = max(lons)
+                            bbox = compute_bbox_from_geojson(
+                                geoj,
+                                fallback_center=(ev.centroid_lat, ev.centroid_lon),
+                                fallback_radius_miles=10.0,
+                            )
                         except Exception:
-                            pass
+                            bbox = compute_bbox_from_geojson(
+                                {},
+                                fallback_center=(ev.centroid_lat, ev.centroid_lon),
+                                fallback_radius_miles=10.0,
+                            )
+                        bbox_min_lat = bbox['bbox_min_lat']
+                        bbox_max_lat = bbox['bbox_max_lat']
+                        bbox_min_lon = bbox['bbox_min_lon']
+                        bbox_max_lon = bbox['bbox_max_lon']
 
                         # Severity classification from hail size
                         if max_hail_size >= 3.0:

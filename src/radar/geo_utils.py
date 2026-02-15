@@ -3,7 +3,7 @@ Geographic utility functions for swath calculations
 """
 
 import math
-from typing import Tuple, List
+from typing import Dict, Optional, Tuple, List
 
 
 class GeoUtils:
@@ -455,3 +455,120 @@ class GeoUtils:
     def miles_to_km(miles: float) -> float:
         """Convert miles to kilometers."""
         return miles * 1.60934
+
+
+def compute_bbox_from_geojson(
+    geojson: dict,
+    *,
+    fallback_center: Optional[Tuple[float, float]] = None,
+    fallback_radius_miles: float = 10.0,
+) -> Dict[str, object]:
+    """
+    Compute bounding box from a GeoJSON object with fallback radius for points.
+
+    Supports FeatureCollection, Feature, and bare Geometry objects.
+    Supported geometry types: Point, MultiPoint, LineString, MultiLineString,
+    Polygon, MultiPolygon.
+
+    For Point/MultiPoint with a single point (or when coordinates produce a
+    zero-span bbox), applies fallback_radius_miles to create a real bbox so
+    calendar/map fitBounds works.
+
+    Args:
+        geojson: GeoJSON dict (Feature, FeatureCollection, or Geometry)
+        fallback_center: (lat, lon) to use when no coordinates found
+        fallback_radius_miles: radius for point/fallback bbox (default 10mi)
+
+    Returns:
+        dict with keys: bbox_min_lat, bbox_max_lat, bbox_min_lon, bbox_max_lon,
+                        bbox_source ("geojson", "point_fallback", "center_fallback")
+    """
+
+    def _extract_coords(obj: dict) -> List[Tuple[float, float]]:
+        """Extract all [lon, lat] coordinate pairs from a GeoJSON object."""
+        gtype = obj.get('type', '')
+
+        if gtype == 'FeatureCollection':
+            coords = []
+            for feat in obj.get('features', []):
+                coords.extend(_extract_coords(feat))
+            return coords
+
+        if gtype == 'Feature':
+            geom = obj.get('geometry')
+            return _extract_coords(geom) if geom else []
+
+        raw = obj.get('coordinates')
+        if raw is None:
+            return []
+
+        if gtype == 'Point':
+            return [tuple(raw)]
+        elif gtype == 'MultiPoint':
+            return [tuple(c) for c in raw]
+        elif gtype == 'LineString':
+            return [tuple(c) for c in raw]
+        elif gtype == 'MultiLineString':
+            out = []
+            for line in raw:
+                out.extend(tuple(c) for c in line)
+            return out
+        elif gtype == 'Polygon':
+            out = []
+            for ring in raw:
+                out.extend(tuple(c) for c in ring)
+            return out
+        elif gtype == 'MultiPolygon':
+            out = []
+            for poly in raw:
+                for ring in poly:
+                    out.extend(tuple(c) for c in ring)
+            return out
+        return []
+
+    def _apply_radius(lat: float, lon: float, radius_miles: float, source: str) -> Dict[str, object]:
+        lat_deg = radius_miles / 69.0
+        cos_lat = math.cos(math.radians(lat))
+        lon_deg = radius_miles / (69.0 * cos_lat) if cos_lat > 0.01 else radius_miles / 69.0
+        return {
+            'bbox_min_lat': lat - lat_deg,
+            'bbox_max_lat': lat + lat_deg,
+            'bbox_min_lon': lon - lon_deg,
+            'bbox_max_lon': lon + lon_deg,
+            'bbox_source': source,
+        }
+
+    # Extract all coordinates
+    coords = _extract_coords(geojson)
+
+    if not coords:
+        # No coordinates at all — use fallback center
+        if fallback_center:
+            return _apply_radius(fallback_center[0], fallback_center[1],
+                                 fallback_radius_miles, 'center_fallback')
+        return {
+            'bbox_min_lat': 0.0, 'bbox_max_lat': 0.0,
+            'bbox_min_lon': 0.0, 'bbox_max_lon': 0.0,
+            'bbox_source': 'none',
+        }
+
+    # GeoJSON is [lon, lat]
+    lons = [c[0] for c in coords]
+    lats = [c[1] for c in coords]
+    min_lat, max_lat = min(lats), max(lats)
+    min_lon, max_lon = min(lons), max(lons)
+
+    # If bbox collapses to a point (single coord or all coords identical)
+    if max_lat - min_lat < 1e-6 and max_lon - min_lon < 1e-6:
+        center_lat = (min_lat + max_lat) / 2
+        center_lon = (min_lon + max_lon) / 2
+        return _apply_radius(center_lat, center_lon,
+                             fallback_radius_miles, 'point_fallback')
+
+    return {
+        'bbox_min_lat': min_lat,
+        'bbox_max_lat': max_lat,
+        'bbox_min_lon': min_lon,
+        'bbox_max_lon': max_lon,
+        'bbox_source': 'geojson',
+    }

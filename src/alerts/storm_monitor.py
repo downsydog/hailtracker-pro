@@ -801,8 +801,11 @@ class StormMonitor:
         """
         Decide which radars to check this tick.
         Returns two lists: discovery_radars, focus_radars
+
+        In discovery/focus mode, sources from the full national DB inventory
+        (206+ radars) via _get_all_radar_ids(), NOT the config.radar_ids default.
         """
-        radar_ids = list(self.config.radar_ids)
+        radar_ids = self._get_all_radar_ids()
 
         # Initialize next_due if missing
         with self._sched_lock:
@@ -1749,9 +1752,11 @@ class StormMonitor:
         hot_ids = self._get_hot_radars_sorted()
         scheduler_mode = 'discovery_focus' if self.config.enable_discovery_focus else 'legacy'
 
+        all_radars = self._get_all_radar_ids() if self.config.enable_discovery_focus else list(self.config.radar_ids)
         result = {
             'running': self.running,
-            'radars': self.config.radar_ids,
+            'radars': all_radars,
+            'radar_count': len(all_radars),
             'scans_processed': self.stats['scans_processed'],
             'alerts_generated': self.stats['alerts_generated'],
             'last_scan': self.stats['last_scan_time'].isoformat() if self.stats['last_scan_time'] else None,

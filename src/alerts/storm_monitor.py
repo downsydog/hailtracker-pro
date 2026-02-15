@@ -8,6 +8,7 @@ import os
 import sys
 import math
 import time
+import json
 from collections import deque
 import tempfile
 import threading
@@ -533,6 +534,10 @@ class StormMonitor:
                         self._auto_generate_swaths()
                     except Exception as e:
                         self._stats_add_error(f"auto_swath: {e}")
+                    try:
+                        self._persist_tracker_events()
+                    except Exception as e:
+                        self._stats_add_error(f"persist_events: {e}")
                     self._stop_event.wait(self.config.scan_interval_seconds)
                     continue
 
@@ -610,6 +615,12 @@ class StormMonitor:
                     self._auto_generate_swaths()
                 except Exception as e:
                     self._stats_add_error(f"auto_swath: {e}")
+
+                # Persist tracker events to CRM hail_events table
+                try:
+                    self._persist_tracker_events()
+                except Exception as e:
+                    self._stats_add_error(f"persist_events: {e}")
 
                 # Sleep until next tick — use the shorter focus interval
                 # so hot radars get re-scanned promptly
@@ -1202,6 +1213,126 @@ class StormMonitor:
         stale = [k for k, v in self._swath_cache.items() if (now_ts - v) > ttl * 2]
         for k in stale:
             del self._swath_cache[k]
+
+    # ------------------------------------------------------------------
+    # Persist tracker events to CRM hail_events table
+    # ------------------------------------------------------------------
+
+    def _persist_tracker_events(self):
+        """
+        Persist all tracker events (with swaths) into CRM hail_events table.
+        Idempotent via event_name UPSERT for NEXRAD_REALTIME events.
+        """
+        try:
+            from src.web.routes.storm_tracking_api import get_tracker
+            tracker = get_tracker()
+        except Exception:
+            return
+
+        events = tracker.get_events(lookback_minutes=360, join_distance_km=25.0)
+        if not events:
+            return
+
+        from src.db.engine import get_connection
+
+        try:
+            with get_connection('sqlite:///data/hailtracker_crm.db') as conn:
+                # Ensure partial unique index for NEXRAD_REALTIME upsert
+                conn.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_hail_events_rt_upsert
+                    ON hail_events(event_name) WHERE data_source = 'NEXRAD_REALTIME'
+                """)
+
+                persisted = 0
+                for ev in events:
+                    try:
+                        # Build swath polygon GeoJSON
+                        swath_json = None
+                        swath_method = 'tracker'
+                        swath_area_sqmi = 0.0
+
+                        try:
+                            merged = tracker.create_event_merged_swath(
+                                ev.event_id, buffer_km=3.0,
+                                lookback_minutes=360, join_distance_km=25.0,
+                            )
+                            if merged and 'geometry' in merged:
+                                swath_json = json.dumps(merged['geometry'])
+                                props = merged.get('properties', {})
+                                swath_method = props.get('swath_method', 'tracker')
+                                swath_area_sqmi = props.get('swath_area_sqmi', 0.0) or 0.0
+                        except Exception:
+                            pass
+
+                        # Fallback: individual cell swath
+                        if not swath_json:
+                            for cell_id in ev.cell_ids:
+                                try:
+                                    cell_swath = tracker.create_track_swath(cell_id, buffer_km=3.0)
+                                    if cell_swath and 'geometry' in cell_swath:
+                                        swath_json = json.dumps(cell_swath['geometry'])
+                                        props = cell_swath.get('properties', {})
+                                        swath_method = props.get('method', 'track_buffer')
+                                        swath_area_sqmi = props.get('swath_area_sqmi', 0.0) or 0.0
+                                        break
+                                except Exception:
+                                    pass
+
+                        # Fallback: centroid point
+                        if not swath_json:
+                            swath_json = json.dumps({
+                                'type': 'Point',
+                                'coordinates': [ev.centroid_lon, ev.centroid_lat],
+                            })
+                            swath_method = 'centroid_point'
+
+                        # Convert area
+                        if swath_area_sqmi == 0.0 and ev.estimated_area_sq_km > 0:
+                            swath_area_sqmi = round(ev.estimated_area_sq_km * 0.386102, 1)
+
+                        max_hail_size = ev.max_mesh_inches
+                        avg_hail_size = round(max_hail_size * 0.65, 2) if max_hail_size > 0 else 0.0
+
+                        conn.execute("""
+                            INSERT INTO hail_events (
+                                event_name, event_date, start_time, end_time,
+                                center_lat, center_lon, swath_polygon, swath_area_sqmi,
+                                max_hail_size, avg_hail_size, max_reflectivity, avg_reflectivity,
+                                swath_method, num_detections, data_source, confidence_score
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NEXRAD_REALTIME', ?)
+                            ON CONFLICT(event_name) WHERE data_source = 'NEXRAD_REALTIME'
+                            DO UPDATE SET
+                                end_time = excluded.end_time,
+                                swath_polygon = excluded.swath_polygon,
+                                swath_area_sqmi = excluded.swath_area_sqmi,
+                                max_hail_size = excluded.max_hail_size,
+                                avg_hail_size = excluded.avg_hail_size,
+                                max_reflectivity = excluded.max_reflectivity,
+                                avg_reflectivity = excluded.avg_reflectivity,
+                                swath_method = excluded.swath_method,
+                                num_detections = excluded.num_detections,
+                                confidence_score = excluded.confidence_score,
+                                updated_at = CURRENT_TIMESTAMP
+                        """, (
+                            ev.event_id,
+                            ev.start_time.strftime('%Y-%m-%d'),
+                            ev.start_time.isoformat(),
+                            ev.end_time.isoformat(),
+                            ev.centroid_lat, ev.centroid_lon,
+                            swath_json, swath_area_sqmi,
+                            max_hail_size, avg_hail_size,
+                            ev.max_reflectivity, round(ev.max_reflectivity * 0.85, 1),
+                            swath_method, len(ev.cell_ids),
+                            ev.confidence,
+                        ))
+                        persisted += 1
+                    except Exception as e:
+                        print(f"[PERSIST-ERROR] event {ev.event_id}: {e}")
+
+                if persisted > 0:
+                    print(f"    Persisted {persisted} events to hail_events DB")
+        except Exception as e:
+            print(f"[PERSIST-ERROR] {e}")
 
     def _enrich_detections_with_mrms(self, detections: List[Dict]) -> None:
         """

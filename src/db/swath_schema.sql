@@ -49,6 +49,11 @@ CREATE INDEX IF NOT EXISTS idx_hail_events_location ON hail_events(center_lat, c
 CREATE INDEX IF NOT EXISTS idx_hail_events_method ON hail_events(swath_method);
 CREATE INDEX IF NOT EXISTS idx_hail_events_hail_size ON hail_events(max_hail_size);
 
+-- Partial unique index: enforce uniqueness for realtime tracker events only
+-- (historical NOAA data may have duplicate event_names, so this is scoped)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_hail_events_rt_upsert
+    ON hail_events(event_name) WHERE data_source = 'NEXRAD_REALTIME';
+
 -- HAIL DETECTIONS - Individual radar observations
 CREATE TABLE IF NOT EXISTS hail_detections (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

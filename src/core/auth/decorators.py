@@ -25,11 +25,19 @@ def login_required(f):
     """
     Require authenticated user (any role).
 
+    In DEV_MODE, allows unauthenticated access to API endpoints
+    for local testing (curl, scripts, etc.).
+
     Redirects to login page for browser requests, returns 401 for API requests.
     """
     @wraps(f)
     def decorated(*args, **kwargs):
         if not g.get('current_user'):
+            # DEV_MODE bypass for API endpoints (local dev/testing only)
+            import os
+            if os.environ.get('DEV_MODE', 'false').lower() in ('true', '1', 'yes'):
+                if request.path.startswith('/api/'):
+                    return f(*args, **kwargs)
             if request.is_json or request.path.startswith('/api/'):
                 return jsonify({
                     'success': False,

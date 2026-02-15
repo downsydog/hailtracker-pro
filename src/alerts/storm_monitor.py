@@ -1225,13 +1225,22 @@ class StormMonitor:
                 det['mrms_source_time'] = source_time
 
     def _feed_tracker(self, detections: List[Dict], scan_time: datetime):
-        """Feed detections into the global StormCellTracker instance."""
+        """Feed detections into the global StormCellTracker instance and persist events to DB."""
         try:
             from src.web.routes.storm_tracking_api import get_tracker
             tracker = get_tracker()
             cells = tracker.process_radar_scan(detections, scan_time)
             if cells:
                 print(f"    Tracker: {len(cells)} cells from {len(detections)} detections")
+
+                # Persist tracker events to hail_events DB for calendar/map
+                try:
+                    from src.radar.event_persister import persist_tracker_events
+                    persisted = persist_tracker_events(tracker)
+                    if persisted > 0:
+                        print(f"    Persisted {persisted} events to hail_events DB")
+                except Exception as pe:
+                    print(f"    Event persist warning: {pe}")
         except Exception as e:
             print(f"    Tracker feed error: {e}")
 

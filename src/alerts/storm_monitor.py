@@ -206,6 +206,19 @@ class StormMonitor:
         # Auto-swath idempotency cache: event_id -> last_generated_ts
         self._swath_cache: Dict[str, float] = {}
 
+        # --- MRMS MESH backbone (optional, env-gated) ---
+        self._mrms_cache = None
+        self._mrms_updater = None
+        if os.environ.get('ENABLE_MRMS', '').lower() in ('true', '1', 'yes'):
+            try:
+                from src.radar.mrms import MRMSCache, MRMSUpdater
+                self._mrms_cache = MRMSCache()
+                self._mrms_updater = MRMSUpdater(cache=self._mrms_cache)
+                self._mrms_updater.start()
+                print("[MRMS] MESH backbone enabled — background updater started")
+            except Exception as e:
+                print(f"[MRMS] Failed to initialize: {e}")
+
         # Discovery/Focus scheduler state
         self._stop_event = threading.Event()
         self._scans_lock = threading.Lock()
@@ -486,6 +499,8 @@ class StormMonitor:
         """Stop monitoring."""
         self.running = False
         self._stop_event.set()
+        if self._mrms_updater:
+            self._mrms_updater.stop()
         if self.monitor_thread:
             self.monitor_thread.join(timeout=10)
         print("\nMonitoring stopped.")
@@ -1188,6 +1203,27 @@ class StormMonitor:
         for k in stale:
             del self._swath_cache[k]
 
+    def _enrich_detections_with_mrms(self, detections: List[Dict]) -> None:
+        """
+        Attach MRMS MESH values to detection dicts (in-place).
+
+        Non-blocking: if MRMS cache is empty or disabled, detections
+        are left unchanged (no mrms_mesh_mm key).
+        """
+        if not self._mrms_cache or not self._mrms_cache.is_loaded:
+            return
+
+        source_time = self._mrms_cache.source_time
+        for det in detections:
+            lat = det.get('lat')
+            lon = det.get('lon')
+            if lat is None or lon is None:
+                continue
+            val = self._mrms_cache.query_point(lat, lon)
+            if val is not None:
+                det['mrms_mesh_mm'] = val
+                det['mrms_source_time'] = source_time
+
     def _feed_tracker(self, detections: List[Dict], scan_time: datetime):
         """Feed detections into the global StormCellTracker instance."""
         try:
@@ -1234,6 +1270,8 @@ class StormMonitor:
             if not peaks:
                 peaks = self._extract_top_peaks(radar, radar_id, top_n=10, min_separation_km=10.0)
             if peaks:
+                # Enrich with MRMS MESH (non-blocking, no-op if disabled)
+                self._enrich_detections_with_mrms(peaks)
                 scan_time = datetime.utcnow()
                 self._feed_tracker(peaks, scan_time)
 

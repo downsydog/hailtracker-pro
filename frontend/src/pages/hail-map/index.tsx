@@ -73,6 +73,7 @@ interface LayerState {
   activeEvents: boolean
   liveRadar: boolean
   nwsAlerts: boolean
+  mrmsMesh: boolean
 }
 
 // 10-level hail size color scale (1/2" to 3"+ in 1/4" increments)
@@ -108,6 +109,7 @@ export function HailMapPage() {
   const activeEventsLayerRef = useRef<L.LayerGroup | null>(null)
   const liveRadarLayerRef = useRef<L.TileLayer.WMS | null>(null)
   const nwsAlertsLayerRef = useRef<L.GeoJSON | null>(null)
+  const mrmsMeshLayerRef = useRef<L.LayerGroup | null>(null)
 
   const [layers, setLayers] = useState<LayerState>({
     swaths: true,
@@ -118,6 +120,7 @@ export function HailMapPage() {
     activeEvents: import.meta.env.DEV,
     liveRadar: true,
     nwsAlerts: true,
+    mrmsMesh: false,
   })
 
   const [stats, setStats] = useState({
@@ -295,6 +298,9 @@ export function HailMapPage() {
       } as any,
     )
     liveRadarLayerRef.current.addTo(map)
+
+    // MRMS MESH overlay layer (populated by useEffect)
+    mrmsMeshLayerRef.current = L.layerGroup()
 
     // NWS Alerts GeoJSON layer (populated by useEffect)
     nwsAlertsLayerRef.current = L.geoJSON(undefined, {
@@ -903,6 +909,60 @@ export function HailMapPage() {
     nwsAlertsLayerRef.current.addTo(mapInstanceRef.current)
   }, [layers.nwsAlerts, nwsAlertsGeoJson])
 
+  // Fetch MRMS MESH grid and refresh every 120s
+  const { data: mrmsMeshGeoJson } = useQuery({
+    queryKey: ["mrms-mesh-geojson"],
+    queryFn: async () => {
+      const map = mapInstanceRef.current
+      if (!map) return { type: "FeatureCollection", features: [] }
+      const bounds = map.getBounds()
+      const bbox = `${bounds.getWest()},${bounds.getSouth()},${bounds.getEast()},${bounds.getNorth()}`
+      const res = await fetch(`/api/realtime/mrms/mesh/geojson?bbox=${bbox}&max_points=2000`)
+      if (!res.ok) return { type: "FeatureCollection", features: [] }
+      return res.json()
+    },
+    enabled: layers.mrmsMesh,
+    refetchInterval: 120000,
+    staleTime: 60000,
+  })
+
+  // Render MRMS MESH points
+  useEffect(() => {
+    if (!mrmsMeshLayerRef.current || !mapInstanceRef.current) return
+    mrmsMeshLayerRef.current.clearLayers()
+    if (!layers.mrmsMesh || !mrmsMeshGeoJson?.features?.length) {
+      mrmsMeshLayerRef.current.remove()
+      return
+    }
+    for (const feature of mrmsMeshGeoJson.features) {
+      const coords = feature.geometry?.coordinates
+      if (!coords) continue
+      const meshMm = feature.properties?.mesh_mm ?? 0
+      const meshIn = feature.properties?.mesh_inches ?? 0
+      if (meshMm <= 0) continue
+      // Color by MESH size: green < 25mm, yellow 25-50, orange 50-75, red 75+
+      let color = "#22c55e"
+      let radius = 4
+      if (meshMm >= 75) { color = "#dc2626"; radius = 7 }
+      else if (meshMm >= 50) { color = "#f97316"; radius = 6 }
+      else if (meshMm >= 25) { color = "#facc15"; radius = 5 }
+      const marker = L.circleMarker([coords[1], coords[0]], {
+        radius,
+        fillColor: color,
+        color: color,
+        weight: 1,
+        opacity: 0.7,
+        fillOpacity: 0.5,
+      })
+      marker.bindPopup(
+        `<div><strong>MRMS MESH</strong><br/>
+         ${meshMm.toFixed(1)} mm (${meshIn.toFixed(2)}")</div>`
+      )
+      mrmsMeshLayerRef.current.addLayer(marker)
+    }
+    mrmsMeshLayerRef.current.addTo(mapInstanceRef.current)
+  }, [layers.mrmsMesh, mrmsMeshGeoJson])
+
   // Handle calendar event selection - zoom map to event location AND filter by date
   // NOTE: Must be defined BEFORE any conditional returns to follow React hooks rules
   const handleCalendarEventSelect = useCallback((event: CalendarDayEvent) => {
@@ -1124,6 +1184,16 @@ export function HailMapPage() {
               />
               <AlertTriangle className="h-3 w-3 text-red-500" />
               NWS Alerts
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer text-sm">
+              <input
+                type="checkbox"
+                checked={layers.mrmsMesh}
+                onChange={() => toggleLayer("mrmsMesh")}
+                className="rounded"
+              />
+              <Radio className="h-3 w-3 text-yellow-500" />
+              MRMS MESH
             </label>
             <label className="flex items-center gap-2 cursor-pointer text-sm">
               <input

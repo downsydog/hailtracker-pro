@@ -274,6 +274,57 @@ def run_direct():
     print(f"    Run 2: {len(cells2)} cells, event_id={ev2[0].event_id}, severity={ev2[0].severity}, conf={ev2[0].confidence}")
     print("    OK: Deterministic -- both runs identical (including event_id)")
 
+    # --- Step g: MRMS fields presence check ---
+    print("\n[g] Checking MRMS field plumbing...")
+    mrms_enabled = os.environ.get('ENABLE_MRMS', '').lower() in ('true', '1', 'yes')
+
+    # Cells should have mrms_* attributes (None when disabled)
+    for cid, cell in tracker.active_cells.items():
+        assert hasattr(cell, 'mrms_mesh_mm'), f"Cell #{cid} missing mrms_mesh_mm attribute"
+        assert hasattr(cell, 'mrms_mesh_peak'), f"Cell #{cid} missing mrms_mesh_peak attribute"
+        assert hasattr(cell, 'mrms_mesh_avg'), f"Cell #{cid} missing mrms_mesh_avg attribute"
+        assert hasattr(cell, 'mrms_source_time'), f"Cell #{cid} missing mrms_source_time attribute"
+        if not mrms_enabled:
+            # When MRMS is disabled, fields should be None (sim data has no MRMS)
+            assert cell.mrms_mesh_mm is None, f"Cell #{cid} mrms_mesh_mm should be None when disabled"
+    print(f"    OK: All cells have mrms_* attributes (enabled={mrms_enabled})")
+
+    # Events should have mrms_mesh_peak / mrms_mesh_avg attributes
+    for ev in events:
+        assert hasattr(ev, 'mrms_mesh_peak'), f"Event {ev.event_id} missing mrms_mesh_peak"
+        assert hasattr(ev, 'mrms_mesh_avg'), f"Event {ev.event_id} missing mrms_mesh_avg"
+        if not mrms_enabled:
+            assert ev.mrms_mesh_peak is None, f"Event mrms_mesh_peak should be None when disabled"
+    print(f"    OK: All events have mrms_* attributes")
+
+    # Swath properties should include mrms fields
+    for s in swaths:
+        props = s['properties']
+        assert 'mrms_mesh_peak' in props, f"Swath missing mrms_mesh_peak property"
+        assert 'mrms_mesh_avg' in props, f"Swath missing mrms_mesh_avg property"
+        if not mrms_enabled:
+            assert props['mrms_mesh_peak'] is None, "Swath mrms_mesh_peak should be None when disabled"
+    print(f"    OK: All swaths have mrms_* properties")
+
+    # Active event features should include mrms fields
+    for feat in feed:
+        p = feat['properties']
+        assert 'mrms_mesh_peak' in p, f"Feed feature missing mrms_mesh_peak"
+        assert 'mrms_mesh_avg' in p, f"Feed feature missing mrms_mesh_avg"
+    print(f"    OK: All feed features have mrms_* properties")
+
+    # Serialization round-trip should preserve mrms fields
+    tmp_path2 = os.path.join(tempfile.gettempdir(), 'tracker_state_mrms_test.json')
+    tracker.save_state(tmp_path2)
+    loaded2 = StormCellTracker.load_state(tmp_path2, simulation_mode=True)
+    for cid in tracker.active_cells:
+        orig = tracker.active_cells[cid]
+        rest = loaded2.active_cells[cid]
+        assert rest.mrms_mesh_mm == orig.mrms_mesh_mm, "mrms_mesh_mm round-trip mismatch"
+        assert rest.mrms_mesh_peak == orig.mrms_mesh_peak, "mrms_mesh_peak round-trip mismatch"
+    os.remove(tmp_path2)
+    print(f"    OK: MRMS fields survive persistence round-trip")
+
     # --- Summary ---
     print("\n" + "=" * 60)
     print("ALL CHECKS PASSED")

@@ -507,3 +507,97 @@ def get_hail_summary():
     summary['timestamp'] = datetime.utcnow().isoformat()
 
     return jsonify(summary)
+
+
+# ============================================================================
+# MRMS MESH Backbone
+# ============================================================================
+
+def _get_mrms_cache():
+    """Lazy import of the global MRMS cache from StormMonitor."""
+    import os
+    if os.environ.get('ENABLE_MRMS', '').lower() not in ('true', '1', 'yes'):
+        return None
+    try:
+        from src.web.routes.storm_monitor_api import get_monitor
+        monitor = get_monitor()
+        if monitor and hasattr(monitor, '_mrms_cache'):
+            return monitor._mrms_cache
+    except Exception:
+        pass
+    return None
+
+
+@bp.route('/mrms/mesh/geojson')
+def get_mrms_mesh_geojson():
+    """
+    Get MRMS MESH grid as a downsampled GeoJSON FeatureCollection.
+
+    Query params:
+        bbox: minLon,minLat,maxLon,maxLat (default: CONUS)
+        max_points: Max points to return (default 2000)
+
+    Returns:
+        GeoJSON FeatureCollection with Point features carrying mesh_mm
+    """
+    cache = _get_mrms_cache()
+    if cache is None:
+        return jsonify({
+            'type': 'FeatureCollection',
+            'features': [],
+            'properties': {'error': 'MRMS not enabled (set ENABLE_MRMS=true)'},
+        })
+
+    if not cache.is_loaded:
+        return jsonify({
+            'type': 'FeatureCollection',
+            'features': [],
+            'properties': {'error': 'MRMS cache not yet loaded'},
+        })
+
+    # Parse bbox
+    bbox_str = request.args.get('bbox', '-130,20,-60,55')
+    try:
+        parts = [float(x.strip()) for x in bbox_str.split(',')]
+        if len(parts) != 4:
+            raise ValueError("Need 4 values")
+        min_lon, min_lat, max_lon, max_lat = parts
+    except (ValueError, TypeError):
+        return jsonify({'error': 'Invalid bbox format. Use: minLon,minLat,maxLon,maxLat'}), 400
+
+    max_points = request.args.get('max_points', 2000, type=int)
+    max_points = max(100, min(10000, max_points))
+
+    geojson = cache.get_geojson_grid(min_lon, min_lat, max_lon, max_lat, max_points=max_points)
+    return jsonify(geojson)
+
+
+@bp.route('/mrms/status')
+def get_mrms_status():
+    """
+    Get MRMS MESH backbone status.
+
+    Returns:
+        Cache status, updater state, provider info
+    """
+    import os
+    enabled = os.environ.get('ENABLE_MRMS', '').lower() in ('true', '1', 'yes')
+
+    if not enabled:
+        return jsonify({
+            'enabled': False,
+            'message': 'MRMS not enabled (set ENABLE_MRMS=true)',
+        })
+
+    cache = _get_mrms_cache()
+    if cache is None:
+        return jsonify({
+            'enabled': True,
+            'loaded': False,
+            'message': 'MRMS enabled but cache not available (monitor not started?)',
+        })
+
+    status = cache.get_status()
+    status['enabled'] = True
+    status['timestamp'] = datetime.utcnow().isoformat()
+    return jsonify(status)

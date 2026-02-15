@@ -42,6 +42,15 @@ CREATE TABLE IF NOT EXISTS hail_events (
     evidence_lsr INTEGER DEFAULT 0,
     evidence_persistence INTEGER DEFAULT 0,
 
+    -- Bounding box (computed from swath_polygon)
+    bbox_min_lat REAL,
+    bbox_max_lat REAL,
+    bbox_min_lon REAL,
+    bbox_max_lon REAL,
+
+    -- Severity classification
+    severity TEXT DEFAULT 'MINOR',  -- 'MINOR', 'MODERATE', 'SEVERE', 'CATASTROPHIC'
+
     -- Related data
     affected_locations INTEGER DEFAULT 0,  -- Count of fleet locations hit
     estimated_vehicles INTEGER DEFAULT 0,  -- Total vehicles affected

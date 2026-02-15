@@ -1035,6 +1035,7 @@ def get_storm_calendar():
         year: Year (default: current year)
         month: Month 1-12 (default: current month)
         state: Filter by state (optional)
+        min_conf: Minimum confidence_score (0-100, default 0 = no filter)
 
     Returns:
         days: Dict mapping date strings to storm info
@@ -1046,6 +1047,7 @@ def get_storm_calendar():
     year = request.args.get('year', now.year, type=int)
     month = request.args.get('month', now.month, type=int)
     state = request.args.get('state')
+    min_conf = request.args.get('min_conf', 0, type=float)
 
     # Validate month
     if month < 1 or month > 12:
@@ -1071,11 +1073,22 @@ def get_storm_calendar():
             center_lon,
             swath_area_sqmi,
             estimated_vehicles,
-            data_source
+            data_source,
+            confidence_score,
+            swath_polygon,
+            bbox_min_lat,
+            bbox_max_lat,
+            bbox_min_lon,
+            bbox_max_lon,
+            severity
         FROM hail_events
         WHERE event_date BETWEEN ? AND ?
     """
     params = [first_day.isoformat(), last_day.isoformat()]
+
+    if min_conf > 0:
+        query += " AND COALESCE(confidence_score, 100) >= ?"
+        params.append(min_conf)
 
     if state:
         # Extract state from event_name if it contains state info
@@ -1084,7 +1097,25 @@ def get_storm_calendar():
 
     query += " ORDER BY event_date, max_hail_size DESC"
 
-    events = db.execute(query, params)
+    try:
+        events = db.execute(query, params)
+    except Exception:
+        # Fallback: bbox/severity columns may not exist yet
+        query_fallback = """
+            SELECT event_date, id, event_name, max_hail_size, center_lat, center_lon,
+                   swath_area_sqmi, estimated_vehicles, data_source,
+                   confidence_score, swath_polygon,
+                   NULL as bbox_min_lat, NULL as bbox_max_lat,
+                   NULL as bbox_min_lon, NULL as bbox_max_lon,
+                   NULL as severity
+            FROM hail_events WHERE event_date BETWEEN ? AND ?
+        """
+        fb_params = [first_day.isoformat(), last_day.isoformat()]
+        if state:
+            query_fallback += " AND event_name LIKE ?"
+            fb_params.append(f'%{state}%')
+        query_fallback += " ORDER BY event_date, max_hail_size DESC"
+        events = db.execute(query_fallback, fb_params)
 
     # Group by date
     days = {}
@@ -1124,14 +1155,20 @@ def get_storm_calendar():
         day['events'].append({
             'id': event['id'],
             'event_name': event['event_name'],
-            'event_date': event_date,  # Include date for frontend filtering
+            'event_date': event_date,
             'hail_size': hail_size,
             'severity': severity,
             'lat': event['center_lat'],
             'lon': event['center_lon'],
             'area_sqmi': event['swath_area_sqmi'],
             'vehicles': event['estimated_vehicles'],
-            'source': event['data_source']
+            'source': event['data_source'],
+            'confidence_score': event['confidence_score'],
+            'swath_polygon': event['swath_polygon'],
+            'bbox_min_lat': event['bbox_min_lat'],
+            'bbox_max_lat': event['bbox_max_lat'],
+            'bbox_min_lon': event['bbox_min_lon'],
+            'bbox_max_lon': event['bbox_max_lon'],
         })
 
     # Calculate month stats

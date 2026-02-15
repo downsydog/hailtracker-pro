@@ -1244,7 +1244,7 @@ class StormMonitor:
                     ON hail_events(event_name) WHERE data_source = 'NEXRAD_REALTIME'
                 """)
 
-                # Migrate: add evidence columns if missing
+                # Migrate: add columns if missing
                 for col_def in [
                     ('evidence_mrms', 'INTEGER DEFAULT 0'),
                     ('evidence_dualpol', 'INTEGER DEFAULT 0'),
@@ -1252,6 +1252,11 @@ class StormMonitor:
                     ('evidence_spc', 'INTEGER DEFAULT 0'),
                     ('evidence_lsr', 'INTEGER DEFAULT 0'),
                     ('evidence_persistence', 'INTEGER DEFAULT 0'),
+                    ('bbox_min_lat', 'REAL'),
+                    ('bbox_max_lat', 'REAL'),
+                    ('bbox_min_lon', 'REAL'),
+                    ('bbox_max_lon', 'REAL'),
+                    ('severity', "TEXT DEFAULT 'MINOR'"),
                 ]:
                     try:
                         conn.execute(f"ALTER TABLE hail_events ADD COLUMN {col_def[0]} {col_def[1]}")
@@ -1319,6 +1324,40 @@ class StormMonitor:
                         max_hail_size = ev.authoritative_hail_inches
                         avg_hail_size = round(max_hail_size * 0.65, 2) if max_hail_size > 0 else 0.0
 
+                        # Compute bbox from swath GeoJSON
+                        bbox_min_lat = bbox_max_lat = ev.centroid_lat
+                        bbox_min_lon = bbox_max_lon = ev.centroid_lon
+                        try:
+                            geoj = json.loads(swath_json)
+                            coords = []
+                            gtype = geoj.get('type', '')
+                            if gtype == 'Point':
+                                coords = [geoj['coordinates']]
+                            elif gtype == 'Polygon':
+                                coords = geoj['coordinates'][0]
+                            elif gtype == 'MultiPolygon':
+                                for poly in geoj['coordinates']:
+                                    coords.extend(poly[0])
+                            if coords:
+                                lons = [c[0] for c in coords]
+                                lats = [c[1] for c in coords]
+                                bbox_min_lat = min(lats)
+                                bbox_max_lat = max(lats)
+                                bbox_min_lon = min(lons)
+                                bbox_max_lon = max(lons)
+                        except Exception:
+                            pass
+
+                        # Severity classification from hail size
+                        if max_hail_size >= 3.0:
+                            severity = 'CATASTROPHIC'
+                        elif max_hail_size >= 2.0:
+                            severity = 'SEVERE'
+                        elif max_hail_size >= 1.0:
+                            severity = 'MODERATE'
+                        else:
+                            severity = 'MINOR'
+
                         conn.execute("""
                             INSERT INTO hail_events (
                                 event_name, event_date, start_time, end_time,
@@ -1326,9 +1365,11 @@ class StormMonitor:
                                 max_hail_size, avg_hail_size, max_reflectivity, avg_reflectivity,
                                 swath_method, num_detections, data_source, confidence_score,
                                 evidence_mrms, evidence_dualpol, evidence_multi_radar,
-                                evidence_spc, evidence_lsr, evidence_persistence
+                                evidence_spc, evidence_lsr, evidence_persistence,
+                                bbox_min_lat, bbox_max_lat, bbox_min_lon, bbox_max_lon, severity
                             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NEXRAD_REALTIME', ?,
-                                      ?, ?, ?, ?, ?, ?)
+                                      ?, ?, ?, ?, ?, ?,
+                                      ?, ?, ?, ?, ?)
                             ON CONFLICT(event_name) WHERE data_source = 'NEXRAD_REALTIME'
                             DO UPDATE SET
                                 end_time = excluded.end_time,
@@ -1347,6 +1388,11 @@ class StormMonitor:
                                 evidence_spc = excluded.evidence_spc,
                                 evidence_lsr = excluded.evidence_lsr,
                                 evidence_persistence = excluded.evidence_persistence,
+                                bbox_min_lat = excluded.bbox_min_lat,
+                                bbox_max_lat = excluded.bbox_max_lat,
+                                bbox_min_lon = excluded.bbox_min_lon,
+                                bbox_max_lon = excluded.bbox_max_lon,
+                                severity = excluded.severity,
                                 updated_at = CURRENT_TIMESTAMP
                         """, (
                             ev.event_id,
@@ -1362,6 +1408,7 @@ class StormMonitor:
                             int(ev.evidence_mrms), int(ev.evidence_dualpol),
                             int(ev.evidence_multi_radar), int(ev.evidence_spc),
                             int(ev.evidence_lsr), int(ev.evidence_persistence),
+                            bbox_min_lat, bbox_max_lat, bbox_min_lon, bbox_max_lon, severity,
                         ))
                         persisted += 1
                     except Exception as e:

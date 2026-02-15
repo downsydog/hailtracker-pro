@@ -1,0 +1,23 @@
+version: "3.8"
+
+services:
+  hailtracker:
+    build: .
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - SKIP_HEAVY_ML=${SKIP_HEAVY_ML:-true}
+      - DEV_MODE=${DEV_MODE:-false}
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY is required}
+    volumes:
+      - ./data:/app/data
+      - ./database:/app/database
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:5000/api/system/mode"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s

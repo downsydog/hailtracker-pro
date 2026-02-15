@@ -203,6 +203,9 @@ class StormMonitor:
             'last_scan_time': None,
         }
 
+        # Auto-swath idempotency cache: event_id -> last_generated_ts
+        self._swath_cache: Dict[str, float] = {}
+
         # Discovery/Focus scheduler state
         self._stop_event = threading.Event()
         self._scans_lock = threading.Lock()
@@ -511,6 +514,10 @@ class StormMonitor:
                         except Exception as e:
                             self._stats_add_error(f"{rid}: {e}")
                     self.stats['last_scan_time'] = datetime.now()
+                    try:
+                        self._auto_generate_swaths()
+                    except Exception as e:
+                        self._stats_add_error(f"auto_swath: {e}")
                     self._stop_event.wait(self.config.scan_interval_seconds)
                     continue
 
@@ -582,6 +589,12 @@ class StormMonitor:
                         )
 
                 self.stats['last_scan_time'] = datetime.now()
+
+                # Auto-generate swaths for active events (never crashes the loop)
+                try:
+                    self._auto_generate_swaths()
+                except Exception as e:
+                    self._stats_add_error(f"auto_swath: {e}")
 
                 # Sleep until next tick — use the shorter focus interval
                 # so hot radars get re-scanned promptly
@@ -1126,6 +1139,54 @@ class StormMonitor:
                 })
 
         return selected
+
+    # ------------------------------------------------------------------
+    # Auto-swath: generate/update swath polygons for active events
+    # ------------------------------------------------------------------
+
+    def _auto_generate_swaths(self):
+        """
+        Auto-generate merged swath polygons for ACTIVE events.
+
+        Idempotency: skips events whose swath was generated in the last 30 min.
+        Never raises — all exceptions caught and logged.
+        """
+        try:
+            from src.web.routes.storm_tracking_api import get_tracker
+            tracker = get_tracker()
+        except Exception:
+            return
+
+        events = tracker.get_events(lookback_minutes=180, join_distance_km=25.0)
+        if not events:
+            return
+
+        now_ts = time.time()
+        ttl = 1800  # 30 minutes
+
+        for ev in events:
+            if ev.status == 'EXPIRED':
+                continue
+
+            # Idempotency check
+            last_ts = self._swath_cache.get(ev.event_id, 0)
+            if (now_ts - last_ts) < ttl:
+                continue
+
+            try:
+                merged = tracker.create_event_merged_swath(
+                    ev.event_id, buffer_km=3.0,
+                    lookback_minutes=180, join_distance_km=25.0,
+                )
+                if merged and merged.get('coordinates'):
+                    self._swath_cache[ev.event_id] = now_ts
+            except Exception as e:
+                self._stats_add_error(f"auto_swath({ev.event_id}): {e}")
+
+        # Evict stale cache entries
+        stale = [k for k, v in self._swath_cache.items() if (now_ts - v) > ttl * 2]
+        for k in stale:
+            del self._swath_cache[k]
 
     def _feed_tracker(self, detections: List[Dict], scan_time: datetime):
         """Feed detections into the global StormCellTracker instance."""

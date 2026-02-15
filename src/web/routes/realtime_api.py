@@ -145,6 +145,46 @@ def get_alerts():
     })
 
 
+@bp.route('/alerts/geojson')
+def get_alerts_geojson():
+    """
+    Get current NWS severe weather alerts as a GeoJSON FeatureCollection.
+
+    Returns polygons with properties: event, headline, severity.
+    Consumed by the frontend live-radar map overlay.
+    """
+    _, NWSAlerts, _, _ = get_weather_modules()
+    nws = NWSAlerts()
+
+    try:
+        alerts = nws.get_hail_alerts(min_size=0)
+    except Exception as e:
+        logger.warning(f"NWS alerts fetch failed: {e}")
+        alerts = []
+
+    features = []
+    for a in alerts:
+        geom = a.get('geometry')
+        if not geom or geom.get('type') not in ('Polygon', 'MultiPolygon'):
+            continue
+        features.append({
+            'type': 'Feature',
+            'geometry': geom,
+            'properties': {
+                'event': a.get('event', ''),
+                'headline': a.get('headline', ''),
+                'severity': a.get('severity', 'Unknown'),
+                'hail_size_inches': a.get('hail_size_inches'),
+                'areas': a.get('areas', ''),
+            },
+        })
+
+    return jsonify({
+        'type': 'FeatureCollection',
+        'features': features,
+    })
+
+
 @bp.route('/alerts/all-severe')
 def get_all_severe_alerts():
     """

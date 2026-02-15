@@ -71,6 +71,8 @@ interface LayerState {
   radar: boolean
   forecasts: boolean
   activeEvents: boolean
+  liveRadar: boolean
+  nwsAlerts: boolean
 }
 
 // 10-level hail size color scale (1/2" to 3"+ in 1/4" increments)
@@ -104,6 +106,8 @@ export function HailMapPage() {
   const radarLayerRef = useRef<L.LayerGroup | null>(null)
   const forecastLayerRef = useRef<L.LayerGroup | null>(null)
   const activeEventsLayerRef = useRef<L.LayerGroup | null>(null)
+  const liveRadarLayerRef = useRef<L.TileLayer.WMS | null>(null)
+  const nwsAlertsLayerRef = useRef<L.GeoJSON | null>(null)
 
   const [layers, setLayers] = useState<LayerState>({
     swaths: true,
@@ -112,6 +116,8 @@ export function HailMapPage() {
     radar: false,
     forecasts: false,
     activeEvents: import.meta.env.DEV,
+    liveRadar: true,
+    nwsAlerts: true,
   })
 
   const [stats, setStats] = useState({
@@ -275,6 +281,42 @@ export function HailMapPage() {
     radarLayerRef.current = L.layerGroup()
     forecastLayerRef.current = L.layerGroup()
     activeEventsLayerRef.current = L.layerGroup()
+
+    // Live Radar WMS overlay (Iowa Mesonet NEXRAD)
+    liveRadarLayerRef.current = L.tileLayer.wms(
+      "https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q.cgi",
+      {
+        layers: "nexrad-n0q-900913",
+        format: "image/png",
+        transparent: true,
+        opacity: 0.55,
+        attribution: "NEXRAD via Iowa Mesonet",
+        zIndex: 200,
+      } as any,
+    )
+    liveRadarLayerRef.current.addTo(map)
+
+    // NWS Alerts GeoJSON layer (populated by useEffect)
+    nwsAlertsLayerRef.current = L.geoJSON(undefined, {
+      style: () => ({
+        color: "#ff2222",
+        fillColor: "rgba(255, 34, 34, 0.15)",
+        fillOpacity: 0.25,
+        weight: 2,
+        dashArray: "4, 4",
+      }),
+      onEachFeature: (feature: any, layer: any) => {
+        const p = feature.properties || {}
+        layer.bindPopup(
+          `<div style="min-width:180px;">
+            <strong>${p.event || "NWS Alert"}</strong><br/>
+            <span style="font-size:12px;">${p.headline || ""}</span><br/>
+            <small>Severity: ${p.severity || "?"}</small>
+            ${p.hail_size_inches ? `<br/><small>Hail: ${p.hail_size_inches}"</small>` : ""}
+          </div>`
+        )
+      },
+    }).addTo(map)
 
     // Initialize marker cluster group with custom styling
     leadsClusterRef.current = L.markerClusterGroup({
@@ -826,6 +868,41 @@ export function HailMapPage() {
     }
   }, [layers.radar, radars])
 
+  // Toggle live radar WMS overlay
+  useEffect(() => {
+    if (!liveRadarLayerRef.current || !mapInstanceRef.current) return
+    if (layers.liveRadar) {
+      liveRadarLayerRef.current.addTo(mapInstanceRef.current)
+    } else {
+      liveRadarLayerRef.current.remove()
+    }
+  }, [layers.liveRadar])
+
+  // Fetch NWS alert polygons and refresh every 60s
+  const { data: nwsAlertsGeoJson } = useQuery({
+    queryKey: ["nws-alerts-geojson"],
+    queryFn: async () => {
+      const res = await fetch("/api/realtime/alerts/geojson")
+      if (!res.ok) return { type: "FeatureCollection", features: [] }
+      return res.json()
+    },
+    enabled: layers.nwsAlerts,
+    refetchInterval: 60000,
+    staleTime: 30000,
+  })
+
+  // Render NWS alert polygons
+  useEffect(() => {
+    if (!nwsAlertsLayerRef.current || !mapInstanceRef.current) return
+    nwsAlertsLayerRef.current.clearLayers()
+    if (!layers.nwsAlerts || !nwsAlertsGeoJson?.features?.length) {
+      nwsAlertsLayerRef.current.remove()
+      return
+    }
+    nwsAlertsLayerRef.current.addData(nwsAlertsGeoJson)
+    nwsAlertsLayerRef.current.addTo(mapInstanceRef.current)
+  }, [layers.nwsAlerts, nwsAlertsGeoJson])
+
   // Handle calendar event selection - zoom map to event location AND filter by date
   // NOTE: Must be defined BEFORE any conditional returns to follow React hooks rules
   const handleCalendarEventSelect = useCallback((event: CalendarDayEvent) => {
@@ -1027,6 +1104,26 @@ export function HailMapPage() {
               />
               <AlertTriangle className="h-3 w-3 text-red-500" />
               Active Events
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer text-sm">
+              <input
+                type="checkbox"
+                checked={layers.liveRadar}
+                onChange={() => toggleLayer("liveRadar")}
+                className="rounded"
+              />
+              <Radio className="h-3 w-3 text-green-500" />
+              Live Radar
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer text-sm">
+              <input
+                type="checkbox"
+                checked={layers.nwsAlerts}
+                onChange={() => toggleLayer("nwsAlerts")}
+                className="rounded"
+              />
+              <AlertTriangle className="h-3 w-3 text-red-500" />
+              NWS Alerts
             </label>
             <label className="flex items-center gap-2 cursor-pointer text-sm">
               <input

@@ -68,23 +68,41 @@ def main():
     ===========================================================
     """)
 
-    # Start live monitoring if requested
-    monitor = None
-    if args.monitor:
-        logger.info("Starting live monitoring...")
-        from src.monitoring.live import create_national_monitor
-        monitor = create_national_monitor()
-        monitor.check_interval = args.monitor_interval
-        monitor.start()
-        logger.info("Live monitoring active")
-
-    # Create and run Flask app
+    # Create Flask app first (so blueprint globals are importable)
     logger.info(f"Starting web server on {args.host}:{args.port}")
 
     app = create_app({
         'DEBUG': args.debug,
         'DATABASE_PATH': str(PROJECT_ROOT / 'database' / 'hailtracker_pro.db')
     })
+
+    # Start StormMonitor (real radar engine) if requested — ONE engine only
+    monitor = None
+    if args.monitor:
+        logger.info("Starting StormMonitor (radar engine)...")
+        from src.alerts.storm_monitor import StormMonitor, MonitorConfig
+        config = MonitorConfig(
+            scan_interval_seconds=args.monitor_interval,
+            enable_discovery_focus=True,
+        )
+        monitor = StormMonitor(config)
+        monitor.start(background=True)
+
+        # Share instance with API layer so /api/storm-monitor/* works
+        from src.web.routes.storm_monitor_api import set_monitor_instance
+        set_monitor_instance(monitor, started_by='cli')
+
+        mode = 'discovery_focus' if config.enable_discovery_focus else 'legacy'
+        logger.info(f"[ENGINE] storm_monitor started_by=cli "
+                    f"mode={mode} workers={config.max_workers}")
+
+        print(f"""
+    ===========================================================
+    |   ENGINE: StormMonitor ({mode}){'  ' if mode == 'discovery_focus' else '               '}|
+    |   Started by: cli                                       |
+    |   Workers: {config.max_workers:<3} | Scan interval: {config.scan_interval_seconds}s{' ' * (19 - len(str(config.scan_interval_seconds)))}|
+    ===========================================================
+        """)
 
     try:
         app.run(
@@ -95,7 +113,7 @@ def main():
         )
     finally:
         if monitor:
-            logger.info("Stopping live monitoring...")
+            logger.info("Stopping StormMonitor...")
             monitor.stop()
 
 

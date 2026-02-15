@@ -64,6 +64,12 @@ class StormCell:
     # Source radar
     radar_id: Optional[str] = None
 
+    # Hail score (0-1, from dual-pol or reflectivity-only)
+    hail_score: float = 0.0
+    hail_score_peak: float = 0.0
+    hail_score_avg: float = 0.0
+    hail_score_samples: int = 0
+
     # Parent/child relationships (for splits/mergers)
     parent_id: Optional[int] = None
     children_ids: List[int] = field(default_factory=list)
@@ -103,6 +109,8 @@ class StormEvent:
     centroid_lon: float
     severity: str   # light / moderate / severe
     confidence: float  # 0.0 - 0.95
+    hail_score_peak: float = 0.0  # Max hail_score across member cells
+    hail_score_avg: float = 0.0   # Mean hail_score_avg across member cells
     status: str = 'EXPIRED'  # ACTIVE / DISSIPATING / EXPIRED
     phase: str = 'NONE'  # DEVELOPING / IMPACTING / WEAKENING / NONE
     impact_window_minutes: int = 0
@@ -181,6 +189,10 @@ class StormCellTracker:
             'stage': cell.stage,
             'previous_positions': cell.previous_positions,
             'radar_id': cell.radar_id,
+            'hail_score': cell.hail_score,
+            'hail_score_peak': cell.hail_score_peak,
+            'hail_score_avg': cell.hail_score_avg,
+            'hail_score_samples': cell.hail_score_samples,
             'parent_id': cell.parent_id,
             'children_ids': cell.children_ids,
         }
@@ -204,6 +216,10 @@ class StormCellTracker:
             stage=d.get('stage', 'INITIATION'),
             previous_positions=[tuple(p) for p in d.get('previous_positions', [])],
             radar_id=d.get('radar_id'),
+            hail_score=d.get('hail_score', 0.0),
+            hail_score_peak=d.get('hail_score_peak', 0.0),
+            hail_score_avg=d.get('hail_score_avg', 0.0),
+            hail_score_samples=d.get('hail_score_samples', 0),
             parent_id=d.get('parent_id'),
             children_ids=d.get('children_ids', []),
         )
@@ -402,6 +418,9 @@ class StormCellTracker:
             detection['reflectivity'] += rng.uniform(-3, 3)
             detection['radar_id'] = 'SIM'
 
+            # Deterministic hail_score from reflectivity (no dual-pol in sim)
+            detection['hail_score'] = min(1.0, max(0.0, (detection['reflectivity'] - 50) / 20))
+
             cells = self.process_radar_scan([detection], scan_time)
             all_cells.extend(cells)
 
@@ -577,6 +596,11 @@ class StormCellTracker:
         area_sq_km = track.track_length_km * avg_width_km
         mesh_inches_list = [pos.mesh_mm / 25.4 for pos in positions]
 
+        # Hail score stats from cell positions
+        hs_peaks = [p.hail_score_peak for p in positions]
+        hs_avgs = [p.hail_score_avg for p in positions if p.hail_score_samples > 0]
+        hs_last = positions[-1].hail_score if positions else 0.0
+
         props = {
             'cell_id': cell_id,
             'method': 'cell_tracking',
@@ -598,6 +622,9 @@ class StormCellTracker:
             'event_date': track.start_time.strftime('%Y-%m-%d'),
             'lifecycle_stages': list(set(track.lifecycle_stages)),
             'radar_id': self._track_radar_id(positions),
+            'hail_score_peak': round(max(hs_peaks) if hs_peaks else 0.0, 4),
+            'hail_score_avg': round(sum(hs_avgs) / len(hs_avgs) if hs_avgs else 0.0, 4),
+            'hail_score_last': round(hs_last, 4),
         }
 
         sq, sr = self._compute_swath_quality(props)
@@ -787,6 +814,16 @@ class StormCellTracker:
             # Radar IDs (sorted for stability)
             radar_ids = sorted({c.radar_id for c in cells_in_cluster if c.radar_id})
 
+            # Hail score aggregation across cells in cluster
+            ev_hs_peak = max((c.hail_score_peak for c in cells_in_cluster), default=0.0)
+            hs_avgs_with_samples = [
+                c.hail_score_avg for c in cells_in_cluster if c.hail_score_samples > 0
+            ]
+            ev_hs_avg = (
+                sum(hs_avgs_with_samples) / len(hs_avgs_with_samples)
+                if hs_avgs_with_samples else 0.0
+            )
+
             # Estimated area from tracks
             area = 0.0
             for cid in cluster_cids:
@@ -910,6 +947,8 @@ class StormCellTracker:
                 centroid_lon=centroid_lon,
                 severity=severity,
                 confidence=round(confidence, 2),
+                hail_score_peak=round(ev_hs_peak, 4),
+                hail_score_avg=round(ev_hs_avg, 4),
                 status=status,
                 phase=phase,
                 impact_window_minutes=impact_window_minutes,
@@ -980,6 +1019,8 @@ class StormCellTracker:
             'event_quality_reasons': event.event_quality_reasons,
             'swath_quality_score': msq,
             'swath_quality_reasons': msr,
+            'hail_score_peak': event.hail_score_peak,
+            'hail_score_avg': event.hail_score_avg,
         }
 
         # Try shapely union
@@ -1135,13 +1176,16 @@ class StormCellTracker:
                     'track_length_km': round(track_length_km, 1),
                     'max_mesh_inches': event.max_mesh_inches,
                     'max_reflectivity': event.max_reflectivity,
+                    'hail_score_peak': event.hail_score_peak,
+                    'hail_score_avg': event.hail_score_avg,
                     'event_time': event.end_time.isoformat(),
                     'method': method,
                 },
             })
 
-        # Sort: event_quality_score desc, swath_quality_score desc, event_time desc
+        # Sort: hail_score_peak desc, event_quality desc, swath_quality desc, event_time desc
         features.sort(key=lambda f: (
+            -f['properties']['hail_score_peak'],
             -f['properties']['event_quality_score'],
             -f['properties']['swath_quality_score'],
             f['properties']['event_time'],
@@ -1368,6 +1412,9 @@ class StormCellTracker:
                     'MULTI' if len(cluster_radar_ids) > 1 else None
                 )
 
+                max_hail_score = max((d.get('hail_score', 0.0) for d in cluster), default=0.0)
+                max_hail_score = min(1.0, max(0.0, float(max_hail_score or 0.0)))
+
                 clusters.append({
                     'centroid_lat': avg_lat,
                     'centroid_lon': avg_lon,
@@ -1375,6 +1422,7 @@ class StormCellTracker:
                     'mean_reflectivity': mean_ref,
                     'area_km2': total_area,
                     'mesh_mm': max_mesh,
+                    'hail_score': max_hail_score,
                     'timestamp': scan_time.isoformat(),
                     'num_detections': len(cluster),
                     'radar_id': cluster_radar_id,
@@ -1496,6 +1544,12 @@ class StormCellTracker:
         mesh_mm = detection.get('mesh_mm', 0)
         mesh_inches = mesh_mm / 25.4
 
+        # Accumulate hail_score
+        hs = min(1.0, max(0.0, float(detection.get('hail_score') or 0.0)))
+        prev_n = previous_cell.hail_score_samples
+        new_n = prev_n + 1
+        new_avg = ((previous_cell.hail_score_avg * prev_n) + hs) / new_n if new_n > 0 else hs
+
         # Create updated cell
         cell = StormCell(
             id=previous_cell.id,
@@ -1514,6 +1568,10 @@ class StormCellTracker:
                 (previous_cell.centroid_lat, previous_cell.centroid_lon)
             ],
             radar_id=detection.get('radar_id') or previous_cell.radar_id,
+            hail_score=hs,
+            hail_score_peak=max(previous_cell.hail_score_peak, hs),
+            hail_score_avg=new_avg,
+            hail_score_samples=new_n,
         )
 
         return cell
@@ -1523,6 +1581,7 @@ class StormCellTracker:
         Create new cell from detection
         """
         mesh_mm = detection.get('mesh_mm', 0)
+        hs = min(1.0, max(0.0, float(detection.get('hail_score') or 0.0)))
 
         cell = StormCell(
             id=self.next_cell_id,
@@ -1536,6 +1595,10 @@ class StormCellTracker:
             mesh_inches=mesh_mm / 25.4,
             stage='INITIATION',
             radar_id=detection.get('radar_id'),
+            hail_score=hs,
+            hail_score_peak=hs,
+            hail_score_avg=hs,
+            hail_score_samples=1,
         )
 
         self.next_cell_id += 1

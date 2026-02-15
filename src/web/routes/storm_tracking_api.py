@@ -10,7 +10,8 @@ Endpoints:
 """
 
 import os
-from flask import Blueprint, request, jsonify
+import threading
+from flask import Blueprint, request, jsonify, current_app
 from datetime import datetime
 from src.core.auth.decorators import login_required
 
@@ -18,6 +19,17 @@ storm_tracking_api_bp = Blueprint('storm_tracking_api', __name__, url_prefix='/a
 
 # Global tracker instance (singleton for state persistence)
 _tracker_instance = None
+
+# Last-scan diagnostics (thread-safe)
+_last_scan_diag_lock = threading.Lock()
+_last_scan_diag = None  # dict or None
+
+
+def store_last_scan_diagnostics(diag: dict):
+    """Store last-scan diagnostics for the debug endpoint."""
+    global _last_scan_diag
+    with _last_scan_diag_lock:
+        _last_scan_diag = diag
 
 
 def get_tracker():
@@ -306,6 +318,8 @@ def get_events():
             'impact_window_minutes': ev.impact_window_minutes,
             'event_quality_score': ev.event_quality_score,
             'event_quality_reasons': ev.event_quality_reasons,
+            'hail_score_peak': ev.hail_score_peak,
+            'hail_score_avg': ev.hail_score_avg,
         })
 
     return jsonify({
@@ -489,3 +503,72 @@ def reset_tracking():
     """Reset tracker to clear all state"""
     reset_tracker()
     return jsonify({'success': True, 'message': 'Tracker reset'})
+
+
+# =============================================================================
+# DEBUG (dev only)
+# =============================================================================
+
+@storm_tracking_api_bp.route('/debug/last-scan', methods=['GET'])
+@login_required
+def debug_last_scan():
+    """Return last-scan diagnostics. Only available in DEBUG mode."""
+    if not current_app.debug:
+        return jsonify({'error': 'Not found'}), 404
+
+    with _last_scan_diag_lock:
+        diag = _last_scan_diag
+
+    if diag is None:
+        return jsonify({'error': 'No scan diagnostics available yet'}), 404
+
+    tracker = get_tracker()
+
+    # Top 5 detections by hail_score
+    dets = diag.get('detections', [])
+    top5 = sorted(dets, key=lambda d: d.get('hail_score', 0), reverse=True)[:5]
+    top_dets = []
+    for d in top5:
+        top_dets.append({
+            'lat': round(d.get('lat', 0), 4),
+            'lon': round(d.get('lon', 0), 4),
+            'reflectivity': round(d.get('reflectivity', 0), 1),
+            'mesh_mm': round(d.get('mesh_mm', 0), 1),
+            'hail_score': round(d.get('hail_score', 0), 4),
+            'min_rhohv': d.get('min_rhohv'),
+            'mean_zdr': d.get('mean_zdr'),
+            'area_km2': round(d.get('area_km2', 0), 1),
+        })
+
+    events = tracker.get_events(lookback_minutes=180)
+
+    return jsonify({
+        'last_scan_time': diag.get('scan_time'),
+        'last_radar_id': diag.get('radar_id'),
+        'top_detections': top_dets,
+        'active_cells': len(tracker.active_cells),
+        'events': len(events),
+    })
+
+
+@storm_tracking_api_bp.route('/storm-monitor/health', methods=['GET'])
+@login_required
+def storm_monitor_health():
+    """Return StormMonitor scheduler health stats."""
+    tracker = get_tracker()
+    mon = getattr(tracker, "storm_monitor", None)
+
+    if mon is None:
+        try:
+            from src.web.routes.storm_monitor_api import _monitor_instance
+            mon = _monitor_instance
+        except Exception:
+            mon = None
+
+    if mon is None:
+        return jsonify({"running": False, "error": "StormMonitor not attached"}), 404
+
+    return jsonify({
+        "running": bool(getattr(mon, "running", False)),
+        "health": mon.get_health(),
+    })

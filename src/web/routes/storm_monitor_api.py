@@ -13,10 +13,12 @@ from flask import Blueprint, request, jsonify
 from src.core.auth.decorators import login_required
 
 storm_monitor_api_bp = Blueprint('storm_monitor_api', __name__, url_prefix='/api/storm-monitor')
+system_api_bp = Blueprint('system_api', __name__, url_prefix='/api/system')
 
 # Global monitor instance
 _monitor_instance = None
 _monitor_config = None
+_started_by = 'unknown'
 
 
 def get_monitor():
@@ -29,6 +31,14 @@ def get_monitor():
         _monitor_instance = StormMonitor(_monitor_config)
 
     return _monitor_instance
+
+
+def set_monitor_instance(monitor, started_by='unknown'):
+    """Set the global monitor instance (used by CLI and API)."""
+    global _monitor_instance, _monitor_config, _started_by
+    _monitor_instance = monitor
+    _monitor_config = monitor.config
+    _started_by = started_by
 
 
 def get_default_config():
@@ -53,7 +63,17 @@ def get_default_config():
         'enable_file_log': config.enable_file_log,
         'sms_enabled': config.sms_enabled,
         'email_enabled': config.email_enabled,
-        'database_enabled': config.database_enabled
+        'database_enabled': config.database_enabled,
+        'enable_discovery_focus': config.enable_discovery_focus,
+        'discovery_interval_seconds': config.discovery_interval_seconds,
+        'focus_interval_seconds': config.focus_interval_seconds,
+        'hot_ttl_seconds': config.hot_ttl_seconds,
+        'hot_promote_dbz': config.hot_promote_dbz,
+        'hot_promote_hail_score': config.hot_promote_hail_score,
+        'max_workers': config.max_workers,
+        'max_focus_radars': config.max_focus_radars,
+        'max_discovery_radars_per_tick': config.max_discovery_radars_per_tick,
+        'per_radar_timeout_seconds': config.per_radar_timeout_seconds,
     }
 
 
@@ -76,15 +96,9 @@ def get_monitor_status():
 
     try:
         status = _monitor_instance.get_status()
-        return jsonify({
-            'running': status.get('running', False),
-            'initialized': True,
-            'radars': status.get('radars', []),
-            'scans_processed': status.get('scans_processed', 0),
-            'alerts_generated': status.get('alerts_generated', 0),
-            'last_scan': status.get('last_scan'),
-            'active_alerts': status.get('active_alerts', 0)
-        })
+        response = {'initialized': True}
+        response.update(status)
+        return jsonify(response)
     except Exception as e:
         return jsonify({
             'running': False,
@@ -101,7 +115,7 @@ def get_monitor_status():
 @login_required
 def start_monitor():
     """Start the storm monitor (background mode)"""
-    global _monitor_instance, _monitor_config
+    global _monitor_instance, _monitor_config, _started_by
 
     data = request.get_json() or {}
 
@@ -112,16 +126,18 @@ def start_monitor():
         # Build config from data
         config_params = {}
 
-        if 'radar_ids' in data:
-            config_params['radar_ids'] = data['radar_ids']
-        if 'scan_interval_seconds' in data:
-            config_params['scan_interval_seconds'] = data['scan_interval_seconds']
-        if 'min_pdr_score' in data:
-            config_params['min_pdr_score'] = data['min_pdr_score']
-        if 'coverage_region' in data:
-            config_params['coverage_region'] = data['coverage_region']
-        if 'coverage_regions' in data:
-            config_params['coverage_regions'] = data['coverage_regions']
+        _passthrough_keys = [
+            'radar_ids', 'scan_interval_seconds', 'min_pdr_score',
+            'coverage_region', 'coverage_regions',
+            'enable_discovery_focus', 'discovery_interval_seconds',
+            'focus_interval_seconds', 'hot_ttl_seconds',
+            'hot_promote_dbz', 'hot_promote_hail_score',
+            'max_workers', 'max_focus_radars',
+            'max_discovery_radars_per_tick', 'per_radar_timeout_seconds',
+        ]
+        for key in _passthrough_keys:
+            if key in data:
+                config_params[key] = data[key]
 
         _monitor_config = MonitorConfig(**config_params)
         _monitor_instance = StormMonitor(_monitor_config)
@@ -130,16 +146,19 @@ def start_monitor():
 
     if monitor.running:
         return jsonify({
-            'success': False,
-            'message': 'Monitor already running'
+            'success': True,
+            'message': 'already running',
+            'started_by': _started_by,
         })
 
     try:
         # Start in background mode
         monitor.start(background=True)
+        _started_by = 'api'
         return jsonify({
             'success': True,
             'message': 'Monitor started',
+            'started_by': 'api',
             'radars': monitor.config.radar_ids
         })
     except Exception as e:
@@ -209,7 +228,17 @@ def get_monitor_config():
             'enable_file_log': _monitor_config.enable_file_log,
             'sms_enabled': _monitor_config.sms_enabled,
             'email_enabled': _monitor_config.email_enabled,
-            'database_enabled': _monitor_config.database_enabled
+            'database_enabled': _monitor_config.database_enabled,
+            'enable_discovery_focus': _monitor_config.enable_discovery_focus,
+            'discovery_interval_seconds': _monitor_config.discovery_interval_seconds,
+            'focus_interval_seconds': _monitor_config.focus_interval_seconds,
+            'hot_ttl_seconds': _monitor_config.hot_ttl_seconds,
+            'hot_promote_dbz': _monitor_config.hot_promote_dbz,
+            'hot_promote_hail_score': _monitor_config.hot_promote_hail_score,
+            'max_workers': _monitor_config.max_workers,
+            'max_focus_radars': _monitor_config.max_focus_radars,
+            'max_discovery_radars_per_tick': _monitor_config.max_discovery_radars_per_tick,
+            'per_radar_timeout_seconds': _monitor_config.per_radar_timeout_seconds,
         })
 
     return jsonify(get_default_config())
@@ -462,6 +491,65 @@ def get_radar_history():
         'frame_interval_minutes': frame_interval,
         'frames': frames
     })
+
+
+# =============================================================================
+# SYSTEM MODE (no auth required — for easy debugging / health checks)
+# =============================================================================
+
+def _build_system_mode_payload():
+    """Build the system-mode JSON payload (shared by both route aliases)."""
+    import os
+    import threading
+
+    global _monitor_instance, _started_by
+
+    if _monitor_instance is None or not _monitor_instance.running:
+        return {
+            'active_engine': 'none',
+            'started_by': 'n/a',
+            'monitor_running': False,
+        }
+
+    health = {}
+    status = {}
+    try:
+        health = _monitor_instance.get_health()
+    except Exception:
+        pass
+    try:
+        status = _monitor_instance.get_status()
+    except Exception:
+        pass
+
+    return {
+        'active_engine': 'storm_monitor',
+        'started_by': _started_by,
+        'monitor_running': True,
+        'scheduler_mode': status.get('scheduler_mode', 'unknown'),
+        'hot_radar_count': status.get('hot_radar_count', 0),
+        'hot_radars': status.get('hot_radars', [])[:10],
+        'last_tick_utc': health.get('last_tick_utc'),
+        'last_scan_utc': health.get('last_scan_utc'),
+        'avg_check_seconds': health.get('avg_check_seconds', 0),
+        'processed_ok': health.get('processed_ok', 0),
+        'processed_err': health.get('processed_err', 0),
+        'last_errors': health.get('last_errors', [])[:5],
+        'pid': os.getpid(),
+        'thread': threading.current_thread().name,
+    }
+
+
+@storm_monitor_api_bp.route('/system-mode', methods=['GET'])
+def get_system_mode():
+    """GET /api/storm-monitor/system-mode"""
+    return jsonify(_build_system_mode_payload())
+
+
+@system_api_bp.route('/mode', methods=['GET'])
+def get_system_mode_alias():
+    """GET /api/system/mode — canonical alias."""
+    return jsonify(_build_system_mode_payload())
 
 
 @storm_monitor_api_bp.route('/radar/loop', methods=['GET'])

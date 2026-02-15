@@ -147,63 +147,68 @@ def create_app(config=None):
     market_analyzer = PDRMarketAnalyzer(app.config['DATABASE_PATH'])
 
     # Initialize ML models
+    # Set SKIP_HEAVY_ML=true to skip DistilBERT + non-core models for fast startup
+    skip_heavy_ml = os.environ.get('SKIP_HEAVY_ML', '').lower() in ('true', '1', 'yes')
     ml_models = {}
     if ML_AVAILABLE:
         try:
-            # TIER 1: Meteorology
+            # TIER 1: Meteorology (always loaded — core to hail detection)
             ml_models['radar_classifier'] = RadarHailClassifier()
             ml_models['radar_classifier'].load()
 
             ml_models['storm_forecaster'] = StormSeverityForecaster()
             ml_models['storm_forecaster'].load()
 
-            ml_models['seasonal_risk'] = SeasonalRiskModel()
-            ml_models['seasonal_risk'].load()
+            if not skip_heavy_ml:
+                ml_models['seasonal_risk'] = SeasonalRiskModel()
+                ml_models['seasonal_risk'].load()
 
-            # TIER 2: Photo Analysis
-            ml_models['size_estimator'] = HailSizeEstimator()
-            ml_models['size_estimator'].load()
+                # TIER 2: Photo Analysis
+                ml_models['size_estimator'] = HailSizeEstimator()
+                ml_models['size_estimator'].load()
 
-            ml_models['damage_detector'] = VehicleDamageDetector()
-            ml_models['damage_detector'].load()
+                ml_models['damage_detector'] = VehicleDamageDetector()
+                ml_models['damage_detector'].load()
 
-            ml_models['photo_validator'] = PhotoAuthenticityValidator()
-            ml_models['photo_validator'].load()
+                ml_models['photo_validator'] = PhotoAuthenticityValidator()
+                ml_models['photo_validator'].load()
 
-            # TIER 3: PDR Business
-            ml_models['ml_opportunity_scorer'] = MLOpportunityScorer()
-            ml_models['ml_opportunity_scorer'].load()
+                # TIER 3: PDR Business
+                ml_models['ml_opportunity_scorer'] = MLOpportunityScorer()
+                ml_models['ml_opportunity_scorer'].load()
 
-            ml_models['claim_predictor'] = ClaimRatePredictor()
-            ml_models['claim_predictor'].load()
+                ml_models['claim_predictor'] = ClaimRatePredictor()
+                ml_models['claim_predictor'].load()
 
-            ml_models['damage_predictor'] = DamagePredictionModel()
-            ml_models['damage_predictor'].load()
+                ml_models['damage_predictor'] = DamagePredictionModel()
+                ml_models['damage_predictor'].load()
 
-            ml_models['vehicle_counter'] = ParkingLotVehicleCounter()
-            ml_models['vehicle_counter'].load()
+                ml_models['vehicle_counter'] = ParkingLotVehicleCounter()
+                ml_models['vehicle_counter'].load()
 
-            # TIER 4: Advanced
-            ml_models['route_optimizer'] = RouteOptimizer()
-            ml_models['route_optimizer'].load()
+                # TIER 4: Advanced
+                ml_models['route_optimizer'] = RouteOptimizer()
+                ml_models['route_optimizer'].load()
 
-            ml_models['conversion_predictor'] = ConversionPredictor()
-            ml_models['conversion_predictor'].load()
+                ml_models['conversion_predictor'] = ConversionPredictor()
+                ml_models['conversion_predictor'].load()
 
-            ml_models['inventory_estimator'] = DealershipInventoryEstimator()
-            ml_models['inventory_estimator'].load()
+                ml_models['inventory_estimator'] = DealershipInventoryEstimator()
+                ml_models['inventory_estimator'].load()
 
-            # Use REAL pre-trained sentiment model if available
-            if REAL_SENTIMENT_AVAILABLE:
-                ml_models['sentiment_analyzer'] = RealSentimentAnalyzer()
-                ml_models['sentiment_analyzer'].load()
-                logger.info("Loaded REAL pre-trained sentiment model (66M params)")
+                # Use REAL pre-trained sentiment model if available
+                if REAL_SENTIMENT_AVAILABLE:
+                    ml_models['sentiment_analyzer'] = RealSentimentAnalyzer()
+                    ml_models['sentiment_analyzer'].load()
+                    logger.info("Loaded REAL pre-trained sentiment model (66M params)")
+                else:
+                    ml_models['sentiment_analyzer'] = SentimentAnalyzer()
+                    ml_models['sentiment_analyzer'].load()
+
+                ml_models['repair_estimator'] = RepairTimeEstimator()
+                ml_models['repair_estimator'].load()
             else:
-                ml_models['sentiment_analyzer'] = SentimentAnalyzer()
-                ml_models['sentiment_analyzer'].load()
-
-            ml_models['repair_estimator'] = RepairTimeEstimator()
-            ml_models['repair_estimator'].load()
+                logger.info("SKIP_HEAVY_ML=true — loaded core models only (radar_classifier, storm_forecaster)")
 
             logger.info(f"Loaded {len(ml_models)} ML models")
         except Exception as e:
@@ -2357,9 +2362,19 @@ def create_app(config=None):
     logger.info("Storm Cell Tracking API routes registered at /api/storm-cells")
 
     # Storm Monitor API Routes
-    from src.web.routes.storm_monitor_api import storm_monitor_api_bp
+    from src.web.routes.storm_monitor_api import storm_monitor_api_bp, system_api_bp
     app.register_blueprint(storm_monitor_api_bp)
+    app.register_blueprint(system_api_bp)
     logger.info("Storm Monitor API routes registered at /api/storm-monitor")
+    logger.info("System API routes registered at /api/system")
+
+    # Realtime Weather API Routes (NWS, SPC, IEM)
+    try:
+        from src.web.routes.realtime_api import bp as realtime_api_bp
+        app.register_blueprint(realtime_api_bp)
+        logger.info("Realtime Weather API routes registered at /api/realtime")
+    except ImportError as e:
+        logger.warning(f"Realtime API routes not available: {e}")
 
     # ML Models API Routes
     from src.web.routes.ml_api import ml_api_bp

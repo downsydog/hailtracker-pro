@@ -14,6 +14,7 @@ import threading
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 
 # Check dependencies
@@ -117,9 +118,24 @@ class MonitorConfig:
     max_rhohv_for_hail: float = 0.97   # RHOHV below this suggests hail (decorrelation)
     max_abs_zdr_for_hail: float = 1.2  # |ZDR| above this suggests hail (tumbling)
 
+    # Dev diagnostics
+    debug_object_extraction: bool = False
+
     # Database settings
     database_enabled: bool = True  # Enable by default
     database_url: str = 'sqlite:///data/alerts/alerts.db'
+
+    # --- Scheduler knobs (Discovery -> Focus) ---
+    enable_discovery_focus: bool = True
+    max_workers: int = 12
+    max_discovery_radars_per_tick: int = 40
+    discovery_interval_seconds: int = 900       # 15 min
+    focus_interval_seconds: int = 180           # 3 min
+    hot_ttl_seconds: int = 2400                 # 40 min
+    max_focus_radars: int = 80
+    hot_promote_dbz: float = 55.0
+    hot_promote_hail_score: float = 0.20
+    per_radar_timeout_seconds: int = 45
 
 
 class StormMonitor:
@@ -184,7 +200,30 @@ class StormMonitor:
             'alerts_generated': 0,
             'alerts_filtered': 0,  # Track alerts filtered by geo
             'start_time': None,
-            'last_scan_time': None
+            'last_scan_time': None,
+        }
+
+        # Discovery/Focus scheduler state
+        self._stop_event = threading.Event()
+        self._scans_lock = threading.Lock()
+
+        # --- Discovery/Focus scheduling state ---
+        self._hot_radars = {}  # radar_id -> last_active_ts (epoch seconds)
+        self._next_due = {}    # radar_id -> next_due_ts (epoch seconds)
+        self._sched_lock = threading.Lock()
+
+        # --- Health stats ---
+        self._stats_lock = threading.Lock()
+        self._stats = {
+            "last_tick_utc": None,
+            "active_hot_radars": 0,
+            "scheduled_discovery": 0,
+            "scheduled_focus": 0,
+            "processed_ok": 0,
+            "processed_err": 0,
+            "processed_timeout": 0,
+            "avg_check_seconds": 0.0,
+            "last_errors": [],  # keep last ~20 strings
         }
 
         # Import classifier
@@ -419,12 +458,23 @@ class StormMonitor:
         else:
             print("\nCoverage Area: No filter (all alerts)")
 
+        if self.config.enable_discovery_focus:
+            print(f"\nScheduler: DISCOVERY/FOCUS (two-tier)")
+            print(f"  Discovery interval: {self.config.discovery_interval_seconds}s | "
+                  f"Focus interval: {self.config.focus_interval_seconds}s")
+            print(f"  Hot TTL: {self.config.hot_ttl_seconds}s | "
+                  f"Workers: {self.config.max_workers}")
+            print(f"  Promote thresholds: dBZ>={self.config.hot_promote_dbz}, "
+                  f"hail_score>={self.config.hot_promote_hail_score}")
+        else:
+            print(f"\nScheduler: LEGACY (sequential)")
+
         print("\nPress Ctrl+C to stop\n")
         print("=" * 70 + "\n")
 
         if background:
-            self.monitor_thread = threading.Thread(target=self._monitor_loop)
-            self.monitor_thread.daemon = True
+            self.monitor_thread = threading.Thread(
+                target=self._monitor_loop, name='monitor', daemon=True)
             self.monitor_thread.start()
         else:
             self._monitor_loop()
@@ -432,43 +482,123 @@ class StormMonitor:
     def stop(self):
         """Stop monitoring."""
         self.running = False
+        self._stop_event.set()
         if self.monitor_thread:
             self.monitor_thread.join(timeout=10)
         print("\nMonitoring stopped.")
         self._print_stats()
 
     def _monitor_loop(self):
-        """Main monitoring loop."""
+        """
+        Main monitor loop.
+        Discovery -> Focus scheduler with concurrency.
+        """
+        self.running = True
+        executor = ThreadPoolExecutor(max_workers=int(self.config.max_workers))
+
         try:
             while self.running:
-                cycle_start = datetime.now()
+                tick_start = time.time()
+                now_ts = tick_start
 
-                print(f"[{cycle_start.strftime('%H:%M:%S')}] Scanning radars...")
+                if not self.config.enable_discovery_focus:
+                    # fallback: old behavior (sequential)
+                    for rid in self.config.radar_ids:
+                        if not self.running:
+                            break
+                        try:
+                            self._check_radar(rid)
+                        except Exception as e:
+                            self._stats_add_error(f"{rid}: {e}")
+                    self.stats['last_scan_time'] = datetime.now()
+                    self._stop_event.wait(self.config.scan_interval_seconds)
+                    continue
 
-                for radar_id in self.config.radar_ids:
+                discovery_radars, focus_radars = self._schedule_tick(now_ts)
+                scheduled = focus_radars + discovery_radars
+
+                with self._stats_lock:
+                    self._stats["last_tick_utc"] = datetime.utcnow().isoformat() + "Z"
+                    self._stats["scheduled_discovery"] = len(discovery_radars)
+                    self._stats["scheduled_focus"] = len(focus_radars)
+                    self._stats["active_hot_radars"] = len(self._get_hot_radars_sorted())
+
+                futures = {}
+                for rid in scheduled:
+                    futures[executor.submit(self._check_radar_with_result, rid)] = rid
+
+                processed = 0
+                ok = 0
+                err = 0
+                elapsed_sum = 0.0
+
+                timeout = float(self.config.per_radar_timeout_seconds)
+
+                for fut in as_completed(futures, timeout=max(timeout, 1.0)):
+                    if not self.running:
+                        break
+
+                    rid = futures[fut]
+                    processed += 1
+
                     try:
-                        self._check_radar(radar_id)
+                        res = fut.result(timeout=0)  # already completed
                     except Exception as e:
-                        print(f"  {radar_id}: Error - {e}")
+                        err += 1
+                        self._stats_add_error(f"{rid}: future error: {e}")
+                        self._update_next_due(rid, time.time(), self._is_hot(rid))
+                        continue
+
+                    elapsed_sum += float(res.get("elapsed") or 0.0)
+                    result_ts = time.time()
+
+                    if not res.get("ok"):
+                        err += 1
+                        self._stats_add_error(f"{rid}: {res.get('error')}")
+                        self._update_next_due(rid, result_ts, self._is_hot(rid))
+                        continue
+
+                    ok += 1
+
+                    # Promote to HOT based on cheap evidence
+                    max_ref = res.get("max_reflectivity")
+                    hail_peak = res.get("hail_score_peak")
+
+                    if (max_ref is not None and float(max_ref) >= float(self.config.hot_promote_dbz)) or \
+                       (hail_peak is not None and float(hail_peak) >= float(self.config.hot_promote_hail_score)):
+                        self._mark_radar_hot(rid, result_ts)
+
+                    self._update_next_due(rid, result_ts, self._is_hot(rid))
+
+                # Update rolling stats
+                with self._stats_lock:
+                    self._stats["processed_ok"] += ok
+                    self._stats["processed_err"] += err
+                    if processed > 0:
+                        avg = elapsed_sum / processed
+                        prev = self._stats["avg_check_seconds"]
+                        self._stats["avg_check_seconds"] = (
+                            0.8 * prev + 0.2 * avg if prev > 0 else avg
+                        )
 
                 self.stats['last_scan_time'] = datetime.now()
 
-                # Wait for next cycle
-                elapsed = (datetime.now() - cycle_start).total_seconds()
-                sleep_time = max(0, self.config.scan_interval_seconds - elapsed)
-
+                # Sleep until next tick — use the shorter focus interval
+                # so hot radars get re-scanned promptly
+                tick_elapsed = time.time() - tick_start
+                sleep_time = max(0, self.config.focus_interval_seconds - tick_elapsed)
                 if sleep_time > 0:
-                    print(f"\nNext scan in {sleep_time:.0f} seconds...")
-                    time.sleep(sleep_time)
+                    self._stop_event.wait(sleep_time)
 
         except KeyboardInterrupt:
             print("\n\nInterrupted by user")
-            self.running = False
         finally:
+            self.running = False
+            executor.shutdown(wait=False)
             self._print_stats()
 
-    def _check_radar(self, radar_id: str):
-        """Check a single radar for new data."""
+    def _check_radar(self, radar_id: str) -> Optional[Dict]:
+        """Check a single radar for new data. Returns analysis dict or None."""
         try:
             # Find recent scans
             end_time = datetime.utcnow()
@@ -477,7 +607,7 @@ class StormMonitor:
             scans = self.conn.get_avail_scans_in_range(start_time, end_time, radar_id)
 
             if not scans:
-                return
+                return None
 
             # Get most recent scan
             def get_scan_time(s):
@@ -490,8 +620,9 @@ class StormMonitor:
             scan_key = f"{radar_id}_{latest.filename}"
 
             # Skip if already processed
-            if scan_key in self.processed_scans:
-                return
+            with self._scans_lock:
+                if scan_key in self.processed_scans:
+                    return None
 
             print(f"  {radar_id}: New scan {latest.filename}")
 
@@ -499,7 +630,7 @@ class StormMonitor:
             results = self.conn.download(latest, self.temp_dir)
 
             if not results.success:
-                return
+                return None
 
             filepath = results.success[0].filepath
             radar = pyart.io.read_nexrad_archive(filepath)
@@ -508,13 +639,13 @@ class StormMonitor:
             analysis = self._analyze_radar(radar, radar_id)
 
             self.stats['scans_processed'] += 1
-            self.processed_scans.add(scan_key)
+            with self._scans_lock:
+                self.processed_scans.add(scan_key)
 
-            # Cap processed_scans to prevent unbounded memory growth
-            if len(self.processed_scans) > 500:
-                # Keep only the most recent entries (convert to sorted list, trim, back to set)
-                sorted_keys = sorted(self.processed_scans)
-                self.processed_scans = set(sorted_keys[-500:])
+                # Cap processed_scans to prevent unbounded memory growth
+                if len(self.processed_scans) > 500:
+                    sorted_keys = sorted(self.processed_scans)
+                    self.processed_scans = set(sorted_keys[-500:])
 
             # Generate alert if threshold met
             if analysis and analysis.get('should_alert'):
@@ -526,8 +657,151 @@ class StormMonitor:
             except:
                 pass
 
+            return analysis
+
         except Exception as e:
             print(f"  {radar_id}: Error - {e}")
+            return None
+
+    # ------------------------------------------------------------------
+    # Discovery / Focus scheduler helpers
+    # ------------------------------------------------------------------
+
+    def _check_radar_with_result(self, radar_id: str) -> dict:
+        """
+        Runs one radar check and returns summary dict.
+        Must NOT raise (catch inside).
+        """
+        start = time.time()
+        try:
+            analysis = self._check_radar(radar_id)
+            max_ref = None
+            hail_peak = None
+            if isinstance(analysis, dict):
+                max_ref = analysis.get("max_reflectivity")
+                dets = analysis.get("detections") or []
+                if dets:
+                    hail_peak = max(d.get("hail_score", 0) for d in dets)
+            return {
+                "ok": True,
+                "radar_id": radar_id,
+                "elapsed": time.time() - start,
+                "max_reflectivity": max_ref,
+                "hail_score_peak": hail_peak,
+            }
+        except Exception as e:
+            return {
+                "ok": False,
+                "radar_id": radar_id,
+                "elapsed": time.time() - start,
+                "error": str(e),
+            }
+
+    def _should_promote(self, radar_id: str, analysis: Optional[Dict]) -> Optional[str]:
+        """Return a reason string if this radar should be promoted to hot, else None."""
+        if analysis is None:
+            return None
+        max_ref = analysis.get('max_reflectivity', 0)
+        if max_ref >= self.config.hot_promote_dbz:
+            return f"ref={max_ref:.1f}dBZ"
+        detections = analysis.get('detections') or []
+        for det in detections:
+            if det.get('hail_score', 0) >= self.config.hot_promote_hail_score:
+                return f"hail_score={det['hail_score']:.2f}"
+        return None
+
+    def get_health(self) -> dict:
+        """Return current scheduler health stats."""
+        with self._stats_lock:
+            return dict(self._stats)
+
+    def _stats_add_error(self, msg: str):
+        with self._stats_lock:
+            self._stats["processed_err"] += 1
+            self._stats["last_errors"].append(msg)
+            if len(self._stats["last_errors"]) > 20:
+                self._stats["last_errors"] = self._stats["last_errors"][-20:]
+
+    def _mark_radar_hot(self, radar_id: str, now_ts: float):
+        with self._sched_lock:
+            self._hot_radars[radar_id] = now_ts
+
+    def _prune_hot_radars(self, now_ts: float):
+        ttl = float(self.config.hot_ttl_seconds)
+        with self._sched_lock:
+            stale = [rid for rid, ts in self._hot_radars.items() if (now_ts - ts) > ttl]
+            for rid in stale:
+                self._hot_radars.pop(rid, None)
+
+    def _is_hot(self, radar_id: str) -> bool:
+        with self._sched_lock:
+            return radar_id in self._hot_radars
+
+    def _get_hot_radars_sorted(self) -> List[str]:
+        """Return hot radar IDs sorted by newest activity first."""
+        with self._sched_lock:
+            return [rid for rid, _ in sorted(
+                self._hot_radars.items(), key=lambda kv: kv[1], reverse=True
+            )]
+
+    def _record_stat(self, key: str, inc: int = 1):
+        """Thread-safe increment of a _stats counter."""
+        with self._stats_lock:
+            self._stats[key] = self._stats.get(key, 0) + inc
+
+    def _get_all_radar_ids(self) -> List[str]:
+        """Return the full list of radar IDs to discovery-scan.
+        Uses coverage module if available, else config.radar_ids."""
+        try:
+            from src.radar.coverage import get_all_radars
+            return [r.site_code for r in get_all_radars()]
+        except ImportError:
+            return list(self.config.radar_ids)
+
+    def _schedule_tick(self, now_ts: float):
+        """
+        Decide which radars to check this tick.
+        Returns two lists: discovery_radars, focus_radars
+        """
+        radar_ids = list(self.config.radar_ids)
+
+        # Initialize next_due if missing
+        with self._sched_lock:
+            for rid in radar_ids:
+                if rid not in self._next_due:
+                    self._next_due[rid] = now_ts  # eligible immediately
+
+        # prune hot list
+        self._prune_hot_radars(now_ts)
+
+        hot = set(self._get_hot_radars_sorted())
+
+        due_focus = []
+        due_discovery = []
+
+        with self._sched_lock:
+            for rid in radar_ids:
+                if self._next_due.get(rid, 0) > now_ts:
+                    continue
+
+                if rid in hot:
+                    due_focus.append(rid)
+                else:
+                    due_discovery.append(rid)
+
+        # Throttle discovery per tick (amortize 206 radars)
+        max_disc = int(self.config.max_discovery_radars_per_tick)
+        if len(due_discovery) > max_disc:
+            due_discovery = due_discovery[:max_disc]
+
+        return due_discovery, due_focus
+
+    def _update_next_due(self, radar_id: str, now_ts: float, is_hot: bool):
+        """Set next eligible scan time for a radar after processing."""
+        interval = (self.config.focus_interval_seconds if is_hot
+                    else self.config.discovery_interval_seconds)
+        with self._sched_lock:
+            self._next_due[radar_id] = now_ts + interval
 
     def _extract_storm_objects(
         self,
@@ -607,11 +881,15 @@ class StormMonitor:
         if not mask.any():
             return []
 
-        # --- Connected-component BFS ---
+        # --- Connected-component BFS (8-connected) ---
         H, W = mask.shape
         visited = np.zeros((H, W), dtype=np.uint8)
         q = deque()
         comps = []
+
+        _NEIGHBORS = ((-1, -1), (-1, 0), (-1, 1),
+                       (0, -1),           (0, 1),
+                       (1, -1),  (1, 0),  (1, 1))
 
         for r in range(H):
             for c in range(W):
@@ -624,33 +902,71 @@ class StormMonitor:
                 while q:
                     rr, cc = q.popleft()
                     pts.append((rr, cc))
-                    if rr > 0 and mask[rr - 1, cc] and not visited[rr - 1, cc]:
-                        visited[rr - 1, cc] = 1; q.append((rr - 1, cc))
-                    if rr < H - 1 and mask[rr + 1, cc] and not visited[rr + 1, cc]:
-                        visited[rr + 1, cc] = 1; q.append((rr + 1, cc))
-                    if cc > 0 and mask[rr, cc - 1] and not visited[rr, cc - 1]:
-                        visited[rr, cc - 1] = 1; q.append((rr, cc - 1))
-                    if cc < W - 1 and mask[rr, cc + 1] and not visited[rr, cc + 1]:
-                        visited[rr, cc + 1] = 1; q.append((rr, cc + 1))
+                    for dr, dc in _NEIGHBORS:
+                        nr, nc = rr + dr, cc + dc
+                        if 0 <= nr < H and 0 <= nc < W and mask[nr, nc] and not visited[nr, nc]:
+                            visited[nr, nc] = 1
+                            q.append((nr, nc))
                 if len(pts) >= min_pixels:
                     comps.append(pts)
 
+        largest_comp_pixels = max((len(c) for c in comps), default=0)
+        comps_count = len(comps)
+        comps_passing = sum(1 for c in comps if len(c) >= int(min_pixels))
+
+        if getattr(self.config, 'debug_object_extraction', False):
+            try:
+                print(f"[OBJDBG] {radar_id} thr={threshold:.1f} min_px={int(min_pixels)} "
+                      f"comps={comps_count} pass={comps_passing} largest={largest_comp_pixels}")
+            except Exception:
+                pass
+
         if not comps:
             return []
+
+        # --- Gate area estimation (computed once for the sweep) ---
+        area_method = 'metadata'
+        try:
+            gate_spacing_km = float(radar.range['meters_between_gates']) / 1000.0
+        except Exception:
+            gate_spacing_km = 0.25
+            area_method = 'fallback_gate'
+
+        n_azimuths = max(len(azimuths), 1)
+        az_spacing_rad = 2.0 * math.pi / n_azimuths  # actual azimuth spacing
+
+        # Try pyart gate geometry for better accuracy
+        try:
+            x, y, _ = radar.get_gate_x_y_z(sweep_idx)  # metres
+            x_km = x / 1000.0
+            y_km = y / 1000.0
+            # Sample gate area at mid-range using Jacobian of (az, range) grid
+            mid_az = H // 2
+            mid_rng = W // 2
+            dx = float(x_km[min(mid_az + 1, H - 1), mid_rng] - x_km[max(mid_az - 1, 0), mid_rng])
+            dy = float(y_km[mid_az, min(mid_rng + 1, W - 1)] - y_km[mid_az, max(mid_rng - 1, 0)])
+            sample_gate_area = abs(dx * dy) / 4.0  # average of the 2x2 stencil
+            if 0.001 < sample_gate_area < 5.0:
+                area_method = 'pyart_gate_xy'
+        except Exception:
+            sample_gate_area = None
 
         # --- Per-object summary with dual-pol stats and hail scoring ---
         summaries = []
         for pts in comps:
             max_ref = -9999.0
-            sr = 0.0
-            sc = 0.0
+            w_sum_r = 0.0
+            w_sum_c = 0.0
+            w_total = 0.0
             rhohv_vals = []
             zdr_vals = []
 
             for rr, cc in pts:
-                sr += rr
-                sc += cc
                 v = float(arr[rr, cc])
+                w = max(v - threshold, 0.0) + 1.0  # reflectivity weight (above threshold)
+                w_sum_r += rr * w
+                w_sum_c += cc * w
+                w_total += w
                 if v > max_ref:
                     max_ref = v
                 if rhohv_arr is not None and not np.isnan(rhohv_arr[rr, cc]):
@@ -658,21 +974,22 @@ class StormMonitor:
                 if zdr_arr is not None and not np.isnan(zdr_arr[rr, cc]):
                     zdr_vals.append(float(zdr_arr[rr, cc]))
 
-            cr = sr / len(pts)
-            cc_avg = sc / len(pts)
+            # Reflectivity-weighted centroid
+            cr = w_sum_r / w_total if w_total > 0 else sum(rr for rr, _ in pts) / len(pts)
+            cc_avg = w_sum_c / w_total if w_total > 0 else sum(cc for _, cc in pts) / len(pts)
 
-            az = float(azimuths[int(round(cr))])
-            rng = float(ranges_km[int(round(cc_avg))])
+            az = float(azimuths[int(round(min(cr, H - 1)))])
+            rng = float(ranges_km[int(round(min(cc_avg, W - 1)))])
             lat, lon = self._az_range_to_latlon(radar_lat, radar_lon, az, rng)
 
-            # Rough gate area estimate
-            try:
-                gate_km = float(radar.range['meters_between_gates']) / 1000.0
-            except Exception:
-                gate_km = 0.25
-            dtheta = math.radians(1.0)
-            gate_area_km2 = max(0.01, (max(rng, 1.0) * dtheta) * gate_km)
+            # Gate area: prefer pyart gate_xy, else analytical
+            if area_method == 'pyart_gate_xy' and sample_gate_area is not None:
+                gate_area_km2 = sample_gate_area
+            else:
+                gate_area_km2 = max(0.01, (max(rng, 1.0) * az_spacing_rad) * gate_spacing_km)
             area_km2 = gate_area_km2 * len(pts)
+            # Sanity clamp: single storm object shouldn't exceed ~5000 km²
+            area_km2 = min(area_km2, 5000.0)
 
             # Approximate MESH from peak reflectivity
             ref = max_ref
@@ -718,6 +1035,7 @@ class StormMonitor:
                 'hail_score': hail_score,
                 'min_rhohv': min_rhohv,
                 'mean_zdr': mean_zdr,
+                'area_method': area_method,
             })
 
         summaries.sort(key=lambda d: d['hail_score'], reverse=True)
@@ -789,6 +1107,12 @@ class StormMonitor:
                 ref = c['reflectivity']
                 mesh_mm = max(0, 2.54 * np.exp(0.1 * (ref - 40))) if ref >= 40 else 0
                 mesh_mm = min(mesh_mm, 120)
+                # Hail score from reflectivity + MESH only (no dual-pol)
+                hs = 0.0
+                hs += min(1.0, max(0.0, (ref - 50.0) / 15.0)) * 0.30
+                hs += min(1.0, max(0.0, (mesh_mm - 15.0) / 35.0)) * 0.30
+                hs = min(1.0, max(0.0, hs))
+
                 selected.append({
                     'lat': c['lat'],
                     'lon': c['lon'],
@@ -796,6 +1120,9 @@ class StormMonitor:
                     'mesh_mm': mesh_mm,
                     'area_km2': 50,  # rough default
                     'radar_id': radar_id,
+                    'hail_score': hs,
+                    'min_rhohv': None,
+                    'mean_zdr': None,
                 })
 
         return selected
@@ -818,13 +1145,47 @@ class StormMonitor:
             radar_lat = float(radar.latitude['data'][0])
             radar_lon = float(radar.longitude['data'][0])
 
+            # DEV-only object extraction diagnostics (auto-enable in _analyze_radar)
+            if hasattr(self.config, 'debug_object_extraction'):
+                self.config.debug_object_extraction = True
+
             # --- Multi-detection extraction: storm objects first, fallback to peaks ---
-            peaks = self._extract_storm_objects(radar, radar_id, top_n=10, min_pixels=40)
+            # In real radar, storm objects can be sparse unless min_pixels is low.
+            # We try a ladder: strict -> relaxed -> peaks.
+            peaks = self._extract_storm_objects(
+                radar,
+                radar_id,
+                top_n=10,
+                min_pixels=40,
+                dbz_threshold=self.config.min_reflectivity_dbz,
+            )
+
+            if not peaks:
+                # relaxed object extraction (lets us build swaths earlier)
+                peaks = self._extract_storm_objects(
+                    radar,
+                    radar_id,
+                    top_n=10,
+                    min_pixels=15,
+                    dbz_threshold=self.config.min_reflectivity_dbz - 5.0,
+                )
+
             if not peaks:
                 peaks = self._extract_top_peaks(radar, radar_id, top_n=10, min_separation_km=10.0)
             if peaks:
                 scan_time = datetime.utcnow()
                 self._feed_tracker(peaks, scan_time)
+
+            # Store diagnostics for debug endpoint
+            try:
+                from src.web.routes.storm_tracking_api import store_last_scan_diagnostics
+                store_last_scan_diagnostics({
+                    'scan_time': datetime.utcnow().isoformat() + 'Z',
+                    'radar_id': radar_id,
+                    'detections': peaks or [],
+                })
+            except Exception:
+                pass
 
             # --- Original single-max analysis for alerting ---
             # Find max reflectivity
@@ -929,6 +1290,7 @@ class StormMonitor:
                 'classification': classification,
                 'should_alert': classification['pdr_score'] >= self.config.min_pdr_score,
                 'detections_fed': len(peaks),
+                'detections': peaks,
             }
 
         except Exception as e:
@@ -1045,15 +1407,38 @@ class StormMonitor:
             print(f"  Watch: {alert_stats.get('watch', 0)}")
             print(f"  Info: {alert_stats.get('info', 0)}")
 
+        if self.config.enable_discovery_focus:
+            s = self.get_health()
+            print(f"\nDiscovery/Focus scheduler:")
+            print(f"  Scheduled discovery: {s['scheduled_discovery']}")
+            print(f"  Scheduled focus:     {s['scheduled_focus']}")
+            print(f"  Processed OK:        {s['processed_ok']}")
+            print(f"  Processed errors:    {s['processed_err']}")
+            print(f"  Processed timeouts:  {s['processed_timeout']}")
+            print(f"  Active hot radars:   {s['active_hot_radars']}")
+            print(f"  Last tick (UTC):     {s['last_tick_utc']}")
+            if s['last_errors']:
+                print(f"  Recent errors ({len(s['last_errors'])}):")
+                for err in s['last_errors'][-5:]:
+                    print(f"    - {err}")
+
         print("=" * 70)
 
     def get_status(self) -> Dict:
         """Get current monitor status."""
-        return {
+        hot_ids = self._get_hot_radars_sorted()
+        scheduler_mode = 'discovery_focus' if self.config.enable_discovery_focus else 'legacy'
+
+        result = {
             'running': self.running,
             'radars': self.config.radar_ids,
             'scans_processed': self.stats['scans_processed'],
             'alerts_generated': self.stats['alerts_generated'],
             'last_scan': self.stats['last_scan_time'].isoformat() if self.stats['last_scan_time'] else None,
-            'active_alerts': len(self.alert_manager.get_active_alerts())
+            'active_alerts': len(self.alert_manager.get_active_alerts()),
+            'scheduler_mode': scheduler_mode,
+            'hot_radar_count': len(hot_ids),
+            'hot_radars': hot_ids,
+            'scheduler_health': self.get_health(),
         }
+        return result

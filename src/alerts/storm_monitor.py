@@ -239,6 +239,8 @@ class StormMonitor:
             "processed_ok": 0,
             "processed_err": 0,
             "processed_timeout": 0,
+            "cancelled_futures": 0,
+            "timed_out_futures": 0,
             "avg_check_seconds": 0.0,
             "last_errors": [],  # keep last ~20 strings
         }
@@ -559,43 +561,59 @@ class StormMonitor:
                 err = 0
                 elapsed_sum = 0.0
 
-                timeout = float(self.config.per_radar_timeout_seconds)
+                # Per-tick timeout: allow enough time for all futures
+                # Use per_radar_timeout * 3 to give slower radars headroom
+                tick_timeout = float(self.config.per_radar_timeout_seconds) * 3.0
 
-                for fut in as_completed(futures, timeout=max(timeout, 1.0)):
-                    if not self.running:
-                        break
+                try:
+                    for fut in as_completed(futures, timeout=tick_timeout):
+                        if not self.running:
+                            break
 
-                    rid = futures[fut]
-                    processed += 1
+                        rid = futures[fut]
+                        processed += 1
 
-                    try:
-                        res = fut.result(timeout=0)  # already completed
-                    except Exception as e:
-                        err += 1
-                        self._stats_add_error(f"{rid}: future error: {e}")
-                        self._update_next_due(rid, time.time(), self._is_hot(rid))
-                        continue
+                        try:
+                            res = fut.result(timeout=0)  # already completed
+                        except Exception as e:
+                            err += 1
+                            self._stats_add_error(f"{rid}: future error: {e}")
+                            self._update_next_due(rid, time.time(), self._is_hot(rid))
+                            continue
 
-                    elapsed_sum += float(res.get("elapsed") or 0.0)
-                    result_ts = time.time()
+                        elapsed_sum += float(res.get("elapsed") or 0.0)
+                        result_ts = time.time()
 
-                    if not res.get("ok"):
-                        err += 1
-                        self._stats_add_error(f"{rid}: {res.get('error')}")
+                        if not res.get("ok"):
+                            err += 1
+                            self._stats_add_error(f"{rid}: {res.get('error')}")
+                            self._update_next_due(rid, result_ts, self._is_hot(rid))
+                            continue
+
+                        ok += 1
+
+                        # Promote to HOT based on cheap evidence
+                        max_ref = res.get("max_reflectivity")
+                        hail_peak = res.get("hail_score_peak")
+
+                        if (max_ref is not None and float(max_ref) >= float(self.config.hot_promote_dbz)) or \
+                           (hail_peak is not None and float(hail_peak) >= float(self.config.hot_promote_hail_score)):
+                            self._mark_radar_hot(rid, result_ts)
+
                         self._update_next_due(rid, result_ts, self._is_hot(rid))
-                        continue
-
-                    ok += 1
-
-                    # Promote to HOT based on cheap evidence
-                    max_ref = res.get("max_reflectivity")
-                    hail_peak = res.get("hail_score_peak")
-
-                    if (max_ref is not None and float(max_ref) >= float(self.config.hot_promote_dbz)) or \
-                       (hail_peak is not None and float(hail_peak) >= float(self.config.hot_promote_hail_score)):
-                        self._mark_radar_hot(rid, result_ts)
-
-                    self._update_next_due(rid, result_ts, self._is_hot(rid))
+                except TimeoutError:
+                    # Some futures didn't finish in time — cancel and move on
+                    timed_out = len(futures) - processed
+                    cancelled = sum(1 for fut in futures if fut.cancel())
+                    self._stats_add_error(
+                        f"tick_timeout: {timed_out}/{len(futures)} futures unfinished "
+                        f"after {tick_timeout:.0f}s, cancelled={cancelled}"
+                    )
+                    err += timed_out
+                    with self._stats_lock:
+                        self._stats["processed_timeout"] += 1
+                        self._stats["cancelled_futures"] += cancelled
+                        self._stats["timed_out_futures"] += timed_out
 
                 # Update rolling stats
                 with self._stats_lock:

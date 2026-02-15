@@ -504,7 +504,7 @@ def _build_system_mode_payload():
 
     global _monitor_instance, _started_by
 
-    if _monitor_instance is None or not _monitor_instance.running:
+    if _monitor_instance is None or not getattr(_monitor_instance, 'running', False):
         return {
             'active_engine': 'none',
             'started_by': 'n/a',
@@ -534,6 +534,9 @@ def _build_system_mode_payload():
         'avg_check_seconds': health.get('avg_check_seconds', 0),
         'processed_ok': health.get('processed_ok', 0),
         'processed_err': health.get('processed_err', 0),
+        'processed_timeout': health.get('processed_timeout', 0),
+        'cancelled_futures': health.get('cancelled_futures', 0),
+        'timed_out_futures': health.get('timed_out_futures', 0),
         'last_errors': health.get('last_errors', [])[:5],
         'pid': os.getpid(),
         'thread': threading.current_thread().name,

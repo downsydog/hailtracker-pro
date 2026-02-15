@@ -1,0 +1,16 @@
+node_modules/
+.git/
+__pycache__/
+*.pyc
+.env
+.env.*
+exports/
+logs/
+*.log
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+.vscode/
+.idea/

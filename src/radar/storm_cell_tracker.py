@@ -124,6 +124,17 @@ class StormEvent:
     impact_window_minutes: int = 0
     event_quality_score: int = 0  # 0-100
     event_quality_reasons: List[str] = field(default_factory=list)
+    # (A) Authoritative hail size: MRMS when available, else radar MESH
+    authoritative_hail_mm: float = 0.0
+    authoritative_hail_inches: float = 0.0
+    # (B) Commercial confidence score (0-100) + evidence flags
+    commercial_confidence: float = 0.0
+    evidence_mrms: bool = False
+    evidence_dualpol: bool = False
+    evidence_multi_radar: bool = False
+    evidence_spc: bool = False
+    evidence_lsr: bool = False
+    evidence_persistence: bool = False
 
 
 class StormCellTracker:
@@ -856,21 +867,53 @@ class StormCellTracker:
                     avg_width = 6.0  # default km
                     area += t.track_length_km * avg_width
 
-            # Severity (stable thresholds)
-            if max_mesh_inches >= 1.25 or max_ref >= 65.0:
-                severity = 'severe'
-            elif max_mesh_inches >= 1.00 or max_ref >= 58.0:
-                severity = 'moderate'
-            else:
-                severity = 'light'
-
             # MRMS MESH aggregation across cells
             mrms_peaks = [c.mrms_mesh_peak for c in cells_in_cluster if c.mrms_mesh_peak is not None]
             mrms_avgs = [c.mrms_mesh_avg for c in cells_in_cluster if c.mrms_mesh_avg is not None]
             ev_mrms_peak = max(mrms_peaks) if mrms_peaks else None
             ev_mrms_avg = round(sum(mrms_avgs) / len(mrms_avgs), 1) if mrms_avgs else None
 
-            # Confidence (conservative bonuses)
+            # (A) Authoritative hail size: prefer MRMS when available
+            if ev_mrms_peak is not None and ev_mrms_peak > 0:
+                auth_hail_mm = ev_mrms_peak
+            else:
+                auth_hail_mm = max_mesh_mm
+            auth_hail_inches = round(auth_hail_mm / 25.4, 2) if auth_hail_mm > 0 else 0.0
+
+            # Severity (stable thresholds) — uses authoritative hail
+            if auth_hail_inches >= 1.25 or max_ref >= 65.0:
+                severity = 'severe'
+            elif auth_hail_inches >= 1.00 or max_ref >= 58.0:
+                severity = 'moderate'
+            else:
+                severity = 'light'
+
+            # (B) Commercial confidence scoring (0-100)
+            # Evidence flags
+            ev_evidence_mrms = ev_mrms_peak is not None and ev_mrms_peak > 0
+            ev_evidence_dualpol = ev_hs_peak >= 0.35  # hail_score from dual-pol gating
+            ev_evidence_multi_radar = len(radar_ids) >= 2
+            ev_evidence_persistence = duration_minutes >= 10 or len(cluster_cids) >= 2
+            ev_evidence_spc = False   # populated by external SPC feed if available
+            ev_evidence_lsr = False   # populated by external LSR feed if available
+
+            # Component scores (0..1)
+            mrms_sc = 0.0
+            if ev_evidence_mrms and ev_mrms_peak is not None:
+                mrms_sc = max(0.0, min(1.0, (ev_mrms_peak - 15.0) / 35.0))  # 0@15mm, 1@50mm
+            dualpol_sc = min(1.0, ev_hs_peak / 0.7) if ev_evidence_dualpol else 0.0
+            agree_sc = 1.0 if len(radar_ids) >= 3 else (0.6 if len(radar_ids) >= 2 else 0.0)
+            spc_sc = 0.0   # future: SPC hail prob near centroid
+            lsr_sc = 0.0   # future: LSR hail report match
+            persist_sc = min(1.0, duration_minutes / 20.0) if ev_evidence_persistence else 0.0
+
+            commercial_conf = round(
+                (mrms_sc * 30 + dualpol_sc * 20 + agree_sc * 15 +
+                 spc_sc * 15 + lsr_sc * 10 + persist_sc * 10)
+            )
+            commercial_conf = max(0, min(100, commercial_conf))
+
+            # Legacy confidence (0.0 - 0.95) kept for backward compat
             confidence = 0.4
             if radar_ids:
                 confidence += 0.1
@@ -878,11 +921,10 @@ class StormCellTracker:
                 confidence += 0.1
             if max_ref >= 68.0:
                 confidence += 0.1
-            if max_mesh_inches >= 1.50:
+            if auth_hail_inches >= 1.50:
                 confidence += 0.1
             if duration_minutes >= 20:
                 confidence += 0.1
-            # MRMS corroboration bonus
             if ev_mrms_peak is not None and ev_mrms_peak >= 25.0:
                 confidence += 0.05
             confidence = min(confidence, 0.95)
@@ -989,6 +1031,15 @@ class StormCellTracker:
                 impact_window_minutes=impact_window_minutes,
                 event_quality_score=eq_score,
                 event_quality_reasons=eq_reasons,
+                authoritative_hail_mm=round(auth_hail_mm, 1),
+                authoritative_hail_inches=auth_hail_inches,
+                commercial_confidence=commercial_conf,
+                evidence_mrms=ev_evidence_mrms,
+                evidence_dualpol=ev_evidence_dualpol,
+                evidence_multi_radar=ev_evidence_multi_radar,
+                evidence_spc=ev_evidence_spc,
+                evidence_lsr=ev_evidence_lsr,
+                evidence_persistence=ev_evidence_persistence,
             ))
 
         return events
@@ -1217,6 +1268,15 @@ class StormCellTracker:
                     'hail_score_avg': event.hail_score_avg,
                     'mrms_mesh_peak': event.mrms_mesh_peak,
                     'mrms_mesh_avg': event.mrms_mesh_avg,
+                    'authoritative_hail_mm': event.authoritative_hail_mm,
+                    'authoritative_hail_inches': event.authoritative_hail_inches,
+                    'commercial_confidence': event.commercial_confidence,
+                    'evidence_mrms': event.evidence_mrms,
+                    'evidence_dualpol': event.evidence_dualpol,
+                    'evidence_multi_radar': event.evidence_multi_radar,
+                    'evidence_spc': event.evidence_spc,
+                    'evidence_lsr': event.evidence_lsr,
+                    'evidence_persistence': event.evidence_persistence,
                     'event_time': event.end_time.isoformat(),
                     'method': method,
                 },

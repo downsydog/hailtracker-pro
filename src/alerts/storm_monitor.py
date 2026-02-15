@@ -1222,6 +1222,7 @@ class StormMonitor:
         """
         Persist all tracker events (with swaths) into CRM hail_events table.
         Idempotent via event_name UPSERT for NEXRAD_REALTIME events.
+        Applies quality gate: suppress low-confidence junk.
         """
         try:
             from src.web.routes.storm_tracking_api import get_tracker
@@ -1243,9 +1244,33 @@ class StormMonitor:
                     ON hail_events(event_name) WHERE data_source = 'NEXRAD_REALTIME'
                 """)
 
+                # Migrate: add evidence columns if missing
+                for col_def in [
+                    ('evidence_mrms', 'INTEGER DEFAULT 0'),
+                    ('evidence_dualpol', 'INTEGER DEFAULT 0'),
+                    ('evidence_multi_radar', 'INTEGER DEFAULT 0'),
+                    ('evidence_spc', 'INTEGER DEFAULT 0'),
+                    ('evidence_lsr', 'INTEGER DEFAULT 0'),
+                    ('evidence_persistence', 'INTEGER DEFAULT 0'),
+                ]:
+                    try:
+                        conn.execute(f"ALTER TABLE hail_events ADD COLUMN {col_def[0]} {col_def[1]}")
+                    except Exception:
+                        pass  # column already exists
+
                 persisted = 0
+                suppressed = 0
                 for ev in events:
                     try:
+                        # --- Quality gate ---
+                        if ev.commercial_confidence < 45:
+                            suppressed += 1
+                            continue
+                        mrms_val = ev.mrms_mesh_peak if ev.mrms_mesh_peak is not None else 0
+                        if mrms_val < 20 and not ev.evidence_dualpol and not ev.evidence_lsr:
+                            suppressed += 1
+                            continue
+
                         # Build swath polygon GeoJSON
                         swath_json = None
                         swath_method = 'tracker'
@@ -1290,7 +1315,8 @@ class StormMonitor:
                         if swath_area_sqmi == 0.0 and ev.estimated_area_sq_km > 0:
                             swath_area_sqmi = round(ev.estimated_area_sq_km * 0.386102, 1)
 
-                        max_hail_size = ev.max_mesh_inches
+                        # Use authoritative hail size (MRMS-preferred)
+                        max_hail_size = ev.authoritative_hail_inches
                         avg_hail_size = round(max_hail_size * 0.65, 2) if max_hail_size > 0 else 0.0
 
                         conn.execute("""
@@ -1298,8 +1324,11 @@ class StormMonitor:
                                 event_name, event_date, start_time, end_time,
                                 center_lat, center_lon, swath_polygon, swath_area_sqmi,
                                 max_hail_size, avg_hail_size, max_reflectivity, avg_reflectivity,
-                                swath_method, num_detections, data_source, confidence_score
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NEXRAD_REALTIME', ?)
+                                swath_method, num_detections, data_source, confidence_score,
+                                evidence_mrms, evidence_dualpol, evidence_multi_radar,
+                                evidence_spc, evidence_lsr, evidence_persistence
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NEXRAD_REALTIME', ?,
+                                      ?, ?, ?, ?, ?, ?)
                             ON CONFLICT(event_name) WHERE data_source = 'NEXRAD_REALTIME'
                             DO UPDATE SET
                                 end_time = excluded.end_time,
@@ -1312,6 +1341,12 @@ class StormMonitor:
                                 swath_method = excluded.swath_method,
                                 num_detections = excluded.num_detections,
                                 confidence_score = excluded.confidence_score,
+                                evidence_mrms = excluded.evidence_mrms,
+                                evidence_dualpol = excluded.evidence_dualpol,
+                                evidence_multi_radar = excluded.evidence_multi_radar,
+                                evidence_spc = excluded.evidence_spc,
+                                evidence_lsr = excluded.evidence_lsr,
+                                evidence_persistence = excluded.evidence_persistence,
                                 updated_at = CURRENT_TIMESTAMP
                         """, (
                             ev.event_id,
@@ -1323,14 +1358,17 @@ class StormMonitor:
                             max_hail_size, avg_hail_size,
                             ev.max_reflectivity, round(ev.max_reflectivity * 0.85, 1),
                             swath_method, len(ev.cell_ids),
-                            ev.confidence,
+                            ev.commercial_confidence,
+                            int(ev.evidence_mrms), int(ev.evidence_dualpol),
+                            int(ev.evidence_multi_radar), int(ev.evidence_spc),
+                            int(ev.evidence_lsr), int(ev.evidence_persistence),
                         ))
                         persisted += 1
                     except Exception as e:
                         print(f"[PERSIST-ERROR] event {ev.event_id}: {e}")
 
-                if persisted > 0:
-                    print(f"    Persisted {persisted} events to hail_events DB")
+                if persisted > 0 or suppressed > 0:
+                    print(f"    Persisted {persisted} events, suppressed {suppressed} (quality gate)")
         except Exception as e:
             print(f"[PERSIST-ERROR] {e}")
 

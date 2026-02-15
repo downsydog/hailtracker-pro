@@ -320,6 +320,15 @@ def get_events():
             'event_quality_reasons': ev.event_quality_reasons,
             'hail_score_peak': ev.hail_score_peak,
             'hail_score_avg': ev.hail_score_avg,
+            'authoritative_hail_mm': ev.authoritative_hail_mm,
+            'authoritative_hail_inches': ev.authoritative_hail_inches,
+            'commercial_confidence': ev.commercial_confidence,
+            'evidence_mrms': ev.evidence_mrms,
+            'evidence_dualpol': ev.evidence_dualpol,
+            'evidence_multi_radar': ev.evidence_multi_radar,
+            'evidence_spc': ev.evidence_spc,
+            'evidence_lsr': ev.evidence_lsr,
+            'evidence_persistence': ev.evidence_persistence,
         })
 
     return jsonify({

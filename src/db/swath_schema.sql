@@ -32,7 +32,15 @@ CREATE TABLE IF NOT EXISTS hail_events (
     swath_method TEXT NOT NULL,  -- 'circular', 'elliptical', 'track', 'composite', 'reflectivity'
     num_detections INTEGER DEFAULT 1,
     data_source TEXT DEFAULT 'NEXRAD',  -- 'NEXRAD', 'Social Media', 'Manual', 'Combined'
-    confidence_score REAL,  -- 0-100
+    confidence_score REAL,  -- 0-100 commercial confidence
+
+    -- Evidence flags (populated by commercial confidence scorer)
+    evidence_mrms INTEGER DEFAULT 0,
+    evidence_dualpol INTEGER DEFAULT 0,
+    evidence_multi_radar INTEGER DEFAULT 0,
+    evidence_spc INTEGER DEFAULT 0,
+    evidence_lsr INTEGER DEFAULT 0,
+    evidence_persistence INTEGER DEFAULT 0,
 
     -- Related data
     affected_locations INTEGER DEFAULT 0,  -- Count of fleet locations hit

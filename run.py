@@ -79,9 +79,12 @@ def main():
     if args.monitor:
         logger.info("Starting StormMonitor (radar engine)...")
         from src.alerts.storm_monitor import StormMonitor, MonitorConfig
+        from src.alerts.monitor_defaults import national_monitor_defaults
+
+        # National defaults from env (or sane built-ins), then CLI override
         config = MonitorConfig(
+            **national_monitor_defaults(),
             scan_interval_seconds=args.monitor_interval,
-            enable_discovery_focus=True,
         )
         monitor = StormMonitor(config)
         monitor.start(background=True)
@@ -98,7 +101,8 @@ def main():
     ===========================================================
     |   ENGINE: StormMonitor ({mode}){'  ' if mode == 'discovery_focus' else '               '}|
     |   Started by: cli                                       |
-    |   Workers: {config.max_workers:<3} | Scan interval: {config.scan_interval_seconds}s{' ' * (19 - len(str(config.scan_interval_seconds)))}|
+    |   Workers: {config.max_workers:<3} | Batch: {config.max_discovery_radars_per_tick:<3} | Timeout: {config.per_radar_timeout_seconds}s{' ' * (12 - len(str(config.per_radar_timeout_seconds)))}|
+    |   Discovery: {config.discovery_interval_seconds}s | Focus: {config.focus_interval_seconds}s | Hot TTL: {config.hot_ttl_seconds}s    |
     ===========================================================
         """)
 

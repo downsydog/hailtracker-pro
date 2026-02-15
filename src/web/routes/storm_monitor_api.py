@@ -9,8 +9,10 @@ Endpoints:
 - Config: get/update configuration
 """
 
+import math
 from flask import Blueprint, request, jsonify
 from src.core.auth.decorators import login_required
+from src.alerts.monitor_defaults import national_monitor_defaults
 
 storm_monitor_api_bp = Blueprint('storm_monitor_api', __name__, url_prefix='/api/storm-monitor')
 system_api_bp = Blueprint('system_api', __name__, url_prefix='/api/system')
@@ -42,9 +44,10 @@ def set_monitor_instance(monitor, started_by='unknown'):
 
 
 def get_default_config():
-    """Get default monitor configuration as dict"""
+    """Get default monitor configuration as dict (national defaults + env overrides)."""
     from src.alerts.storm_monitor import MonitorConfig
-    config = MonitorConfig()
+    defaults = national_monitor_defaults()
+    config = MonitorConfig(**defaults)
     return {
         'radar_ids': config.radar_ids,
         'scan_interval_seconds': config.scan_interval_seconds,
@@ -592,6 +595,54 @@ def get_metrics():
         metrics['workers'] = {'backend': 'unavailable'}
 
     return jsonify(metrics)
+
+
+@system_api_bp.route('/cadence', methods=['GET'])
+def cadence_report():
+    """
+    Human-readable national monitoring cadence report.
+    No auth required — safe for ops dashboards.
+    """
+    try:
+        from src.radar.coverage import get_all_radars
+        radars = get_all_radars()
+        radars_active = len(radars)
+    except Exception:
+        radars_active = None
+
+    d = national_monitor_defaults()
+    batch = int(d.get("max_discovery_radars_per_tick", 80))
+    disc = int(d.get("discovery_interval_seconds", 300))
+    focus = int(d.get("focus_interval_seconds", 180))
+    max_focus = int(d.get("max_focus_radars", 100))
+    timeout_s = int(d.get("per_radar_timeout_seconds", 60))
+    workers = int(d.get("max_workers", 24))
+
+    est_sweep_min = None
+    if radars_active and batch > 0:
+        ticks = math.ceil(radars_active / batch)
+        est_sweep_min = round((ticks * disc) / 60.0, 1)
+
+    verdict = "UNKNOWN"
+    if est_sweep_min is not None:
+        if est_sweep_min <= 20:
+            verdict = f"OK: national sweep ~{est_sweep_min} min"
+        elif est_sweep_min <= 45:
+            verdict = f"MEH: national sweep ~{est_sweep_min} min (consider higher batch/workers)"
+        else:
+            verdict = f"BAD: national sweep ~{est_sweep_min} min (too slow for national 24/7)"
+
+    return jsonify({
+        "radars_active": radars_active,
+        "max_workers": workers,
+        "discovery_batch": batch,
+        "discovery_interval_seconds": disc,
+        "estimated_full_sweep_minutes": est_sweep_min,
+        "focus_interval_seconds": focus,
+        "max_focus_radars": max_focus,
+        "per_radar_timeout_seconds": timeout_s,
+        "verdict": verdict,
+    })
 
 
 @storm_monitor_api_bp.route('/radar/loop', methods=['GET'])

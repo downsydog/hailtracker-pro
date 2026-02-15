@@ -127,16 +127,17 @@ class MonitorConfig:
     database_url: str = 'sqlite:///data/alerts/alerts.db'
 
     # --- Scheduler knobs (Discovery -> Focus) ---
+    # National defaults: 24 workers, 80/tick batch → ~15 min full sweep of 206 radars
     enable_discovery_focus: bool = True
-    max_workers: int = 12
-    max_discovery_radars_per_tick: int = 40
-    discovery_interval_seconds: int = 900       # 15 min
-    focus_interval_seconds: int = 180           # 3 min
+    max_workers: int = 24
+    max_discovery_radars_per_tick: int = 80
+    discovery_interval_seconds: int = 300       # 5 min between discovery ticks
+    focus_interval_seconds: int = 180           # 3 min for hot radars
     hot_ttl_seconds: int = 2400                 # 40 min
-    max_focus_radars: int = 80
+    max_focus_radars: int = 100
     hot_promote_dbz: float = 55.0
     hot_promote_hail_score: float = 0.20
-    per_radar_timeout_seconds: int = 45
+    per_radar_timeout_seconds: int = 60
 
 
 class StormMonitor:

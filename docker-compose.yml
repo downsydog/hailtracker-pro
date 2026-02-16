@@ -21,6 +21,8 @@ services:
       - LOG_FORMAT=${LOG_FORMAT:-text}
       - RATE_LIMIT_DEFAULT=${RATE_LIMIT_DEFAULT:-60/minute}
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
+      - STORM_MAX_WORKERS=${STORM_MAX_WORKERS:-6}
+      - STORM_DISCOVERY_BATCH=${STORM_DISCOVERY_BATCH:-20}
     volumes:
       - ./data:/app/data
       - ./database:/app/database

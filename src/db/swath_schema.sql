@@ -51,6 +51,9 @@ CREATE TABLE IF NOT EXISTS hail_events (
     -- Severity classification
     severity TEXT DEFAULT 'MINOR',  -- 'MINOR', 'MODERATE', 'SEVERE', 'CATASTROPHIC'
 
+    -- Event lifecycle
+    status TEXT DEFAULT 'CANDIDATE',  -- 'CANDIDATE' or 'CONFIRMED'
+
     -- Related data
     affected_locations INTEGER DEFAULT 0,  -- Count of fleet locations hit
     estimated_vehicles INTEGER DEFAULT 0,  -- Total vehicles affected
@@ -65,6 +68,7 @@ CREATE INDEX IF NOT EXISTS idx_hail_events_date ON hail_events(event_date);
 CREATE INDEX IF NOT EXISTS idx_hail_events_location ON hail_events(center_lat, center_lon);
 CREATE INDEX IF NOT EXISTS idx_hail_events_method ON hail_events(swath_method);
 CREATE INDEX IF NOT EXISTS idx_hail_events_hail_size ON hail_events(max_hail_size);
+CREATE INDEX IF NOT EXISTS idx_hail_events_status ON hail_events(status);
 
 -- Partial unique index: enforce uniqueness for realtime tracker events only
 -- (historical NOAA data may have duplicate event_names, so this is scoped)

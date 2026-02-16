@@ -47,5 +47,6 @@ EXPOSE 5000
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=30s \
   CMD curl -sf http://localhost:5000/api/system/health || exit 1
 
-CMD ["micromamba", "run", "-n", "hail", \
-     "python", "run.py", "--host", "0.0.0.0", "--port", "5000", "--monitor"]
+# Use exec so Python becomes PID 1 and receives signals directly.
+# micromamba run wraps the child process — signals may not be forwarded.
+CMD ["bash", "-c", "eval \"$(micromamba shell hook --shell bash)\" && micromamba activate hail && exec python run.py --host 0.0.0.0 --port 5000 --monitor"]

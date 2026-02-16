@@ -7,8 +7,10 @@ Starts the HailTracker Pro web application and optional live monitoring.
 
 import os
 import sys
+import time
 import argparse
 import logging
+import threading
 from pathlib import Path
 
 # Project paths
@@ -52,6 +54,10 @@ def main():
     configure_logging(log_level=log_level_str)
 
     logger = logging.getLogger('HailTrackerPro')
+
+    # Install signal handlers for graceful shutdown (SIGTERM/SIGINT)
+    from src.safety.shutdown import install_shutdown_handlers, is_shutting_down
+    install_shutdown_handlers()
 
     # Display banner
     print("""
@@ -113,13 +119,42 @@ def main():
             debug=args.debug,
             use_reloader=False if args.monitor else args.debug
         )
+        # If app.run() returns normally, log it — this should never happen
+        logger.warning("[MAIN] app.run() returned normally (unexpected)")
+        print("[MAIN] app.run() returned normally — this should not happen",
+              flush=True)
+    except SystemExit as e:
+        logger.warning("[MAIN] app.run() raised SystemExit(%s)", e.code)
+        print(f"[MAIN] app.run() raised SystemExit({e.code})", flush=True)
+    except KeyboardInterrupt:
+        logger.info("[MAIN] KeyboardInterrupt — shutting down")
+        print("[MAIN] KeyboardInterrupt", flush=True)
+    except Exception as e:
+        logger.error("[MAIN] app.run() raised %s: %s", type(e).__name__, e)
+        print(f"[MAIN] app.run() raised {type(e).__name__}: {e}", flush=True)
     finally:
+        # If monitor is running, keep the main thread alive so the daemon
+        # thread's finally block (persist + swath) can complete the current tick.
+        if monitor and monitor.running and not is_shutting_down():
+            logger.warning("[MAIN] Flask exited but monitor still running — "
+                           "keeping process alive")
+            print("[MAIN] Flask exited but monitor still running — "
+                  "keeping process alive (Ctrl+C or SIGTERM to stop)",
+                  flush=True)
+            try:
+                while monitor.running and not is_shutting_down():
+                    time.sleep(5)
+            except (KeyboardInterrupt, SystemExit):
+                pass
+
         if monitor:
             logger.info("Stopping StormMonitor...")
             monitor.stop()
         # Close DB connection pool
         from src.db.engine import close_engine
         close_engine()
+        logger.info("[MAIN] shutdown complete, pid=%d", os.getpid())
+        print(f"[MAIN] shutdown complete, pid={os.getpid()}", flush=True)
 
 
 if __name__ == '__main__':

@@ -9,6 +9,7 @@ import sys
 import math
 import time
 import json
+import logging
 from collections import deque
 import tempfile
 import threading
@@ -34,6 +35,8 @@ except ImportError:
 from .alert_manager import AlertManager, Alert, AlertLevel
 from .notifiers import ConsoleNotifier, SoundNotifier, FileNotifier
 from .geo_filter import GeoFilter, get_suggested_radars, list_named_regions
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -562,12 +565,16 @@ class StormMonitor:
                 err = 0
                 elapsed_sum = 0.0
 
-                # Per-tick timeout: allow enough time for all futures
-                # Use per_radar_timeout * 3 to give slower radars headroom
-                tick_timeout = float(self.config.per_radar_timeout_seconds) * 3.0
+                # Hard wall-clock deadline: tick MUST finish within this budget
+                # so that swath generation and persistence always run.
+                tick_wall_seconds = min(
+                    float(self.config.per_radar_timeout_seconds) * 3.0,
+                    float(os.environ.get('STORM_TICK_WALL_SECONDS', '240')),
+                )
+                tick_deadline = tick_start + tick_wall_seconds
 
                 try:
-                    for fut in as_completed(futures, timeout=tick_timeout):
+                    for fut in as_completed(futures, timeout=max(1, tick_deadline - time.time())):
                         if not self.running:
                             break
 
@@ -578,7 +585,8 @@ class StormMonitor:
                             res = fut.result(timeout=0)  # already completed
                         except Exception as e:
                             err += 1
-                            self._stats_add_error(f"{rid}: future error: {e}")
+                            with self._stats_lock:
+                                self._stats["processed_err"] += 1
                             self._update_next_due(rid, time.time(), self._is_hot(rid))
                             continue
 
@@ -587,11 +595,14 @@ class StormMonitor:
 
                         if not res.get("ok"):
                             err += 1
-                            self._stats_add_error(f"{rid}: {res.get('error')}")
+                            with self._stats_lock:
+                                self._stats["processed_err"] += 1
                             self._update_next_due(rid, result_ts, self._is_hot(rid))
                             continue
 
                         ok += 1
+                        with self._stats_lock:
+                            self._stats["processed_ok"] += 1
 
                         # Promote to HOT based on cheap evidence
                         max_ref = res.get("max_reflectivity")
@@ -602,44 +613,54 @@ class StormMonitor:
                             self._mark_radar_hot(rid, result_ts)
 
                         self._update_next_due(rid, result_ts, self._is_hot(rid))
+
+                        # Enforce hard wall-clock deadline
+                        if time.time() >= tick_deadline:
+                            break
                 except TimeoutError:
-                    # Some futures didn't finish in time — cancel and move on
+                    pass  # deadline reached — proceed to persist
+                finally:
+                    # Cancel any remaining futures (best-effort, non-blocking)
+                    not_done = [f for f in futures if not f.done()]
+                    cancelled = sum(1 for f in not_done if f.cancel())
                     timed_out = len(futures) - processed
-                    cancelled = sum(1 for fut in futures if fut.cancel())
-                    self._stats_add_error(
-                        f"tick_timeout: {timed_out}/{len(futures)} futures unfinished "
-                        f"after {tick_timeout:.0f}s, cancelled={cancelled}"
-                    )
-                    err += timed_out
+                    if timed_out > 0:
+                        with self._stats_lock:
+                            self._stats["processed_timeout"] += 1
+                            self._stats["cancelled_futures"] += cancelled
+                            self._stats["timed_out_futures"] += timed_out
+
+                    # Update rolling avg
                     with self._stats_lock:
-                        self._stats["processed_timeout"] += 1
-                        self._stats["cancelled_futures"] += cancelled
-                        self._stats["timed_out_futures"] += timed_out
+                        if processed > 0:
+                            avg = elapsed_sum / processed
+                            prev = self._stats["avg_check_seconds"]
+                            self._stats["avg_check_seconds"] = (
+                                0.8 * prev + 0.2 * avg if prev > 0 else avg
+                            )
 
-                # Update rolling stats
-                with self._stats_lock:
-                    self._stats["processed_ok"] += ok
-                    self._stats["processed_err"] += err
-                    if processed > 0:
-                        avg = elapsed_sum / processed
-                        prev = self._stats["avg_check_seconds"]
-                        self._stats["avg_check_seconds"] = (
-                            0.8 * prev + 0.2 * avg if prev > 0 else avg
-                        )
+                    tick_wall = time.time() - tick_start
+                    print(
+                        f"  [TICK] wall={tick_wall:.0f}s budget={tick_wall_seconds:.0f}s "
+                        f"processed={processed}/{len(futures)} ok={ok} err={err} "
+                        f"timed_out={timed_out} cancelled={cancelled}",
+                        flush=True,
+                    )
 
-                self.stats['last_scan_time'] = datetime.now()
+                    self.stats['last_scan_time'] = datetime.now()
 
-                # Auto-generate swaths for active events (never crashes the loop)
-                try:
-                    self._auto_generate_swaths()
-                except Exception as e:
-                    self._stats_add_error(f"auto_swath: {e}")
+                    # Auto-generate swaths (ALWAYS runs, even after timeout)
+                    try:
+                        self._auto_generate_swaths()
+                    except Exception as e:
+                        self._stats_add_error(f"auto_swath: {e}")
 
-                # Persist tracker events to CRM hail_events table
-                try:
-                    self._persist_tracker_events()
-                except Exception as e:
-                    self._stats_add_error(f"persist_events: {e}")
+                    # Persist tracker events (ALWAYS runs, even after timeout)
+                    print("[TICK] calling _persist_tracker_events", flush=True)
+                    try:
+                        self._persist_tracker_events()
+                    except Exception as e:
+                        self._stats_add_error(f"persist_events: {e}")
 
                 # Sleep until next tick — use the shorter focus interval
                 # so hot radars get re-scanned promptly
@@ -695,6 +716,7 @@ class StormMonitor:
 
             # Analyze for hail
             analysis = self._analyze_radar(radar, radar_id)
+            del radar  # free Py-ART Radar object (~200-500MB) immediately
 
             self.stats['scans_processed'] += 1
             with self._scans_lock:
@@ -775,7 +797,6 @@ class StormMonitor:
 
     def _stats_add_error(self, msg: str):
         with self._stats_lock:
-            self._stats["processed_err"] += 1
             self._stats["last_errors"].append(msg)
             if len(self._stats["last_errors"]) > 20:
                 self._stats["last_errors"] = self._stats["last_errors"][-20:]
@@ -1249,12 +1270,19 @@ class StormMonitor:
         try:
             from src.web.routes.storm_tracking_api import get_tracker
             tracker = get_tracker()
-        except Exception:
+        except Exception as e:
+            logger.info("[PERSIST_DEBUG] tracker_unavailable | reason=%s", e)
+            print(f"[PERSIST_DEBUG] tracker_unavailable | reason={e}", flush=True)
             return
 
         events = tracker.get_events(lookback_minutes=360, join_distance_km=25.0)
         if not events:
+            logger.info("[PERSIST_DEBUG] cycle_total=0 | no tracker events to persist")
+            print("[PERSIST_DEBUG] cycle_total=0 | no tracker events to persist", flush=True)
             return
+
+        logger.info("[PERSIST_DEBUG] cycle_total=%d | beginning persist cycle", len(events))
+        print(f"[PERSIST_DEBUG] cycle_total={len(events)} | beginning persist cycle", flush=True)
 
         from src.db.engine import get_connection
 
@@ -1279,24 +1307,37 @@ class StormMonitor:
                     ('bbox_min_lon', 'REAL'),
                     ('bbox_max_lon', 'REAL'),
                     ('severity', "TEXT DEFAULT 'MINOR'"),
+                    ('status', "TEXT DEFAULT 'CANDIDATE'"),
                 ]:
                     try:
                         conn.execute(f"ALTER TABLE hail_events ADD COLUMN {col_def[0]} {col_def[1]}")
                     except Exception:
                         pass  # column already exists
 
+                # Fix legacy 0-1 confidence values from event_persister
+                conn.execute("""
+                    UPDATE hail_events
+                    SET confidence_score = ROUND(confidence_score * 100)
+                    WHERE data_source = 'NEXRAD_REALTIME'
+                      AND confidence_score > 0
+                      AND confidence_score < 1.0
+                """)
+
                 persisted = 0
-                suppressed = 0
+                confirmed = 0
+                damage_grid_work = []  # (event_id, grid_cells) to persist after conn closes
                 for ev in events:
                     try:
-                        # --- Quality gate ---
-                        if ev.commercial_confidence < 45:
-                            suppressed += 1
-                            continue
+                        # Determine status: CONFIRMED requires real evidence
                         mrms_val = ev.mrms_mesh_peak if ev.mrms_mesh_peak is not None else 0
-                        if mrms_val < 20 and not ev.evidence_dualpol and not ev.evidence_lsr:
-                            suppressed += 1
-                            continue
+                        has_confirming_evidence = (
+                            mrms_val >= 20
+                            or ev.evidence_dualpol
+                            or ev.evidence_lsr
+                            or ev.evidence_persistence
+                            or ev.evidence_multi_radar
+                        )
+                        status = 'CONFIRMED' if has_confirming_evidence else 'CANDIDATE'
 
                         # Build swath polygon GeoJSON
                         swath_json = None
@@ -1376,6 +1417,25 @@ class StormMonitor:
                         else:
                             severity = 'MINOR'
 
+                        _pd_msg = (
+                            f"[PERSIST_DEBUG] event={ev.event_id}"
+                            f" | hail_mm={getattr(ev, 'authoritative_hail_mm', 0.0) or 0.0:.1f}"
+                            f" | hail_in={max_hail_size:.2f}"
+                            f" | conf={ev.commercial_confidence:.1f}"
+                            f" | mrms_peak={mrms_val}"
+                            f" | ev_mrms={int(ev.evidence_mrms)}"
+                            f" ev_dualpol={int(ev.evidence_dualpol)}"
+                            f" ev_lsr={int(ev.evidence_lsr)}"
+                            f" ev_persist={int(ev.evidence_persistence)}"
+                            f" ev_multi={int(ev.evidence_multi_radar)}"
+                            f" | status={status}"
+                            f" | severity={severity}"
+                            f" | swath={swath_method}"
+                            f" | cells={len(ev.cell_ids)}"
+                        )
+                        logger.info(_pd_msg)
+                        print(_pd_msg, flush=True)
+
                         conn.execute("""
                             INSERT INTO hail_events (
                                 event_name, event_date, start_time, end_time,
@@ -1384,33 +1444,39 @@ class StormMonitor:
                                 swath_method, num_detections, data_source, confidence_score,
                                 evidence_mrms, evidence_dualpol, evidence_multi_radar,
                                 evidence_spc, evidence_lsr, evidence_persistence,
-                                bbox_min_lat, bbox_max_lat, bbox_min_lon, bbox_max_lon, severity
+                                bbox_min_lat, bbox_max_lat, bbox_min_lon, bbox_max_lon,
+                                severity, status
                             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NEXRAD_REALTIME', ?,
                                       ?, ?, ?, ?, ?, ?,
-                                      ?, ?, ?, ?, ?)
+                                      ?, ?, ?, ?,
+                                      ?, ?)
                             ON CONFLICT(event_name) WHERE data_source = 'NEXRAD_REALTIME'
                             DO UPDATE SET
                                 end_time = excluded.end_time,
                                 swath_polygon = excluded.swath_polygon,
                                 swath_area_sqmi = excluded.swath_area_sqmi,
-                                max_hail_size = excluded.max_hail_size,
+                                max_hail_size = MAX(hail_events.max_hail_size, excluded.max_hail_size),
                                 avg_hail_size = excluded.avg_hail_size,
                                 max_reflectivity = excluded.max_reflectivity,
                                 avg_reflectivity = excluded.avg_reflectivity,
                                 swath_method = excluded.swath_method,
                                 num_detections = excluded.num_detections,
-                                confidence_score = excluded.confidence_score,
-                                evidence_mrms = excluded.evidence_mrms,
-                                evidence_dualpol = excluded.evidence_dualpol,
-                                evidence_multi_radar = excluded.evidence_multi_radar,
-                                evidence_spc = excluded.evidence_spc,
-                                evidence_lsr = excluded.evidence_lsr,
-                                evidence_persistence = excluded.evidence_persistence,
+                                confidence_score = MAX(hail_events.confidence_score, excluded.confidence_score),
+                                evidence_mrms = MAX(hail_events.evidence_mrms, excluded.evidence_mrms),
+                                evidence_dualpol = MAX(hail_events.evidence_dualpol, excluded.evidence_dualpol),
+                                evidence_multi_radar = MAX(hail_events.evidence_multi_radar, excluded.evidence_multi_radar),
+                                evidence_spc = MAX(hail_events.evidence_spc, excluded.evidence_spc),
+                                evidence_lsr = MAX(hail_events.evidence_lsr, excluded.evidence_lsr),
+                                evidence_persistence = MAX(hail_events.evidence_persistence, excluded.evidence_persistence),
                                 bbox_min_lat = excluded.bbox_min_lat,
                                 bbox_max_lat = excluded.bbox_max_lat,
                                 bbox_min_lon = excluded.bbox_min_lon,
                                 bbox_max_lon = excluded.bbox_max_lon,
                                 severity = excluded.severity,
+                                status = CASE
+                                    WHEN hail_events.status = 'CONFIRMED' THEN 'CONFIRMED'
+                                    ELSE excluded.status
+                                END,
                                 updated_at = CURRENT_TIMESTAMP
                         """, (
                             ev.event_id,
@@ -1426,13 +1492,16 @@ class StormMonitor:
                             int(ev.evidence_mrms), int(ev.evidence_dualpol),
                             int(ev.evidence_multi_radar), int(ev.evidence_spc),
                             int(ev.evidence_lsr), int(ev.evidence_persistence),
-                            bbox_min_lat, bbox_max_lat, bbox_min_lon, bbox_max_lon, severity,
+                            bbox_min_lat, bbox_max_lat, bbox_min_lon, bbox_max_lon,
+                            severity, status,
                         ))
                         persisted += 1
+                        if status == 'CONFIRMED':
+                            confirmed += 1
 
                         # --- Damage grid generation ---
                         try:
-                            from src.radar.damage_grid import generate_damage_grid, persist_damage_grid
+                            from src.radar.damage_grid import generate_damage_grid
 
                             # Build detection points from tracker cells
                             det_points = []
@@ -1461,7 +1530,7 @@ class StormMonitor:
                             if speed_count > 0:
                                 avg_speed /= speed_count
 
-                            if det_points:
+                            if status == 'CONFIRMED' and det_points:
                                 grid_cells = generate_damage_grid(
                                     bbox=bbox,
                                     detections=det_points,
@@ -1470,19 +1539,32 @@ class StormMonitor:
                                     mrms_cache=getattr(self, '_mrms_cache', None),
                                 )
                                 if grid_cells:
-                                    n_grid = persist_damage_grid(
-                                        ev.event_id, grid_cells,
-                                        'data/hailtracker_crm.db',
-                                    )
-                                    print(f"    Damage grid: {n_grid} cells for {ev.event_id}")
+                                    damage_grid_work.append((ev.event_id, grid_cells))
                         except Exception as dg_err:
                             print(f"    [DAMAGE-GRID-WARN] {ev.event_id}: {dg_err}")
 
                     except Exception as e:
+                        logger.info("[PERSIST_DEBUG] SKIP event=%s | reason=%s", ev.event_id, str(e))
+                        print(f"[PERSIST_DEBUG] SKIP event={ev.event_id} | reason={e}", flush=True)
                         print(f"[PERSIST-ERROR] event {ev.event_id}: {e}")
 
-                if persisted > 0 or suppressed > 0:
-                    print(f"    Persisted {persisted} events, suppressed {suppressed} (quality gate)")
+                if persisted > 0:
+                    print(f"    Persisted {persisted} events ({confirmed} CONFIRMED, {persisted - confirmed} CANDIDATE)")
+                _cd_msg = f"[PERSIST_DEBUG] cycle_done | persisted={persisted} confirmed={confirmed} candidate={persisted - confirmed} total_events={len(events)}"
+                logger.info(_cd_msg)
+                print(_cd_msg, flush=True)
+
+            # Persist damage grids AFTER conn closes (avoids SQLite "database is locked")
+            if damage_grid_work:
+                from src.radar.damage_grid import persist_damage_grid
+                for dg_event_id, dg_cells in damage_grid_work:
+                    try:
+                        n_grid = persist_damage_grid(
+                            dg_event_id, dg_cells, 'data/hailtracker_crm.db',
+                        )
+                        print(f"    Damage grid: {n_grid} cells for {dg_event_id}")
+                    except Exception as dg_err:
+                        print(f"    [DAMAGE-GRID-WARN] {dg_event_id}: {dg_err}")
         except Exception as e:
             print(f"[PERSIST-ERROR] {e}")
 
@@ -1516,14 +1598,6 @@ class StormMonitor:
             if cells:
                 print(f"    Tracker: {len(cells)} cells from {len(detections)} detections")
 
-                # Persist tracker events to hail_events DB for calendar/map
-                try:
-                    from src.radar.event_persister import persist_tracker_events
-                    persisted = persist_tracker_events(tracker)
-                    if persisted > 0:
-                        print(f"    Persisted {persisted} events to hail_events DB")
-                except Exception as pe:
-                    print(f"    Event persist warning: {pe}")
         except Exception as e:
             print(f"    Tracker feed error: {e}")
 

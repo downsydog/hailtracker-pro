@@ -501,7 +501,11 @@ def get_radar_history():
 # =============================================================================
 
 def _build_system_mode_payload():
-    """Build the system-mode JSON payload (shared by both route aliases)."""
+    """Build the system-mode JSON payload (shared by both route aliases).
+
+    CRASH-PROOF: Reads only plain attributes — NO locks, NO SQLite, NO method
+    calls that could block or deadlock during heavy concurrent radar processing.
+    """
     import os
     import threading
 
@@ -514,14 +518,39 @@ def _build_system_mode_payload():
             'monitor_running': False,
         }
 
-    health = {}
-    status = {}
+    mon = _monitor_instance
+
+    # --- Lock-free reads of simple attributes ---
+    # _stats is a dict; reading individual keys is GIL-safe in CPython.
+    stats = mon._stats  # reference, not copy — avoids acquiring _stats_lock
+    last_tick = stats.get('last_tick_utc')
+    processed_ok = stats.get('processed_ok', 0)
+    processed_err = stats.get('processed_err', 0)
+    processed_timeout = stats.get('processed_timeout', 0)
+    cancelled = stats.get('cancelled_futures', 0)
+    timed_out = stats.get('timed_out_futures', 0)
+    avg_check = stats.get('avg_check_seconds', 0)
+
+    # Hot radars: read dict keys without lock (snapshot may be stale, that's OK)
     try:
-        health = _monitor_instance.get_health()
+        hot_list = list(mon._hot_radars.keys())[:10]
+        hot_count = len(mon._hot_radars)
+    except RuntimeError:
+        # dict changed size during iteration — harmless under GIL
+        hot_list = []
+        hot_count = 0
+
+    # Last errors: snapshot of list tail
+    try:
+        errors = [str(e) for e in list(stats.get('last_errors', []))[-5:]]
     except Exception:
-        pass
+        errors = []
+
+    scheduler_mode = 'unknown'
     try:
-        status = _monitor_instance.get_status()
+        scheduler_mode = ('discovery_focus'
+                          if mon.config.enable_discovery_focus
+                          else 'legacy')
     except Exception:
         pass
 
@@ -529,18 +558,17 @@ def _build_system_mode_payload():
         'active_engine': 'storm_monitor',
         'started_by': _started_by,
         'monitor_running': True,
-        'scheduler_mode': status.get('scheduler_mode', 'unknown'),
-        'hot_radar_count': status.get('hot_radar_count', 0),
-        'hot_radars': status.get('hot_radars', [])[:10],
-        'last_tick_utc': health.get('last_tick_utc'),
-        'last_scan_utc': health.get('last_scan_utc'),
-        'avg_check_seconds': health.get('avg_check_seconds', 0),
-        'processed_ok': health.get('processed_ok', 0),
-        'processed_err': health.get('processed_err', 0),
-        'processed_timeout': health.get('processed_timeout', 0),
-        'cancelled_futures': health.get('cancelled_futures', 0),
-        'timed_out_futures': health.get('timed_out_futures', 0),
-        'last_errors': health.get('last_errors', [])[:5],
+        'scheduler_mode': scheduler_mode,
+        'hot_radar_count': hot_count,
+        'hot_radars': hot_list,
+        'last_tick_utc': last_tick,
+        'avg_check_seconds': avg_check,
+        'processed_ok': processed_ok,
+        'processed_err': processed_err,
+        'processed_timeout': processed_timeout,
+        'cancelled_futures': cancelled,
+        'timed_out_futures': timed_out,
+        'last_errors': errors,
         'pid': os.getpid(),
         'thread': threading.current_thread().name,
     }
@@ -549,13 +577,19 @@ def _build_system_mode_payload():
 @storm_monitor_api_bp.route('/system-mode', methods=['GET'])
 def get_system_mode():
     """GET /api/storm-monitor/system-mode"""
-    return jsonify(_build_system_mode_payload())
+    try:
+        return jsonify(_build_system_mode_payload())
+    except Exception as exc:
+        return jsonify({'error': str(exc), 'monitor_running': True}), 500
 
 
 @system_api_bp.route('/mode', methods=['GET'])
 def get_system_mode_alias():
     """GET /api/system/mode — canonical alias."""
-    return jsonify(_build_system_mode_payload())
+    try:
+        return jsonify(_build_system_mode_payload())
+    except Exception as exc:
+        return jsonify({'error': str(exc), 'monitor_running': True}), 500
 
 
 # ---------------------------------------------------------------------------

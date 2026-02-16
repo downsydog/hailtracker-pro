@@ -889,28 +889,76 @@ class StormCellTracker:
                 severity = 'light'
 
             # (B) Commercial confidence scoring (0-100)
+            #
+            # Weights (sum to 100):
+            #   hail_size  30  — big hail is strong signal on its own
+            #   mrms       20  — independent MRMS MESH ground-truth
+            #   dualpol    20  — dual-pol hail signature
+            #   agree      10  — multi-radar agreement
+            #   persist    10  — temporal stability / duration
+            #   corrobor   10  — bonus for 2+ independent evidence types
+            #
+            # Severe-hail floors prevent absurdly low scores when hail
+            # is objectively large and corroborated.
+
             # Evidence flags
             ev_evidence_mrms = ev_mrms_peak is not None and ev_mrms_peak > 0
-            ev_evidence_dualpol = ev_hs_peak >= 0.35  # hail_score from dual-pol gating
+            ev_evidence_dualpol = ev_hs_peak >= 0.35
             ev_evidence_multi_radar = len(radar_ids) >= 2
             ev_evidence_persistence = duration_minutes >= 10 or len(cluster_cids) >= 2
-            ev_evidence_spc = False   # populated by external SPC feed if available
-            ev_evidence_lsr = False   # populated by external LSR feed if available
+            ev_evidence_spc = False
+            ev_evidence_lsr = False
 
-            # Component scores (0..1)
+            # Component scores (0.0 .. 1.0)
+            # Hail size: two-stage curve to avoid saturating early
+            #   0-2.0" -> 0-0.75, 2.0-4.0" -> 0.75-1.0, >=4.0" -> 1.0
+            if auth_hail_inches <= 0:
+                hail_size_sc = 0.0
+            elif auth_hail_inches <= 2.0:
+                hail_size_sc = auth_hail_inches * 0.375       # 0.75 / 2.0
+            elif auth_hail_inches <= 4.0:
+                hail_size_sc = 0.75 + (auth_hail_inches - 2.0) * 0.125  # 0.25 / 2.0
+            else:
+                hail_size_sc = 1.0
+
             mrms_sc = 0.0
             if ev_evidence_mrms and ev_mrms_peak is not None:
-                mrms_sc = max(0.0, min(1.0, (ev_mrms_peak - 15.0) / 35.0))  # 0@15mm, 1@50mm
+                mrms_sc = max(0.0, min(1.0, (ev_mrms_peak - 15.0) / 35.0))
             dualpol_sc = min(1.0, ev_hs_peak / 0.7) if ev_evidence_dualpol else 0.0
             agree_sc = 1.0 if len(radar_ids) >= 3 else (0.6 if len(radar_ids) >= 2 else 0.0)
-            spc_sc = 0.0   # future: SPC hail prob near centroid
-            lsr_sc = 0.0   # future: LSR hail report match
             persist_sc = min(1.0, duration_minutes / 20.0) if ev_evidence_persistence else 0.0
 
+            # Independent evidence count (for corroboration + floors).
+            # Multi-radar is NOT independent — it's the same radar-derived
+            # signal from a different angle. It already contributes via agree_sc.
+            evidence_count = sum([
+                ev_evidence_mrms,
+                ev_evidence_dualpol,
+                ev_evidence_persistence and duration_minutes >= 15,
+            ])
+            corroboration_sc = min(1.0, max(0.0, (evidence_count - 1) / 2.0))
+
             commercial_conf = round(
-                (mrms_sc * 30 + dualpol_sc * 20 + agree_sc * 15 +
-                 spc_sc * 15 + lsr_sc * 10 + persist_sc * 10)
+                hail_size_sc * 30
+                + mrms_sc * 20
+                + dualpol_sc * 20
+                + agree_sc * 10
+                + persist_sc * 10
+                + corroboration_sc * 10
             )
+
+            # Severe-hail floors — require at least one direct hail
+            # evidence source (dual-pol or MRMS) to prevent false certainty
+            # from persistence/size alone.
+            has_direct_hail_evidence = ev_evidence_dualpol or ev_evidence_mrms
+            if has_direct_hail_evidence:
+                if auth_hail_inches >= 3.0 and evidence_count >= 2:
+                    commercial_conf = max(commercial_conf, 75)
+                elif auth_hail_inches >= 2.0 and evidence_count >= 2:
+                    commercial_conf = max(commercial_conf, 60)
+                elif auth_hail_inches >= 1.0 and evidence_count >= 1:
+                    commercial_conf = max(commercial_conf, 35)
+
             commercial_conf = max(0, min(100, commercial_conf))
 
             # Legacy confidence (0.0 - 0.95) kept for backward compat

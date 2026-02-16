@@ -25,6 +25,9 @@ RUN micromamba create -y -n hail -c conda-forge \
       shapely \
       pyproj \
       gunicorn \
+      eccodes \
+      cfgrib \
+      xarray \
   && micromamba clean -a -y
 
 # Install the rest via pip inside the conda env

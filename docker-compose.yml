@@ -12,7 +12,7 @@ services:
       - SKIP_HEAVY_ML=${SKIP_HEAVY_ML:-true}
       - DEV_MODE=${DEV_MODE:-false}
       - SECRET_KEY=${SECRET_KEY:?SECRET_KEY is required}
-      - ENABLE_MRMS=${ENABLE_MRMS:-false}
+      - ENABLE_MRMS=${ENABLE_MRMS:-true}
       - MRMS_REFRESH_SECONDS=${MRMS_REFRESH_SECONDS:-120}
       - MRMS_PROVIDER=${MRMS_PROVIDER:-aws}
       - DATABASE_URL=${DATABASE_URL:-sqlite:///database/hailtracker_pro.db}

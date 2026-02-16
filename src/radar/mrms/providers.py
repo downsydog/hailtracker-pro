@@ -277,7 +277,7 @@ class AWSMRMSProvider(MRMSProvider):
         # Parse file listing for latest .grib2.gz file
         text = resp.text
         import re
-        files = re.findall(r'href="(MESH_00\.50_\d{8}-\d{6}\.grib2\.gz)"', text)
+        files = re.findall(r'href="(MRMS_MESH_00\.50_\d{8}-\d{6}\.grib2\.gz)"', text)
         if not files:
             raise RuntimeError("No MESH grib2 files found in MRMS index")
 

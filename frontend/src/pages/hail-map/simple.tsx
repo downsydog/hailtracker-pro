@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { MapContainer, TileLayer, Circle, Popup, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Circle, Popup, Rectangle, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -39,6 +39,24 @@ interface CalendarDay {
   }>;
 }
 
+interface DamageGridFeature {
+  type: 'Feature';
+  geometry: {
+    type: 'Polygon';
+    coordinates: number[][][];
+  };
+  properties: {
+    hail_mm: number;
+    hail_in: number;
+    damage_probability: number;
+    damage_severity: string;
+    cell_confidence: number;
+    dwell_seconds: number;
+    evidence_mask: number;
+    event_name: string;
+  };
+}
+
 function MapFitter({ events }: { events: HailEvent[] }) {
   const map = useMap();
   useEffect(() => {
@@ -72,6 +90,14 @@ const SEVERITY_COLORS: Record<string, string> = {
   MINOR: '#22c55e',
 };
 
+const DAMAGE_COLORS: Record<string, string> = {
+  CATASTROPHIC: 'rgba(124, 58, 237, 0.6)',
+  SEVERE: 'rgba(220, 38, 38, 0.5)',
+  MODERATE: 'rgba(245, 158, 11, 0.4)',
+  LIGHT: 'rgba(34, 197, 94, 0.3)',
+  NONE: 'rgba(156, 163, 175, 0.1)',
+};
+
 export default function SimpleHailMap() {
   const now = new Date();
   const [calYear, setCalYear] = useState(now.getFullYear());
@@ -82,6 +108,9 @@ export default function SimpleHailMap() {
   const [loading, setLoading] = useState(false);
   const [minConfidence, setMinConfidence] = useState<number>(45);
   const [fitKey, setFitKey] = useState(0);
+  const [showDamageGrid, setShowDamageGrid] = useState(false);
+  const [damageFeatures, setDamageFeatures] = useState<DamageGridFeature[]>([]);
+  const [loadingGrid, setLoadingGrid] = useState(false);
 
   const loadCalendar = useCallback(async (year: number, month: number) => {
     try {
@@ -99,6 +128,40 @@ export default function SimpleHailMap() {
   useEffect(() => {
     loadCalendar(calYear, calMonth);
   }, [calYear, calMonth, loadCalendar]);
+
+  const loadDamageGrid = useCallback(async (eventName: string) => {
+    if (!eventName) return;
+    setLoadingGrid(true);
+    try {
+      const res = await fetch(
+        `/api/hail-events/${encodeURIComponent(eventName)}/damage-grid?min_prob=0.05`,
+        { credentials: 'include' }
+      );
+      if (res.ok) {
+        const geojson = await res.json();
+        setDamageFeatures(geojson.features || []);
+      } else {
+        setDamageFeatures([]);
+      }
+    } catch (err) {
+      console.error('Failed to load damage grid:', err);
+      setDamageFeatures([]);
+    }
+    setLoadingGrid(false);
+  }, []);
+
+  // Load damage grid when events change and toggle is on
+  useEffect(() => {
+    if (!showDamageGrid || events.length === 0) {
+      setDamageFeatures([]);
+      return;
+    }
+    // Load grids for the first event with a name
+    const ev = events.find(e => e.event_name);
+    if (ev?.event_name) {
+      loadDamageGrid(ev.event_name);
+    }
+  }, [showDamageGrid, events, loadDamageGrid]);
 
   const loadEvents = async (date: string) => {
     if (!date) return;
@@ -195,6 +258,20 @@ export default function SimpleHailMap() {
             />
             <span className="text-sm font-mono">{minConfidence}</span>
           </div>
+          <div className="flex gap-2 items-center">
+            <label className="text-sm flex items-center gap-1 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showDamageGrid}
+                onChange={(e) => setShowDamageGrid(e.target.checked)}
+              />
+              Damage Heatmap
+            </label>
+            {loadingGrid && <span className="text-xs text-gray-500">Loading grid...</span>}
+            {showDamageGrid && damageFeatures.length > 0 && (
+              <span className="text-xs text-gray-500">{damageFeatures.length} cells</span>
+            )}
+          </div>
           <div className="text-sm text-gray-600">
             {loading ? 'Loading...' : selectedDate
               ? `${filteredEvents.length}/${events.length} storms on ${selectedDate}`
@@ -215,6 +292,41 @@ export default function SimpleHailMap() {
       <MapContainer center={[39, -98]} zoom={4} className="flex-1">
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
         <MapFitter key={fitKey} events={filteredEvents} />
+
+        {/* Damage grid overlay */}
+        {showDamageGrid && damageFeatures.map((feat, idx) => {
+          const coords = feat.geometry.coordinates[0];
+          const minLat = Math.min(...coords.map(c => c[1]));
+          const maxLat = Math.max(...coords.map(c => c[1]));
+          const minLon = Math.min(...coords.map(c => c[0]));
+          const maxLon = Math.max(...coords.map(c => c[0]));
+          const sev = feat.properties.damage_severity;
+          const fillColor = DAMAGE_COLORS[sev] || DAMAGE_COLORS.NONE;
+          const prob = feat.properties.damage_probability;
+
+          return (
+            <Rectangle
+              key={`dg-${idx}`}
+              bounds={[[minLat, minLon], [maxLat, maxLon]]}
+              pathOptions={{
+                color: 'transparent',
+                fillColor,
+                fillOpacity: Math.min(prob * 0.8, 0.7),
+                weight: 0,
+              }}
+            >
+              <Popup>
+                <div className="text-xs">
+                  <strong>{sev}</strong> - {feat.properties.hail_in}&quot; hail<br/>
+                  Probability: {(prob * 100).toFixed(1)}%<br/>
+                  Confidence: {feat.properties.cell_confidence}<br/>
+                  Dwell: {feat.properties.dwell_seconds}s
+                </div>
+              </Popup>
+            </Rectangle>
+          );
+        })}
+
         {filteredEvents.map(event => {
           const lat = event.center_lat ?? event.latitude;
           const lon = event.center_lon ?? event.longitude;
@@ -244,6 +356,17 @@ export default function SimpleHailMap() {
                   {event.evidence_dualpol ? 'DualPol ' : ''}
                   {event.evidence_multi_radar ? 'MultiRadar ' : ''}
                   {event.evidence_persistence ? 'Persistent ' : ''}
+                  {showDamageGrid && event.event_name && (
+                    <>
+                      <br/>
+                      <button
+                        className="text-blue-600 underline text-xs"
+                        onClick={() => loadDamageGrid(event.event_name!)}
+                      >
+                        Load damage grid
+                      </button>
+                    </>
+                  )}
                 </div>
               </Popup>
             </Circle>

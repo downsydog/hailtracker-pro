@@ -2242,3 +2242,108 @@ def get_call_script_for_business(business_id):
         return jsonify({'error': 'Call scripts not available'}), 500
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+# =============================================================================
+# SWATH DAMAGE SUMMARY (Fleet Intel Hook)
+# =============================================================================
+
+@fleet_locations_api_bp.route('/swath-damage-summary')
+@login_required
+def swath_damage_summary():
+    """
+    For each fleet location in the bbox, cross-reference with damage grid
+    to estimate hail exposure.
+
+    Query params:
+        min_lat, max_lat, min_lon, max_lon (required)
+        min_prob: Minimum damage probability (default 0.1)
+        limit: Max locations (default 500)
+    """
+    min_lat = request.args.get('min_lat', type=float)
+    max_lat = request.args.get('max_lat', type=float)
+    min_lon = request.args.get('min_lon', type=float)
+    max_lon = request.args.get('max_lon', type=float)
+
+    if None in (min_lat, max_lat, min_lon, max_lon):
+        return jsonify({'error': 'min_lat, max_lat, min_lon, max_lon required'}), 400
+
+    min_prob = request.args.get('min_prob', 0.1, type=float)
+    limit = request.args.get('limit', 500, type=int)
+
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    db_path = os.path.join(project_root, 'data', 'hailtracker_crm.db')
+
+    try:
+        from src.radar.damage_grid import query_damage_grid_bbox, ensure_damage_grid_table
+        ensure_damage_grid_table(db_path)
+
+        # 1. Get fleet locations in bbox
+        conn = sqlite3.connect(db_path, timeout=10)
+        conn.row_factory = sqlite3.Row
+        locations = conn.execute("""
+            SELECT id, name, lat, lon, category, estimated_vehicles, address, city, state
+            FROM fleet_locations
+            WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?
+            LIMIT ?
+        """, (min_lat, max_lat, min_lon, max_lon, limit)).fetchall()
+
+        # 2. Get damage grid cells in bbox
+        grid_cells = query_damage_grid_bbox(
+            min_lon=min_lon, min_lat=min_lat,
+            max_lon=max_lon, max_lat=max_lat,
+            db_path=db_path,
+            min_prob=min_prob,
+        )
+        conn.close()
+
+        # 3. Cross-reference: for each location, find nearest/overlapping grid cell
+        results = []
+        for loc in locations:
+            loc_lat = loc['lat']
+            loc_lon = loc['lon']
+            if not loc_lat or not loc_lon:
+                continue
+
+            # Find best overlapping grid cell
+            best_prob = 0.0
+            best_hail_mm = 0.0
+            best_severity = 'NONE'
+            best_event = ''
+            for cell in grid_cells:
+                if (cell['bbox_min_lat'] <= loc_lat <= cell['bbox_max_lat'] and
+                        cell['bbox_min_lon'] <= loc_lon <= cell['bbox_max_lon']):
+                    if cell['damage_probability'] > best_prob:
+                        best_prob = cell['damage_probability']
+                        best_hail_mm = cell['authoritative_hail_mm']
+                        best_severity = cell['damage_severity']
+                        best_event = cell.get('event_name', '')
+
+            if best_prob > 0:
+                results.append({
+                    'location_id': loc['id'],
+                    'name': loc['name'],
+                    'lat': loc_lat,
+                    'lon': loc_lon,
+                    'category': loc['category'],
+                    'estimated_vehicles': loc['estimated_vehicles'],
+                    'city': loc['city'],
+                    'state': loc['state'],
+                    'damage_probability': round(best_prob, 4),
+                    'hail_mm': round(best_hail_mm, 1),
+                    'hail_in': round(best_hail_mm / 25.4, 2),
+                    'damage_severity': best_severity,
+                    'event_name': best_event,
+                })
+
+        results.sort(key=lambda x: x['damage_probability'], reverse=True)
+
+        return jsonify({
+            'locations_checked': len(locations),
+            'locations_in_swath': len(results),
+            'results': results,
+        })
+
+    except Exception as e:
+        logger.error(f"Swath damage summary error: {e}")
+        return jsonify({'error': str(e)}), 500

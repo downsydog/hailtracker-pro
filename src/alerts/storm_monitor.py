@@ -1429,6 +1429,55 @@ class StormMonitor:
                             bbox_min_lat, bbox_max_lat, bbox_min_lon, bbox_max_lon, severity,
                         ))
                         persisted += 1
+
+                        # --- Damage grid generation ---
+                        try:
+                            from src.radar.damage_grid import generate_damage_grid, persist_damage_grid
+
+                            # Build detection points from tracker cells
+                            det_points = []
+                            avg_speed = 0.0
+                            speed_count = 0
+                            for cid in ev.cell_ids:
+                                cell = (tracker.active_cells.get(cid)
+                                        or tracker.terminated_cells.get(cid))
+                                if not cell:
+                                    continue
+                                det_points.append({
+                                    'lat': cell.centroid_lat,
+                                    'lon': cell.centroid_lon,
+                                    'mesh_mm': cell.mesh_mm,
+                                })
+                                if cell.velocity_kmh > 0:
+                                    avg_speed += cell.velocity_kmh
+                                    speed_count += 1
+                                for plat, plon in cell.previous_positions:
+                                    det_points.append({
+                                        'lat': plat,
+                                        'lon': plon,
+                                        'mesh_mm': cell.mesh_mm * 0.8,
+                                    })
+
+                            if speed_count > 0:
+                                avg_speed /= speed_count
+
+                            if det_points:
+                                grid_cells = generate_damage_grid(
+                                    bbox=bbox,
+                                    detections=det_points,
+                                    event_confidence=ev.commercial_confidence,
+                                    storm_speed_kmh=avg_speed,
+                                    mrms_cache=getattr(self, '_mrms_cache', None),
+                                )
+                                if grid_cells:
+                                    n_grid = persist_damage_grid(
+                                        ev.event_id, grid_cells,
+                                        'data/hailtracker_crm.db',
+                                    )
+                                    print(f"    Damage grid: {n_grid} cells for {ev.event_id}")
+                        except Exception as dg_err:
+                            print(f"    [DAMAGE-GRID-WARN] {ev.event_id}: {dg_err}")
+
                     except Exception as e:
                         print(f"[PERSIST-ERROR] event {ev.event_id}: {e}")
 

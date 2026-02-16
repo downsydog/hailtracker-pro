@@ -1302,3 +1302,92 @@ def get_storm_calendar_year():
             'peak_month': max(result_months.items(), key=lambda x: x[1]['total_events'])[0] if total_events > 0 else None
         }
     })
+
+
+# =============================================================================
+# DAMAGE GRID ENDPOINTS
+# =============================================================================
+
+@hail_events_api_bp.route('/damage-grid', methods=['GET'])
+@login_required
+def get_damage_grid_bbox():
+    """
+    Query damage grid cells by bounding box.
+
+    Query params:
+        min_lat, max_lat, min_lon, max_lon (required)
+        min_prob: Minimum damage probability (default 0.1)
+        min_conf: Minimum cell confidence (default 0)
+        max_cells: Maximum cells to return (default 20000)
+        format: 'geojson' (default) or 'raw'
+    """
+    min_lat = request.args.get('min_lat', type=float)
+    max_lat = request.args.get('max_lat', type=float)
+    min_lon = request.args.get('min_lon', type=float)
+    max_lon = request.args.get('max_lon', type=float)
+
+    if None in (min_lat, max_lat, min_lon, max_lon):
+        return jsonify({'error': 'min_lat, max_lat, min_lon, max_lon required'}), 400
+
+    min_prob = request.args.get('min_prob', 0.1, type=float)
+    min_conf = request.args.get('min_conf', 0, type=float)
+    max_cells = request.args.get('max_cells', 20000, type=int)
+    fmt = request.args.get('format', 'geojson')
+
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    db_path = os.path.join(project_root, 'data', 'hailtracker_crm.db')
+
+    from src.radar.damage_grid import query_damage_grid_bbox, cells_to_geojson
+
+    cells = query_damage_grid_bbox(
+        min_lon=min_lon, min_lat=min_lat,
+        max_lon=max_lon, max_lat=max_lat,
+        db_path=db_path,
+        min_prob=min_prob, min_conf=min_conf, max_cells=max_cells,
+    )
+
+    if fmt == 'raw':
+        return jsonify({'cells': cells, 'count': len(cells)})
+
+    geojson = cells_to_geojson(cells)
+    return jsonify(geojson)
+
+
+@hail_events_api_bp.route('/<event_name>/damage-grid', methods=['GET'])
+@login_required
+def get_event_damage_grid(event_name):
+    """
+    Get damage grid for a specific event.
+
+    Query params:
+        min_prob: Minimum damage probability (default 0.0)
+        min_conf: Minimum cell confidence (default 0)
+        max_cells: Maximum cells (default 20000)
+        format: 'geojson' (default) or 'raw'
+    """
+    min_prob = request.args.get('min_prob', 0.0, type=float)
+    min_conf = request.args.get('min_conf', 0, type=float)
+    max_cells = request.args.get('max_cells', 20000, type=int)
+    fmt = request.args.get('format', 'geojson')
+
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    db_path = os.path.join(project_root, 'data', 'hailtracker_crm.db')
+
+    from src.radar.damage_grid import query_damage_grid, cells_to_geojson
+
+    cells = query_damage_grid(
+        event_name=event_name,
+        db_path=db_path,
+        min_prob=min_prob, min_conf=min_conf, max_cells=max_cells,
+    )
+
+    if not cells:
+        return jsonify({'error': 'No damage grid data', 'event_name': event_name}), 404
+
+    if fmt == 'raw':
+        return jsonify({'event_name': event_name, 'cells': cells, 'count': len(cells)})
+
+    geojson = cells_to_geojson(cells)
+    geojson['event_name'] = event_name
+    geojson['cell_count'] = len(cells)
+    return jsonify(geojson)

@@ -226,15 +226,17 @@ with get_connection('sqlite:///data/hailtracker_crm.db') as conn:
     print(f"  realtime_rows: {n}")
     assert n > 0, "FAIL: No persisted realtime rows"
 
+    # Query the specific events we just persisted (filter by bbox populated)
     cur.execute("""
         SELECT event_name, event_date, max_hail_size, confidence_score, severity,
                bbox_min_lat, bbox_min_lon, bbox_max_lat, bbox_max_lon,
                CASE WHEN swath_polygon IS NULL OR length(swath_polygon)=0 THEN 0 ELSE 1 END AS has_swath
         FROM hail_events WHERE data_source='NEXRAD_REALTIME'
+        AND event_name LIKE '20260215_1256Z_%'
         ORDER BY rowid DESC LIMIT 10
     """)
     rows = cur.fetchall()
-    print(f"\n  LATEST {len(rows)} REALTIME EVENTS:")
+    print(f"\n  TEST-PERSISTED EVENTS (20260215_*):")
     for r in rows:
         print(f"    {r[0][:50]} | date={r[1]} | hail={r[2]} | conf={r[3]} | "
               f"sev={r[4]} | bbox=({r[5]},{r[6]},{r[7]},{r[8]}) | swath={r[9]}")
@@ -242,8 +244,8 @@ with get_connection('sqlite:///data/hailtracker_crm.db') as conn:
     has_bbox = any(r[5] is not None and r[6] is not None and r[7] is not None and r[8] is not None for r in rows)
     has_swath = any(r[9] == 1 for r in rows)
     print(f"\n  has_bbox: {has_bbox}, has_swath: {has_swath}")
-    assert has_bbox, "FAIL: No realtime rows with bbox_* populated"
-    assert has_swath, "FAIL: No realtime rows with swath_polygon populated"
+    assert has_bbox, "FAIL: No test-persisted rows with bbox_* populated"
+    assert has_swath, "FAIL: No test-persisted rows with swath_polygon populated"
 
 # === Step 3: Calendar sees the day(s) ===
 print("\n=== Step 3: Verify calendar sees 2026-02-15 ===")
@@ -314,6 +316,97 @@ with get_connection('sqlite:///data/hailtracker_crm.db') as conn:
 # (The persisted rows use ON CONFLICT, so re-running produces same count)
 print(f"  NEXRAD_REALTIME count: {count_before} (stable across upserts)")
 
+# === Step 6: Damage grid persistence ===
+print("\n=== Step 6: Verify damage grid ===")
+from src.radar.damage_grid import (
+    generate_damage_grid, persist_damage_grid, query_damage_grid,
+    cells_to_geojson, ensure_damage_grid_table,
+)
+
+db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       'data', 'hailtracker_crm.db')
+ensure_damage_grid_table(db_path)
+
+# Generate and persist damage grid for the first qualifying event
+grid_persisted = 0
+for ev in events:
+    if ev.commercial_confidence < 45:
+        continue
+    mrms_val = ev.mrms_mesh_peak if ev.mrms_mesh_peak is not None else 0
+    if mrms_val < 20 and not ev.evidence_dualpol and not ev.evidence_lsr:
+        continue
+
+    # Build detection points from tracker cells
+    det_points = []
+    for cid in ev.cell_ids:
+        cell = tracker.active_cells.get(cid) or tracker.terminated_cells.get(cid)
+        if cell:
+            det_points.append({
+                'lat': cell.centroid_lat,
+                'lon': cell.centroid_lon,
+                'mesh_mm': cell.mesh_mm,
+            })
+            for plat, plon in cell.previous_positions:
+                det_points.append({
+                    'lat': plat, 'lon': plon,
+                    'mesh_mm': cell.mesh_mm * 0.8,
+                })
+
+    if not det_points:
+        continue
+
+    # Compute bbox from event centroid (simple fallback)
+    from src.radar.geo_utils import compute_bbox_from_geojson
+    bbox = compute_bbox_from_geojson(
+        {}, fallback_center=(ev.centroid_lat, ev.centroid_lon),
+        fallback_radius_miles=10.0,
+    )
+
+    grid_cells = generate_damage_grid(
+        bbox=bbox,
+        detections=det_points,
+        event_confidence=ev.commercial_confidence,
+        storm_speed_kmh=45.0,
+    )
+
+    if grid_cells:
+        n = persist_damage_grid(ev.event_id, grid_cells, db_path)
+        print(f"  Damage grid: {n} cells for {ev.event_id}")
+        grid_persisted += n
+
+print(f"  Total damage grid cells persisted: {grid_persisted}")
+assert grid_persisted > 0, "FAIL: No damage grid cells persisted"
+
+# Query back and verify
+with get_connection('sqlite:///data/hailtracker_crm.db') as conn:
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM hail_damage_grid")
+    total_grid = cur.fetchone()[0]
+    print(f"  hail_damage_grid rows: {total_grid}")
+    assert total_grid > 0, "FAIL: hail_damage_grid table is empty"
+
+    cur.execute("""
+        SELECT event_name, COUNT(*) as cnt,
+               AVG(damage_probability) as avg_prob,
+               MAX(authoritative_hail_mm) as max_hail
+        FROM hail_damage_grid
+        GROUP BY event_name
+        LIMIT 5
+    """)
+    for r in cur.fetchall():
+        print(f"    {r[0][:40]} | cells={r[1]} | avg_prob={r[2]:.3f} | max_hail={r[3]:.1f}mm")
+
+# GeoJSON round-trip check
+first_event = events[0].event_id
+queried = query_damage_grid(first_event, db_path)
+if queried:
+    geojson = cells_to_geojson(queried)
+    assert geojson["type"] == "FeatureCollection", "FAIL: GeoJSON type wrong"
+    assert len(geojson["features"]) > 0, "FAIL: No GeoJSON features"
+    print(f"  GeoJSON: {len(geojson['features'])} features for {first_event}")
+else:
+    print(f"  NOTE: No grid for {first_event} (may have been quality-gated)")
+
 print("\n============================================================")
-print("ALL E2E CHECKS PASSED")
+print("ALL E2E CHECKS PASSED (including damage grid)")
 print("============================================================")

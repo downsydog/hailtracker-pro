@@ -13,6 +13,13 @@ Usage:
         cursor = conn.cursor()
         cursor.execute("SELECT 1")
 
+    # Legacy-style connection (must call .close() when done)
+    conn = get_raw_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT 1")
+    conn.commit()
+    conn.close()
+
     # Engine info for health checks
     info = get_engine_info()
     # {'backend': 'sqlite', 'database': 'database/hailtracker_pro.db', ...}
@@ -27,11 +34,12 @@ Environment:
 """
 
 import os
+import hashlib
 import sqlite3
 import threading
 import logging
 from contextlib import contextmanager
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +142,80 @@ def _pg_release(conn):
 
 
 # ---------------------------------------------------------------------------
+# PG Raw Connection Proxy (pool-safe drop-in for legacy code)
+# ---------------------------------------------------------------------------
+
+class _PGRawConnection:
+    """
+    Wraps a pooled PostgreSQL connection so that .close() returns it to the
+    pool instead of destroying it.  Cursors use RealDictCursor by default so
+    dict(row) works the same as sqlite3.Row.
+    """
+
+    def __init__(self, conn):
+        self._conn = conn
+        try:
+            import psycopg2.extras
+            self._cursor_factory = psycopg2.extras.RealDictCursor
+        except ImportError:
+            self._cursor_factory = None
+
+    # -- connection API -------------------------------------------------------
+
+    def cursor(self):
+        if self._cursor_factory:
+            return self._conn.cursor(cursor_factory=self._cursor_factory)
+        return self._conn.cursor()
+
+    def commit(self):
+        self._conn.commit()
+
+    def rollback(self):
+        self._conn.rollback()
+
+    def close(self):
+        _pg_release(self._conn)
+
+    def execute(self, sql, params=None):
+        cur = self.cursor()
+        cur.execute(sql, params or ())
+        return cur
+
+    def executescript(self, sql_text: str):
+        """PG equivalent of sqlite3.Connection.executescript()."""
+        cur = self._conn.cursor()
+        for stmt in _split_sql(sql_text):
+            if stmt.strip():
+                cur.execute(stmt)
+        return cur
+
+    def fetchone(self):
+        return self._conn.cursor().fetchone()
+
+    # -- context manager (with conn: ...) ------------------------------------
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type:
+            self.rollback()
+        else:
+            self.commit()
+        self.close()
+
+    # -- sqlite3 compat stubs ------------------------------------------------
+
+    @property
+    def row_factory(self):
+        return None
+
+    @row_factory.setter
+    def row_factory(self, val):
+        pass  # PG uses cursor_factory; ignore sqlite row_factory
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -178,6 +260,27 @@ def get_connection(database_url: Optional[str] = None):
             raise
         finally:
             _pg_release(conn)
+
+
+def get_raw_connection(database_url: Optional[str] = None):
+    """
+    Return a non-context-managed database connection.
+
+    For SQLite, returns a standard sqlite3.Connection (with Row factory).
+    For PostgreSQL, returns a _PGRawConnection whose .close() returns the
+    underlying connection to the pool and whose cursors are RealDictCursor.
+
+    Caller **must** call .close() when finished.
+
+    For new code, prefer the context-managed ``get_connection()``.
+    """
+    url = database_url or _get_database_url()
+    parsed = _parse_url(url)
+
+    if parsed['backend'] == 'sqlite':
+        return _sqlite_connect(parsed['path'])
+    else:
+        return _PGRawConnection(_pg_connect())
 
 
 def get_engine_info() -> Dict[str, Any]:
@@ -242,3 +345,163 @@ def placeholder() -> str:
 def is_postgres() -> bool:
     """True if the active backend is PostgreSQL."""
     return _parse_url(_get_database_url())['backend'] == 'postgresql'
+
+
+# ---------------------------------------------------------------------------
+# Schema initialization (PostGIS) with version tracking
+# ---------------------------------------------------------------------------
+
+_schema_initialized = False
+
+
+def ensure_schema() -> None:
+    """
+    Run numbered PostGIS migration files from ``migrations/`` if the backend
+    is PostgreSQL.
+
+    Creates a ``schema_migrations`` table to track which versions have been
+    applied.  Each migration file is named ``NNN_description.sql`` where NNN
+    is a zero-padded integer version.
+
+    For SQLite, this is a no-op (schemas are loaded via .sql files or inline
+    CREATE TABLE IF NOT EXISTS).
+
+    Safe to call multiple times (idempotent).
+    """
+    global _schema_initialized
+    if _schema_initialized:
+        return
+
+    if not is_postgres():
+        _schema_initialized = True
+        return
+
+    with get_connection() as conn:
+        cur = conn.cursor()
+
+        # Ensure PostGIS extension
+        cur.execute(
+            "SELECT 1 FROM pg_extension WHERE extname = 'postgis'"
+        )
+        if cur.fetchone() is None:
+            cur.execute("CREATE EXTENSION IF NOT EXISTS postgis")
+
+        # Schema version tracking table
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version   INTEGER PRIMARY KEY,
+                filename  TEXT NOT NULL,
+                applied_at TIMESTAMPTZ DEFAULT NOW(),
+                checksum  TEXT
+            )
+        """)
+
+        # Discover and apply migrations
+        migrations_dir = os.path.join(
+            os.path.dirname(__file__), '..', '..', 'migrations',
+        )
+        migrations_dir = os.path.normpath(migrations_dir)
+
+        if not os.path.isdir(migrations_dir):
+            logger.warning("Migrations directory not found: %s", migrations_dir)
+            _schema_initialized = True
+            return
+
+        migration_files = sorted(
+            f for f in os.listdir(migrations_dir) if f.endswith('.sql')
+        )
+
+        for filename in migration_files:
+            # Extract version number: 001_description.sql -> 1
+            try:
+                version = int(filename.split('_')[0])
+            except (ValueError, IndexError):
+                logger.debug("Skipping non-versioned file: %s", filename)
+                continue
+
+            # Already applied?
+            cur.execute(
+                "SELECT 1 FROM schema_migrations WHERE version = %s",
+                (version,),
+            )
+            if cur.fetchone():
+                continue
+
+            # Read and apply
+            mig_path = os.path.join(migrations_dir, filename)
+            with open(mig_path, 'r', encoding='utf-8') as f:
+                ddl = f.read()
+
+            checksum = hashlib.sha256(ddl.encode()).hexdigest()[:16]
+
+            for stmt in _split_sql(ddl):
+                if stmt.strip():
+                    cur.execute(stmt)
+
+            cur.execute(
+                "INSERT INTO schema_migrations (version, filename, checksum) "
+                "VALUES (%s, %s, %s)",
+                (version, filename, checksum),
+            )
+            logger.info("Applied migration %03d: %s", version, filename)
+
+    _schema_initialized = True
+
+
+def get_schema_version() -> Optional[int]:
+    """Return the highest applied migration version, or None."""
+    if not is_postgres():
+        return None
+    try:
+        with get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT 1 FROM information_schema.tables
+                WHERE table_name = 'schema_migrations'
+            """)
+            if cur.fetchone() is None:
+                return None
+            cur.execute("SELECT MAX(version) FROM schema_migrations")
+            row = cur.fetchone()
+            return row[0] if row else None
+    except Exception:
+        return None
+
+
+def _split_sql(sql_text: str) -> List[str]:
+    """
+    Split a SQL file into individual statements.
+
+    Handles dollar-quoted function bodies ($$...$$) correctly.
+    """
+    statements: List[str] = []
+    current: List[str] = []
+    in_dollar = False
+
+    for line in sql_text.split('\n'):
+        stripped = line.strip()
+        # Skip pure comment lines
+        if stripped.startswith('--') and not in_dollar:
+            continue
+
+        current.append(line)
+
+        # Track $$ quoting for function bodies
+        dollar_count = line.count('$$')
+        if dollar_count % 2 == 1:
+            in_dollar = not in_dollar
+
+        # Statement boundary: semicolon at end of line, not inside $$
+        if not in_dollar and stripped.endswith(';'):
+            stmt = '\n'.join(current).strip()
+            if stmt and not stmt.startswith('--'):
+                statements.append(stmt)
+            current = []
+
+    # Leftover (shouldn't happen with well-formed SQL)
+    if current:
+        stmt = '\n'.join(current).strip()
+        if stmt and not stmt.startswith('--'):
+            statements.append(stmt)
+
+    return statements

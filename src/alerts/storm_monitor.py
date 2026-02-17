@@ -1328,14 +1328,18 @@ class StormMonitor:
                 damage_grid_work = []  # (event_id, grid_cells) to persist after conn closes
                 for ev in events:
                     try:
-                        # Determine status: CONFIRMED requires real evidence
+                        # Determine status: CONFIRMED requires "hard" hail evidence.
+                        # Persistence and multi-radar alone are insufficient — they
+                        # indicate a real weather target but not necessarily hail.
+                        # Hard evidence = direct hail measurement or report:
+                        #   - MRMS MESH >= 15mm (satellite/radar hail product)
+                        #   - Dual-pol hail signature (HCA hydrometeor classification)
+                        #   - Local storm report (human-verified)
                         mrms_val = ev.mrms_mesh_peak if ev.mrms_mesh_peak is not None else 0
                         has_confirming_evidence = (
-                            mrms_val >= 20
+                            mrms_val >= 15
                             or ev.evidence_dualpol
                             or ev.evidence_lsr
-                            or ev.evidence_persistence
-                            or ev.evidence_multi_radar
                         )
                         status = 'CONFIRMED' if has_confirming_evidence else 'CANDIDATE'
 

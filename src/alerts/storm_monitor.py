@@ -1569,6 +1569,15 @@ class StormMonitor:
                         print(f"    Damage grid: {n_grid} cells for {dg_event_id}")
                     except Exception as dg_err:
                         print(f"    [DAMAGE-GRID-WARN] {dg_event_id}: {dg_err}")
+
+            # Update swath intelligence AFTER damage grid (deferred-work pattern)
+            try:
+                from src.swath.intelligence_engine import update_swaths
+                n_swaths = update_swaths('data/hailtracker_crm.db')
+                if n_swaths > 0:
+                    print(f"    Swath intelligence: {n_swaths} swaths updated")
+            except Exception as swath_err:
+                print(f"    [SWATH-INTEL-WARN] {swath_err}")
         except Exception as e:
             print(f"[PERSIST-ERROR] {e}")
 

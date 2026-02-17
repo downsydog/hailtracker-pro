@@ -255,7 +255,15 @@ def _compute_area_km2(
     except ImportError:
         pass
 
-    # --- Attempt 2: Sum swath_area_sqmi from member events ---
+    # --- Attempt 2a: Direct km2 from hail_events.swath_area_km2 ---
+    if cluster:
+        total_km2 = sum(
+            (ev.get('swath_area_km2', 0) or 0) for ev in cluster
+        )
+        if total_km2 > 0:
+            return total_km2, None, 'sum_km2'
+
+    # --- Attempt 2b: Sum swath_area_sqmi from member events ---
     if cluster:
         total_sqmi = sum(
             (ev.get('swath_area_sqmi', 0) or 0) for ev in cluster
@@ -453,6 +461,13 @@ def _build_swath(cluster: List[dict], previous_swath: Optional[dict]) -> dict:
     else:
         severe_core_km2 = 0.0
 
+    # Enhance severe core with MRMS 25mm core data if available
+    mrms_core_km2 = sum(
+        (ev.get('mrms_core_25_km2', 0) or 0) for ev in cluster
+    )
+    if mrms_core_km2 > 0:
+        severe_core_km2 = max(severe_core_km2, mrms_core_km2)
+
     # Direction and velocity
     earliest_ev = cluster[0]
     latest_ev = cluster[-1]
@@ -611,16 +626,28 @@ def update_swaths(db_path: str = 'data/hailtracker_crm.db') -> int:
     conn.execute("PRAGMA busy_timeout=5000")
 
     try:
-        # Read CONFIRMED events
-        rows = conn.execute("""
-            SELECT event_name, center_lat, center_lon,
-                   start_time, end_time,
-                   max_hail_size, confidence_score,
-                   swath_polygon, swath_area_sqmi
-            FROM hail_events
-            WHERE status = 'CONFIRMED'
-              AND data_source = 'NEXRAD_REALTIME'
-        """).fetchall()
+        # Read CONFIRMED events (try extended columns, fallback to base)
+        try:
+            rows = conn.execute("""
+                SELECT event_name, center_lat, center_lon,
+                       start_time, end_time,
+                       max_hail_size, confidence_score,
+                       swath_polygon, swath_area_sqmi,
+                       swath_area_km2, mrms_core_25_km2
+                FROM hail_events
+                WHERE status = 'CONFIRMED'
+                  AND data_source = 'NEXRAD_REALTIME'
+            """).fetchall()
+        except Exception:
+            rows = conn.execute("""
+                SELECT event_name, center_lat, center_lon,
+                       start_time, end_time,
+                       max_hail_size, confidence_score,
+                       swath_polygon, swath_area_sqmi
+                FROM hail_events
+                WHERE status = 'CONFIRMED'
+                  AND data_source = 'NEXRAD_REALTIME'
+            """).fetchall()
 
         if not rows:
             return 0

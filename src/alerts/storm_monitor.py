@@ -1308,6 +1308,14 @@ class StormMonitor:
                     ('bbox_max_lon', 'REAL'),
                     ('severity', "TEXT DEFAULT 'MINOR'"),
                     ('status', "TEXT DEFAULT 'CANDIDATE'"),
+                    ('swath_area_km2', 'REAL'),
+                    ('swath_area_method', 'TEXT'),
+                    ('mrms_core_15_geojson', 'TEXT'),
+                    ('mrms_core_25_geojson', 'TEXT'),
+                    ('mrms_core_40_geojson', 'TEXT'),
+                    ('mrms_core_15_km2', 'REAL DEFAULT 0'),
+                    ('mrms_core_25_km2', 'REAL DEFAULT 0'),
+                    ('mrms_core_40_km2', 'REAL DEFAULT 0'),
                 ]:
                     try:
                         conn.execute(f"ALTER TABLE hail_events ADD COLUMN {col_def[0]} {col_def[1]}")
@@ -1357,7 +1365,7 @@ class StormMonitor:
                                 swath_json = json.dumps(merged['geometry'])
                                 props = merged.get('properties', {})
                                 swath_method = props.get('swath_method', 'tracker')
-                                swath_area_sqmi = props.get('swath_area_sqmi', 0.0) or 0.0
+                                swath_area_sqmi = props.get('area_sq_miles', 0.0) or 0.0
                         except Exception:
                             pass
 
@@ -1370,10 +1378,38 @@ class StormMonitor:
                                         swath_json = json.dumps(cell_swath['geometry'])
                                         props = cell_swath.get('properties', {})
                                         swath_method = props.get('method', 'track_buffer')
-                                        swath_area_sqmi = props.get('swath_area_sqmi', 0.0) or 0.0
+                                        swath_area_sqmi = props.get('area_sq_miles', 0.0) or 0.0
                                         break
                                 except Exception:
                                     pass
+
+                        # Fallback: build_event_polygon from cell geometry
+                        if not swath_json:
+                            try:
+                                from src.radar.event_footprint import build_event_polygon
+
+                                cells_data = []
+                                for cid in ev.cell_ids:
+                                    cell = (tracker.active_cells.get(cid)
+                                            or tracker.terminated_cells.get(cid))
+                                    if not cell:
+                                        continue
+                                    cells_data.append({
+                                        'centroid_lat': cell.centroid_lat,
+                                        'centroid_lon': cell.centroid_lon,
+                                        'area_km2': cell.area_km2,
+                                        'mesh_mm': cell.mesh_mm,
+                                        'previous_positions': list(cell.previous_positions),
+                                    })
+
+                                if cells_data:
+                                    fp_geojson, fp_area_km2, fp_method = build_event_polygon(cells_data)
+                                    if fp_geojson:
+                                        swath_json = fp_geojson
+                                        swath_method = fp_method
+                                        swath_area_sqmi = round(fp_area_km2 * 0.386102, 1)
+                            except Exception:
+                                pass
 
                         # Fallback: centroid point
                         if not swath_json:
@@ -1386,6 +1422,10 @@ class StormMonitor:
                         # Convert area
                         if swath_area_sqmi == 0.0 and ev.estimated_area_sq_km > 0:
                             swath_area_sqmi = round(ev.estimated_area_sq_km * 0.386102, 1)
+
+                        # Compute km2 area and method for new columns
+                        swath_area_km2 = round(swath_area_sqmi / 0.386102, 2) if swath_area_sqmi > 0 else 0.0
+                        swath_area_method = swath_method
 
                         # Use authoritative hail size (MRMS-preferred)
                         max_hail_size = ev.authoritative_hail_inches
@@ -1449,10 +1489,12 @@ class StormMonitor:
                                 evidence_mrms, evidence_dualpol, evidence_multi_radar,
                                 evidence_spc, evidence_lsr, evidence_persistence,
                                 bbox_min_lat, bbox_max_lat, bbox_min_lon, bbox_max_lon,
-                                severity, status
+                                severity, status,
+                                swath_area_km2, swath_area_method
                             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NEXRAD_REALTIME', ?,
                                       ?, ?, ?, ?, ?, ?,
                                       ?, ?, ?, ?,
+                                      ?, ?,
                                       ?, ?)
                             ON CONFLICT(event_name) WHERE data_source = 'NEXRAD_REALTIME'
                             DO UPDATE SET
@@ -1481,6 +1523,8 @@ class StormMonitor:
                                     WHEN hail_events.status = 'CONFIRMED' THEN 'CONFIRMED'
                                     ELSE excluded.status
                                 END,
+                                swath_area_km2 = excluded.swath_area_km2,
+                                swath_area_method = excluded.swath_area_method,
                                 updated_at = CURRENT_TIMESTAMP
                         """, (
                             ev.event_id,
@@ -1498,6 +1542,7 @@ class StormMonitor:
                             int(ev.evidence_lsr), int(ev.evidence_persistence),
                             bbox_min_lat, bbox_max_lat, bbox_min_lon, bbox_max_lon,
                             severity, status,
+                            swath_area_km2, swath_area_method,
                         ))
                         persisted += 1
                         if status == 'CONFIRMED':
@@ -1570,7 +1615,19 @@ class StormMonitor:
                     except Exception as dg_err:
                         print(f"    [DAMAGE-GRID-WARN] {dg_event_id}: {dg_err}")
 
-            # Update swath intelligence AFTER damage grid (deferred-work pattern)
+            # Event footprint enrichment AFTER damage grid (deferred-work pattern)
+            try:
+                from src.radar.event_footprint import update_event_footprints
+                n_enriched = update_event_footprints(
+                    'data/hailtracker_crm.db',
+                    mrms_cache=getattr(self, '_mrms_cache', None),
+                )
+                if n_enriched > 0:
+                    print(f"    Event footprints: {n_enriched} events enriched")
+            except Exception as fp_err:
+                print(f"    [FOOTPRINT-WARN] {fp_err}")
+
+            # Update swath intelligence AFTER footprint enrichment (deferred-work pattern)
             try:
                 from src.swath.intelligence_engine import update_swaths
                 n_swaths = update_swaths('data/hailtracker_crm.db')

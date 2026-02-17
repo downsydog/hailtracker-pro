@@ -18,7 +18,6 @@ Usage:
 
 import os
 import json
-import sqlite3
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Union
 from contextlib import contextmanager
@@ -31,7 +30,8 @@ class AlertDatabase:
     """
     Database storage for alerts.
 
-    Supports SQLite (default) and PostgreSQL.
+    Routes through src.db.engine when DATABASE_URL is PostgreSQL.
+    Falls back to local SQLite when DATABASE_URL is SQLite.
     """
 
     def __init__(
@@ -42,26 +42,26 @@ class AlertDatabase:
         """
         Initialize database connection.
 
-        Args:
-            connection_string: Database connection string
-                - None or 'sqlite:///data/alerts/alerts.db' for SQLite
-                - 'postgresql://user:pass@host/db' for PostgreSQL
-            auto_create: Automatically create tables if they don't exist
+        When the global DATABASE_URL is PostgreSQL, the connection_string
+        parameter is ignored and all connections use the central engine pool.
         """
-        self.connection_string = connection_string or 'sqlite:///data/alerts/alerts.db'
-        self.db_type = 'sqlite' if self.connection_string.startswith('sqlite') else 'postgresql'
+        from src.db.engine import is_postgres as _engine_pg
 
-        # Parse connection string
-        if self.db_type == 'sqlite':
-            # Extract path from sqlite:///path
-            self.db_path = self.connection_string.replace('sqlite:///', '')
-            if not self.db_path:
-                self.db_path = 'data/alerts/alerts.db'
+        if _engine_pg():
+            self.db_type = 'postgresql'
+            self.connection_string = None
+            self.db_path = None
+        else:
+            self.connection_string = connection_string or 'sqlite:///data/alerts/alerts.db'
+            self.db_type = 'sqlite' if self.connection_string.startswith('sqlite') else 'postgresql'
 
-            # Ensure directory exists
-            os.makedirs(os.path.dirname(self.db_path) or '.', exist_ok=True)
+            if self.db_type == 'sqlite':
+                self.db_path = self.connection_string.replace('sqlite:///', '')
+                if not self.db_path:
+                    self.db_path = 'data/alerts/alerts.db'
+                os.makedirs(os.path.dirname(self.db_path) or '.', exist_ok=True)
 
-        # Initialize connection pool for PostgreSQL
+        # Legacy pool (only used when AlertDatabase has its own PG connection string)
         self._pg_pool = None
 
         if auto_create:
@@ -69,17 +69,23 @@ class AlertDatabase:
 
     @contextmanager
     def _get_connection(self):
-        """Get database connection."""
-        if self.db_type == 'sqlite':
-            conn = sqlite3.connect(self.db_path)
-            conn.row_factory = sqlite3.Row
+        """Get database connection (routes through engine when PG)."""
+        from src.db.engine import is_postgres as _engine_pg
+
+        if _engine_pg():
+            from src.db.engine import get_connection as _engine_conn
+            with _engine_conn() as conn:
+                yield conn
+        elif self.db_type == 'sqlite':
+            import sqlite3 as _sqlite3
+            conn = _sqlite3.connect(self.db_path)
+            conn.row_factory = _sqlite3.Row
             try:
                 yield conn
                 conn.commit()
             finally:
                 conn.close()
         else:
-            # PostgreSQL
             conn = self._get_pg_connection()
             try:
                 yield conn
@@ -88,7 +94,7 @@ class AlertDatabase:
                 self._release_pg_connection(conn)
 
     def _get_pg_connection(self):
-        """Get PostgreSQL connection."""
+        """Get PostgreSQL connection (legacy: own pool)."""
         try:
             import psycopg2
             import psycopg2.extras

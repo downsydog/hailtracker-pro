@@ -12,6 +12,7 @@ from the Iowa Mesonet MRMS interface OR fall back to a point-sampling approach.
 """
 
 import logging
+import os
 import time
 from typing import Dict, List, Optional, Tuple
 
@@ -40,12 +41,13 @@ class MRMSProvider:
 
         Returns:
             Dict with keys:
-                'lats': np.ndarray (1D)
-                'lons': np.ndarray (1D)
-                'mesh_mm': np.ndarray (2D, shape [len(lats), len(lons)])
+                'status': str ('ok_data' | 'ok_empty' | 'synthetic')
+                'lats': np.ndarray (1D)    — absent when status='ok_empty'
+                'lons': np.ndarray (1D)    — absent when status='ok_empty'
+                'mesh_mm': np.ndarray (2D) — absent when status='ok_empty'
                 'source_time': str (ISO format)
                 'provider': str
-            Or None on failure.
+            Or None on failure (network/HTTP/parse error).
         """
         raise NotImplementedError
 
@@ -81,7 +83,9 @@ class MesonetMRMSProvider(MRMSProvider):
         min_lon, min_lat, max_lon, max_lat = bbox
 
         try:
-            return self._fetch_via_json_api(min_lon, min_lat, max_lon, max_lat)
+            result = self._fetch_via_json_api(min_lon, min_lat, max_lon, max_lat)
+            if result is not None:
+                return result  # ok_data or ok_empty
         except Exception as e:
             logger.warning(f"Mesonet MRMS JSON API failed: {e}")
 
@@ -113,7 +117,7 @@ class MesonetMRMSProvider(MRMSProvider):
         # Parse GeoJSON point features with MESH values
         features = data.get('features', [])
         if not features:
-            return None
+            return {'status': 'ok_empty'}
 
         points = []
         for f in features:
@@ -129,9 +133,13 @@ class MesonetMRMSProvider(MRMSProvider):
                 points.append((lat, lon, float(mesh_val)))
 
         if not points:
-            return None
+            return {'status': 'ok_empty'}
 
         return self._points_to_grid(points, min_lon, min_lat, max_lon, max_lat)
+
+    # Hard wall-clock cap for the synthetic-grid fallback.  Without this
+    # the nested loop can run for thousands of seconds (5000 reqs × 5s each).
+    _SYNTHETIC_MAX_SECONDS = int(os.environ.get('MRMS_SYNTHETIC_MAX_SECONDS', '15'))
 
     def _build_synthetic_grid(
         self, min_lon: float, min_lat: float, max_lon: float, max_lat: float
@@ -141,6 +149,8 @@ class MesonetMRMSProvider(MRMSProvider):
         point-value endpoint over a coarse grid.
 
         This is the most reliable fallback but slower.
+        Wall-clock capped at ``_SYNTHETIC_MAX_SECONDS`` to prevent
+        blocking the caller for minutes/hours.
         """
         from datetime import datetime, timezone
 
@@ -159,9 +169,20 @@ class MesonetMRMSProvider(MRMSProvider):
 
         # Batch query: use the MRMS point query endpoint
         # We sample a sparse grid and interpolate
+        deadline = time.time() + self._SYNTHETIC_MAX_SECONDS
         sampled = 0
+        budget_exhausted = False
         for i, lat in enumerate(lats):
+            if budget_exhausted:
+                break
             for j, lon in enumerate(lons):
+                if time.time() >= deadline:
+                    logger.info(
+                        "Synthetic grid wall-clock cap (%ds) reached after %d samples",
+                        self._SYNTHETIC_MAX_SECONDS, sampled,
+                    )
+                    budget_exhausted = True
+                    break
                 try:
                     url = (
                         f"https://mesonet.agron.iastate.edu/json/mrms_lookup.py"
@@ -185,6 +206,7 @@ class MesonetMRMSProvider(MRMSProvider):
             return None
 
         return {
+            'status': 'synthetic',
             'lats': lats.astype(np.float64),
             'lons': lons.astype(np.float64),
             'mesh_mm': mesh_grid,
@@ -215,6 +237,7 @@ class MesonetMRMSProvider(MRMSProvider):
                 mesh_grid[i, j] = max(mesh_grid[i, j], mesh_val)
 
         return {
+            'status': 'ok_data',
             'lats': lats.astype(np.float64),
             'lons': lons.astype(np.float64),
             'mesh_mm': mesh_grid,
@@ -341,6 +364,7 @@ class AWSMRMSProvider(MRMSProvider):
                     lons = lons[::step]
 
                 return {
+                    'status': 'ok_data',
                     'lats': lats.astype(np.float64),
                     'lons': lons.astype(np.float64),
                     'mesh_mm': mesh_data.astype(np.float32),

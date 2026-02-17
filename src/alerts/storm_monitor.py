@@ -211,6 +211,16 @@ class StormMonitor:
         # Auto-swath idempotency cache: event_id -> last_generated_ts
         self._swath_cache: Dict[str, float] = {}
 
+        # Backfill time override: when set, _check_radar uses this
+        # instead of datetime.utcnow() for the scan window.
+        self._override_end_time: Optional[datetime] = None
+
+        # Alert dedupe callbacks (set by radar_tick / radar_backfill).
+        # _alert_dedupe_check(scan_key) -> bool: True if already sent
+        # _alert_dedupe_mark(scan_key) -> None:  record dispatch
+        self._alert_dedupe_check: Optional[Callable] = None
+        self._alert_dedupe_mark: Optional[Callable] = None
+
         # --- MRMS MESH backbone (optional, env-gated) ---
         self._mrms_cache = None
         self._mrms_updater = None
@@ -679,8 +689,8 @@ class StormMonitor:
     def _check_radar(self, radar_id: str) -> Optional[Dict]:
         """Check a single radar for new data. Returns analysis dict or None."""
         try:
-            # Find recent scans
-            end_time = datetime.utcnow()
+            # Find recent scans (backfill can override end_time)
+            end_time = self._override_end_time or datetime.utcnow()
             start_time = end_time - timedelta(minutes=self.config.lookback_minutes)
 
             scans = self.conn.get_avail_scans_in_range(start_time, end_time, radar_id)
@@ -727,9 +737,21 @@ class StormMonitor:
                     sorted_keys = sorted(self.processed_scans)
                     self.processed_scans = set(sorted_keys[-500:])
 
-            # Generate alert if threshold met
+            # Generate alert if threshold met (with dedupe gate)
             if analysis and analysis.get('should_alert'):
-                self._generate_alert(radar_id, analysis)
+                suppressed = False
+                if self._alert_dedupe_check:
+                    try:
+                        suppressed = self._alert_dedupe_check(scan_key)
+                    except Exception:
+                        suppressed = False
+                if not suppressed:
+                    self._generate_alert(radar_id, analysis)
+                    if self._alert_dedupe_mark:
+                        try:
+                            self._alert_dedupe_mark(scan_key)
+                        except Exception:
+                            pass
 
             # Cleanup downloaded file
             try:

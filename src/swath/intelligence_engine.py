@@ -20,11 +20,27 @@ import json
 import logging
 import math
 import os
-import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+
+def _dict_cursor(conn):
+    """Return a cursor that yields dict-like rows for both SQLite and PG.
+
+    ``get_connection()`` yields raw psycopg2 pool connections whose default
+    cursors return tuples.  This helper creates a ``RealDictCursor`` when
+    on PostgreSQL so that ``dict(row)`` works the same as ``sqlite3.Row``.
+    """
+    try:
+        from src.db.engine import is_postgres
+        if is_postgres():
+            import psycopg2.extras
+            return conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    except Exception:
+        pass
+    return conn.cursor()
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -46,7 +62,7 @@ MIN_MATCH_SCORE = 0.45
 COARSE_FILTER_KM = 120.0
 
 # Geometry quality
-GEO_QUALITY_HIGH = {'cell_union', 'polygon_union'}
+GEO_QUALITY_HIGH = {'cell_union', 'polygon_union'}  # polygon_union kept for legacy data
 GEO_QUALITY_MED = {'centroid_buffer', 'sum_km2', 'sum_sqmi'}
 
 
@@ -179,9 +195,22 @@ _INDEXES = [
 
 
 def _ensure_table(db_path: str) -> None:
-    """Idempotent CREATE TABLE + indexes + column migration for hail_swaths."""
+    """Idempotent CREATE TABLE + indexes + column migration for hail_swaths.
+
+    When PostgreSQL is active, the PostGIS migration DDL (001_postgis_schema.sql)
+    is expected to have created hail_swaths already via engine.ensure_schema().
+    This function only runs the SQLite DDL path as a fallback.
+    """
+    from src.db.engine import is_postgres, get_connection, ensure_schema
+
+    if is_postgres():
+        ensure_schema()
+        return
+
+    # SQLite path: use direct file-based connection for schema init
+    import sqlite3 as _sqlite3
     os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
-    conn = sqlite3.connect(db_path, timeout=10)
+    conn = _sqlite3.connect(db_path, timeout=10)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute(_CREATE_TABLE_SQL)
@@ -380,6 +409,29 @@ def _compute_motion_score(
 # Area computation (unchanged from v1)
 # ---------------------------------------------------------------------------
 
+def _postgis_area_km2(geojson_str: str) -> Optional[float]:
+    """Compute area in km2 using PostGIS geography cast (authoritative)."""
+    try:
+        from src.db.engine import is_postgres, get_connection, placeholder as ph
+        if not is_postgres():
+            return None
+        p = ph()
+        with get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(f"""
+                SELECT ST_Area(
+                    ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON({p}), 4326))::geography
+                ) / 1e6 AS area_km2
+            """, (geojson_str,))
+            row = cur.fetchone()
+            if row is None:
+                return None
+            val = row[0] if not isinstance(row, dict) else row.get('area_km2')
+            return float(val) if val is not None else None
+    except Exception:
+        return None
+
+
 def _compute_area_km2(
     geojson_strings: List[Optional[str]],
     centroid_lat: float,
@@ -388,6 +440,9 @@ def _compute_area_km2(
     """
     Compute swath area in km2 with fallback chain.
     Returns (area_km2, union_geometry_or_None, area_method).
+
+    When PostGIS is available, the final area is computed via
+    ST_Area(geom::geography)/1e6 for geodetic accuracy.
     """
     # --- Attempt 1: Shapely polygon union ---
     try:
@@ -420,11 +475,23 @@ def _compute_area_km2(
 
         if polys:
             union = unary_union(polys)
+
+            # Try PostGIS geography area (authoritative geodetic math)
+            try:
+                from shapely.geometry import mapping
+                union_geojson = json.dumps(mapping(union))
+                pg_area = _postgis_area_km2(union_geojson)
+                if pg_area is not None and pg_area > 0:
+                    return pg_area, union, 'cell_union'
+            except Exception:
+                pass
+
+            # Fallback: Shapely planar approximation
             area_deg2 = union.area
             cos_lat = math.cos(math.radians(centroid_lat))
             area_km2 = area_deg2 * (111.32 ** 2) * cos_lat
             if area_km2 > 0:
-                return area_km2, union, 'polygon_union'
+                return area_km2, union, 'cell_union'
 
     except ImportError:
         pass
@@ -691,11 +758,19 @@ def _build_swath_from_events(
         has_mrms_core=has_mrms_core,
     )
 
-    # Geometry GeoJSON
+    # Geometry GeoJSON — validate and repair if needed
     geometry_geojson = None
     if union_geom is not None:
         try:
             from shapely.geometry import mapping
+            if not union_geom.is_valid:
+                union_geom = union_geom.buffer(0)
+                try:
+                    from src.observability.metrics import SWATH_GEOMETRY_REPAIRED
+                    SWATH_GEOMETRY_REPAIRED.inc()
+                except Exception:
+                    pass
+                logger.info("Swath %s: geometry repaired via buffer(0)", swath_id)
             geometry_geojson = json.dumps(mapping(union_geom))
         except Exception:
             pass
@@ -739,7 +814,15 @@ def _build_swath(cluster: List[dict], previous_swath: Optional[dict]) -> dict:
 # UPSERT SQL (v2 with geometry_quality)
 # ---------------------------------------------------------------------------
 
-_UPSERT_SQL = """
+def _build_upsert_sql() -> str:
+    """Build backend-aware UPSERT SQL for hail_swaths."""
+    from src.db.engine import placeholder as ph, is_postgres
+
+    p = ph()
+    now = 'NOW()' if is_postgres() else 'CURRENT_TIMESTAMP'
+    greatest = 'GREATEST' if is_postgres() else 'MAX'
+
+    return f"""
 INSERT INTO hail_swaths (
     swath_id, first_seen_utc, last_seen_utc,
     centroid_lat, centroid_lon,
@@ -752,16 +835,16 @@ INSERT INTO hail_swaths (
     geometry_geojson, member_event_names,
     area_method, geometry_quality, updated_at
 ) VALUES (
-    ?, ?, ?,
-    ?, ?,
-    ?, ?,
-    ?, ?,
-    ?, ?, ?,
-    ?, ?, ?,
-    ?, ?,
-    ?, ?,
-    ?, ?,
-    ?, ?, CURRENT_TIMESTAMP
+    {p}, {p}, {p},
+    {p}, {p},
+    {p}, {p},
+    {p}, {p},
+    {p}, {p}, {p},
+    {p}, {p}, {p},
+    {p}, {p},
+    {p}, {p},
+    {p}, {p},
+    {p}, {p}, {now}
 )
 ON CONFLICT(swath_id) DO UPDATE SET
     first_seen_utc = excluded.first_seen_utc,
@@ -771,7 +854,7 @@ ON CONFLICT(swath_id) DO UPDATE SET
     area_km2 = excluded.area_km2,
     severe_core_km2 = excluded.severe_core_km2,
     mean_hail_size = excluded.mean_hail_size,
-    max_hail_size = MAX(hail_swaths.max_hail_size, excluded.max_hail_size),
+    max_hail_size = {greatest}(hail_swaths.max_hail_size, excluded.max_hail_size),
     impact_score = excluded.impact_score,
     impact_tier = excluded.impact_tier,
     lifecycle_state = CASE
@@ -789,13 +872,15 @@ ON CONFLICT(swath_id) DO UPDATE SET
     member_event_names = excluded.member_event_names,
     area_method = excluded.area_method,
     geometry_quality = excluded.geometry_quality,
-    updated_at = CURRENT_TIMESTAMP
+    updated_at = {now}
 """
 
 
 def _upsert_swath(conn, swath: dict) -> None:
     """Execute UPSERT for a single swath dict."""
-    conn.execute(_UPSERT_SQL, (
+    sql = _build_upsert_sql()
+    cur = conn.cursor()
+    cur.execute(sql, (
         swath['swath_id'],
         swath['first_seen_utc'],
         swath['last_seen_utc'],
@@ -828,9 +913,11 @@ def _upsert_swath(conn, swath: dict) -> None:
 
 def _fetch_active_swaths(conn) -> List[dict]:
     """Fetch non-EXPIRED swaths seen within EVENT_WINDOW_MINUTES."""
+    from src.db.engine import placeholder as ph
     cutoff = (datetime.now(timezone.utc) - timedelta(minutes=EVENT_WINDOW_MINUTES)).strftime('%Y-%m-%d %H:%M:%S')
     try:
-        rows = conn.execute("""
+        cur = _dict_cursor(conn)
+        cur.execute(f"""
             SELECT swath_id, first_seen_utc, last_seen_utc,
                    centroid_lat, centroid_lon,
                    directional_vector_deg, velocity_kmh,
@@ -839,8 +926,9 @@ def _fetch_active_swaths(conn) -> List[dict]:
                    area_method, geometry_quality, updated_at
             FROM hail_swaths
             WHERE lifecycle_state != 'EXPIRED'
-              AND last_seen_utc >= ?
-        """, (cutoff,)).fetchall()
+              AND last_seen_utc >= {ph()}
+        """, (cutoff,))
+        rows = cur.fetchall()
     except Exception:
         return []
     return [dict(r) for r in rows]
@@ -848,9 +936,18 @@ def _fetch_active_swaths(conn) -> List[dict]:
 
 def _fetch_recent_events(conn) -> List[dict]:
     """Fetch CONFIRMED events from recent window."""
+    from src.db.engine import placeholder as ph, is_postgres
+
+    p = ph()
+    if is_postgres():
+        time_filter = f"start_time >= NOW() + ({p} || ' minutes')::interval"
+    else:
+        time_filter = f"start_time >= datetime('now', {p} || ' minutes')"
+
     # Try extended columns, fallback to base
     try:
-        rows = conn.execute("""
+        cur = _dict_cursor(conn)
+        cur.execute(f"""
             SELECT event_name, center_lat, center_lon,
                    start_time, end_time,
                    max_hail_size, confidence_score,
@@ -860,11 +957,13 @@ def _fetch_recent_events(conn) -> List[dict]:
             FROM hail_events
             WHERE status = 'CONFIRMED'
               AND data_source = 'NEXRAD_REALTIME'
-              AND start_time >= datetime('now', ? || ' minutes')
-        """, (f"-{EVENT_WINDOW_MINUTES}",)).fetchall()
+              AND {time_filter}
+        """, (f"-{EVENT_WINDOW_MINUTES}",))
+        rows = cur.fetchall()
     except Exception:
         try:
-            rows = conn.execute("""
+            cur = _dict_cursor(conn)
+            cur.execute("""
                 SELECT event_name, center_lat, center_lon,
                        start_time, end_time,
                        max_hail_size, confidence_score,
@@ -872,7 +971,8 @@ def _fetch_recent_events(conn) -> List[dict]:
                 FROM hail_events
                 WHERE status = 'CONFIRMED'
                   AND data_source = 'NEXRAD_REALTIME'
-            """).fetchall()
+            """)
+            rows = cur.fetchall()
         except Exception:
             return []
     return [dict(r) for r in rows]
@@ -1015,67 +1115,145 @@ def _assign_events_to_swaths(
 # Public API
 # ---------------------------------------------------------------------------
 
+def fetch_swaths_geojson(
+    simplify_meters: float = 0,
+    lifecycle_states: Optional[List[str]] = None,
+) -> List[dict]:
+    """
+    Fetch active swaths as GeoJSON-ready dicts.
+
+    Args:
+        simplify_meters: If > 0 and PostGIS available, apply
+            ST_SimplifyPreserveTopology for lighter geometry at lower zoom.
+        lifecycle_states: Filter by lifecycle state (default: non-EXPIRED).
+
+    Returns list of swath dicts with ``geometry_geojson`` potentially
+    simplified. When PostGIS is unavailable or simplify_meters is 0,
+    returns raw stored geometry.
+    """
+    from src.db.engine import get_connection, is_postgres, placeholder as ph
+
+    states = lifecycle_states or ['FORMING', 'ORGANIZING', 'MATURE', 'DECAYING']
+    p = ph()
+    pg = is_postgres()
+
+    # Build geometry column expression
+    if pg and simplify_meters > 0:
+        geom_expr = (
+            f"ST_AsGeoJSON(ST_SimplifyPreserveTopology(swath_geom, "
+            f"{simplify_meters / 111320.0})) AS geometry_geojson_simplified"
+        )
+    else:
+        geom_expr = "geometry_geojson"
+
+    placeholders = ', '.join([p] * len(states))
+
+    with get_connection() as conn:
+        cur = _dict_cursor(conn)
+        cur.execute(f"""
+            SELECT swath_id, first_seen_utc, last_seen_utc,
+                   centroid_lat, centroid_lon,
+                   area_km2, severe_core_km2,
+                   mean_hail_size, max_hail_size,
+                   impact_score, impact_tier, lifecycle_state,
+                   confidence_avg, confirmed_event_count,
+                   directional_vector_deg, velocity_kmh,
+                   area_method, geometry_quality,
+                   updated_at, last_valid_swath_utc,
+                   {geom_expr}
+            FROM hail_swaths
+            WHERE lifecycle_state IN ({placeholders})
+            ORDER BY impact_score DESC
+        """, tuple(states))
+        rows = cur.fetchall()
+
+    results = []
+    for r in rows:
+        d = dict(r)
+        # Use simplified geometry if available
+        if 'geometry_geojson_simplified' in d:
+            d['geometry_geojson'] = d.pop('geometry_geojson_simplified')
+        results.append(d)
+    return results
+
+
 def update_swaths(db_path: str = 'data/hailtracker_crm.db') -> int:
     """
     Main entry point: fetch CONFIRMED events, assign to swaths via
     motion coherence, aggregate metrics, persist.
 
+    On success, sets ``last_valid_swath_utc`` on updated swaths so the
+    API can report staleness.  On failure, existing swaths remain
+    unchanged (last-known-good caching).
+
     Returns number of swaths upserted.
     """
+    from src.db.engine import get_connection, is_postgres, placeholder as ph
+
     _ensure_table(db_path)
 
-    conn = sqlite3.connect(db_path, timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
+    with get_connection() as conn:
+        try:
+            events = _fetch_recent_events(conn)
+            if not events:
+                return 0
 
-    try:
-        events = _fetch_recent_events(conn)
-        if not events:
-            return 0
+            active_swaths = _fetch_active_swaths(conn)
 
-        active_swaths = _fetch_active_swaths(conn)
+            # Assign events to swaths
+            assignments = _assign_events_to_swaths(events, active_swaths)
 
-        # Assign events to swaths
-        assignments = _assign_events_to_swaths(events, active_swaths)
+            # Build swath map for previous state lookup
+            prev_map = {s['swath_id']: s for s in active_swaths}
 
-        # Build swath map for previous state lookup
-        prev_map = {s['swath_id']: s for s in active_swaths}
-
-        upserted = 0
-        for swath_id, assigned_events in assignments.items():
-            if not assigned_events:
-                continue
-
-            # Filter: require persistence threshold
-            if len(assigned_events) < MIN_CONFIRMED_EVENTS:
-                severe_area = sum(
-                    (ev.get('swath_area_sqmi', 0) or 0) * 2.59
-                    for ev in assigned_events
-                    if (ev.get('max_hail_size', 0) or 0) >= 2.0
-                )
-                if severe_area < MIN_SEVERE_CORE_KM2:
+            upserted = 0
+            upserted_ids = []
+            for swath_id, assigned_events in assignments.items():
+                if not assigned_events:
                     continue
 
-            previous_swath = prev_map.get(swath_id)
-            swath = _build_swath_from_events(swath_id, assigned_events, previous_swath)
-            _upsert_swath(conn, swath)
-            upserted += 1
+                # Filter: require persistence threshold
+                if len(assigned_events) < MIN_CONFIRMED_EVENTS:
+                    severe_area = sum(
+                        (ev.get('swath_area_sqmi', 0) or 0) * 2.59
+                        for ev in assigned_events
+                        if (ev.get('max_hail_size', 0) or 0) >= 2.0
+                    )
+                    if severe_area < MIN_SEVERE_CORE_KM2:
+                        continue
 
-        # Expire old swaths (use space-separated format to match DB timestamps)
-        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=EXPIRE_MINUTES)).strftime('%Y-%m-%d %H:%M:%S')
-        conn.execute("""
-            UPDATE hail_swaths
-            SET lifecycle_state = 'EXPIRED', updated_at = CURRENT_TIMESTAMP
-            WHERE lifecycle_state != 'EXPIRED'
-              AND last_seen_utc < ?
-        """, (cutoff,))
+                previous_swath = prev_map.get(swath_id)
+                swath = _build_swath_from_events(swath_id, assigned_events, previous_swath)
+                _upsert_swath(conn, swath)
+                upserted += 1
+                upserted_ids.append(swath_id)
 
-        conn.commit()
-        return upserted
+            # Mark successfully updated swaths with last_valid_swath_utc
+            if upserted_ids and is_postgres():
+                p = ph()
+                cur = conn.cursor()
+                for sid in upserted_ids:
+                    cur.execute(f"""
+                        UPDATE hail_swaths
+                        SET last_valid_swath_utc = NOW()
+                        WHERE swath_id = {p}
+                    """, (sid,))
 
-    except Exception:
-        logger.exception("Swath intelligence engine error")
-        return 0
-    finally:
-        conn.close()
+            # Expire old swaths
+            p = ph()
+            now = 'NOW()' if is_postgres() else 'CURRENT_TIMESTAMP'
+            cutoff = (datetime.now(timezone.utc) - timedelta(minutes=EXPIRE_MINUTES)).strftime('%Y-%m-%d %H:%M:%S')
+            cur = conn.cursor()
+            cur.execute(f"""
+                UPDATE hail_swaths
+                SET lifecycle_state = 'EXPIRED', updated_at = {now}
+                WHERE lifecycle_state != 'EXPIRED'
+                  AND last_seen_utc < {p}
+            """, (cutoff,))
+
+            return upserted
+
+        except Exception:
+            # On failure, swaths remain unchanged in DB (last-known-good)
+            logger.exception("Swath intelligence engine error — serving last known good swaths")
+            return 0

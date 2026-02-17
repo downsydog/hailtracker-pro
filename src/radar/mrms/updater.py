@@ -76,30 +76,39 @@ class MRMSUpdater:
             self._thread.join(timeout=10)
         logger.info("MRMSUpdater stopped")
 
-    def fetch_once(self) -> bool:
+    def fetch_once(self) -> str:
         """
         Perform a single MRMS fetch and cache update.
 
-        Returns True if successful, False otherwise.
+        Returns one of: 'ok_data', 'ok_empty', 'synthetic', 'error'.
         Safe to call from any thread (used for testing).
         """
         try:
             grid = self._provider.fetch_mesh_grid()
-            if grid is not None:
-                self._cache.update(grid)
-                logger.info(
-                    f"MRMS MESH updated: provider={grid.get('provider')}, "
-                    f"source_time={grid.get('source_time')}"
-                )
-                return True
-            else:
+            if grid is None:
                 self._cache.set_error("Provider returned None")
-                return False
+                return 'error'
+
+            status = grid.get('status', 'ok_data')
+
+            if status == 'ok_empty':
+                self._cache.mark_alive(
+                    provider=self._provider_name, status='ok_empty',
+                )
+                logger.info("MRMS MESH: ok_empty (no hail features)")
+                return 'ok_empty'
+
+            self._cache.update(grid)
+            logger.info(
+                f"MRMS MESH updated: provider={grid.get('provider')}, "
+                f"source_time={grid.get('source_time')}, status={status}"
+            )
+            return status  # 'ok_data' or 'synthetic'
         except Exception as e:
             msg = f"MRMS fetch error: {e}"
             logger.warning(msg)
             self._cache.set_error(msg)
-            return False
+            return 'error'
 
     def _run_loop(self) -> None:
         """Main updater loop. Runs in daemon thread."""
@@ -107,7 +116,7 @@ class MRMSUpdater:
         for attempt in range(3):
             if self._stop_event.is_set():
                 break
-            if self.fetch_once():
+            if self.fetch_once() != 'error':
                 break
             logger.info(f"MRMS initial fetch attempt {attempt + 1}/3 failed, retrying...")
             self._stop_event.wait(5)

@@ -14,6 +14,9 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
+from src.db.engine import get_raw_connection, is_postgres
+from src.db.compat import sql
+
 logger = logging.getLogger(__name__)
 
 # --- Config from env ---
@@ -323,41 +326,77 @@ def _cell_confidence(event_confidence: float, evidence_mask: int) -> float:
 
 def ensure_damage_grid_table(db_path: str = "data/hailtracker_crm.db"):
     """Create hail_damage_grid table if it doesn't exist (idempotent)."""
-    os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
-    conn = sqlite3.connect(db_path, timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS hail_damage_grid (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_name TEXT NOT NULL,
-            grid_version INTEGER NOT NULL DEFAULT 1,
-            cell_size_km REAL NOT NULL,
-            i INTEGER NOT NULL,
-            j INTEGER NOT NULL,
-            center_lat REAL NOT NULL,
-            center_lon REAL NOT NULL,
-            bbox_min_lat REAL NOT NULL,
-            bbox_max_lat REAL NOT NULL,
-            bbox_min_lon REAL NOT NULL,
-            bbox_max_lon REAL NOT NULL,
-            authoritative_hail_mm REAL NOT NULL DEFAULT 0,
-            authoritative_hail_in REAL NOT NULL DEFAULT 0,
-            damage_probability REAL NOT NULL DEFAULT 0,
-            damage_severity TEXT NOT NULL DEFAULT 'NONE',
-            cell_confidence REAL NOT NULL DEFAULT 0,
-            dwell_seconds REAL NOT NULL DEFAULT 0,
-            evidence_mask INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            UNIQUE(event_name, grid_version, cell_size_km, i, j)
-        )
-    """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_damage_event ON hail_damage_grid(event_name)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_damage_bbox ON hail_damage_grid(bbox_min_lat, bbox_max_lat, bbox_min_lon, bbox_max_lon)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_damage_center ON hail_damage_grid(center_lat, center_lon)")
-    conn.commit()
-    conn.close()
+    if is_postgres():
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS hail_damage_grid (
+                id BIGSERIAL PRIMARY KEY,
+                event_name TEXT NOT NULL,
+                grid_version INTEGER NOT NULL DEFAULT 1,
+                cell_size_km DOUBLE PRECISION NOT NULL,
+                i INTEGER NOT NULL,
+                j INTEGER NOT NULL,
+                center_lat DOUBLE PRECISION NOT NULL,
+                center_lon DOUBLE PRECISION NOT NULL,
+                bbox_min_lat DOUBLE PRECISION NOT NULL,
+                bbox_max_lat DOUBLE PRECISION NOT NULL,
+                bbox_min_lon DOUBLE PRECISION NOT NULL,
+                bbox_max_lon DOUBLE PRECISION NOT NULL,
+                authoritative_hail_mm DOUBLE PRECISION NOT NULL DEFAULT 0,
+                authoritative_hail_in DOUBLE PRECISION NOT NULL DEFAULT 0,
+                damage_probability DOUBLE PRECISION NOT NULL DEFAULT 0,
+                damage_severity TEXT NOT NULL DEFAULT 'NONE',
+                cell_confidence DOUBLE PRECISION NOT NULL DEFAULT 0,
+                dwell_seconds DOUBLE PRECISION NOT NULL DEFAULT 0,
+                evidence_mask INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE(event_name, grid_version, cell_size_km, i, j)
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_damage_event ON hail_damage_grid(event_name)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_damage_bbox ON hail_damage_grid(bbox_min_lat, bbox_max_lat, bbox_min_lon, bbox_max_lon)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_damage_center ON hail_damage_grid(center_lat, center_lon)")
+        conn.commit()
+        cur.close()
+        conn.close()
+    else:
+        os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
+        conn = sqlite3.connect(db_path, timeout=10)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS hail_damage_grid (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_name TEXT NOT NULL,
+                grid_version INTEGER NOT NULL DEFAULT 1,
+                cell_size_km REAL NOT NULL,
+                i INTEGER NOT NULL,
+                j INTEGER NOT NULL,
+                center_lat REAL NOT NULL,
+                center_lon REAL NOT NULL,
+                bbox_min_lat REAL NOT NULL,
+                bbox_max_lat REAL NOT NULL,
+                bbox_min_lon REAL NOT NULL,
+                bbox_max_lon REAL NOT NULL,
+                authoritative_hail_mm REAL NOT NULL DEFAULT 0,
+                authoritative_hail_in REAL NOT NULL DEFAULT 0,
+                damage_probability REAL NOT NULL DEFAULT 0,
+                damage_severity TEXT NOT NULL DEFAULT 'NONE',
+                cell_confidence REAL NOT NULL DEFAULT 0,
+                dwell_seconds REAL NOT NULL DEFAULT 0,
+                evidence_mask INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(event_name, grid_version, cell_size_km, i, j)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_damage_event ON hail_damage_grid(event_name)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_damage_bbox ON hail_damage_grid(bbox_min_lat, bbox_max_lat, bbox_min_lon, bbox_max_lon)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_damage_center ON hail_damage_grid(center_lat, center_lon)")
+        conn.commit()
+        conn.close()
 
 
 def persist_damage_grid(
@@ -369,47 +408,98 @@ def persist_damage_grid(
     """
     Upsert damage grid cells for an event into the database.
 
-    Idempotent: uses INSERT OR REPLACE on the unique key.
+    Idempotent: uses INSERT OR REPLACE on the unique key (SQLite) or
+    INSERT ... ON CONFLICT ... DO UPDATE (PostgreSQL).
     """
     if not cells:
         return 0
 
     ensure_damage_grid_table(db_path)
 
-    conn = sqlite3.connect(db_path, timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
+    if is_postgres():
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        insert_sql = """
+            INSERT INTO hail_damage_grid (
+                event_name, grid_version, cell_size_km, i, j,
+                center_lat, center_lon,
+                bbox_min_lat, bbox_max_lat, bbox_min_lon, bbox_max_lon,
+                authoritative_hail_mm, authoritative_hail_in,
+                damage_probability, damage_severity, cell_confidence,
+                dwell_seconds, evidence_mask, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (event_name, grid_version, cell_size_km, i, j) DO UPDATE SET
+                center_lat = EXCLUDED.center_lat,
+                center_lon = EXCLUDED.center_lon,
+                bbox_min_lat = EXCLUDED.bbox_min_lat,
+                bbox_max_lat = EXCLUDED.bbox_max_lat,
+                bbox_min_lon = EXCLUDED.bbox_min_lon,
+                bbox_max_lon = EXCLUDED.bbox_max_lon,
+                authoritative_hail_mm = EXCLUDED.authoritative_hail_mm,
+                authoritative_hail_in = EXCLUDED.authoritative_hail_in,
+                damage_probability = EXCLUDED.damage_probability,
+                damage_severity = EXCLUDED.damage_severity,
+                cell_confidence = EXCLUDED.cell_confidence,
+                dwell_seconds = EXCLUDED.dwell_seconds,
+                evidence_mask = EXCLUDED.evidence_mask,
+                updated_at = EXCLUDED.updated_at
+        """
+        inserted = 0
+        for cell in cells:
+            try:
+                cur.execute(insert_sql, (
+                    event_name, grid_version, cell["cell_size_km"],
+                    cell["i"], cell["j"],
+                    cell["center_lat"], cell["center_lon"],
+                    cell["bbox_min_lat"], cell["bbox_max_lat"],
+                    cell["bbox_min_lon"], cell["bbox_max_lon"],
+                    cell["authoritative_hail_mm"], cell["authoritative_hail_in"],
+                    cell["damage_probability"], cell["damage_severity"],
+                    cell["cell_confidence"], cell["dwell_seconds"],
+                    cell["evidence_mask"], cell["created_at"], cell["updated_at"],
+                ))
+                inserted += 1
+            except Exception as e:
+                logger.warning("Failed to persist grid cell (%d,%d): %s", cell["i"], cell["j"], e)
+        conn.commit()
+        cur.close()
+        conn.close()
+        return inserted
+    else:
+        conn = sqlite3.connect(db_path, timeout=10)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
 
-    inserted = 0
-    for cell in cells:
-        try:
-            conn.execute("""
-                INSERT OR REPLACE INTO hail_damage_grid (
-                    event_name, grid_version, cell_size_km, i, j,
-                    center_lat, center_lon,
-                    bbox_min_lat, bbox_max_lat, bbox_min_lon, bbox_max_lon,
-                    authoritative_hail_mm, authoritative_hail_in,
-                    damage_probability, damage_severity, cell_confidence,
-                    dwell_seconds, evidence_mask, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                event_name, grid_version, cell["cell_size_km"],
-                cell["i"], cell["j"],
-                cell["center_lat"], cell["center_lon"],
-                cell["bbox_min_lat"], cell["bbox_max_lat"],
-                cell["bbox_min_lon"], cell["bbox_max_lon"],
-                cell["authoritative_hail_mm"], cell["authoritative_hail_in"],
-                cell["damage_probability"], cell["damage_severity"],
-                cell["cell_confidence"], cell["dwell_seconds"],
-                cell["evidence_mask"], cell["created_at"], cell["updated_at"],
-            ))
-            inserted += 1
-        except Exception as e:
-            logger.warning("Failed to persist grid cell (%d,%d): %s", cell["i"], cell["j"], e)
+        inserted = 0
+        for cell in cells:
+            try:
+                conn.execute("""
+                    INSERT OR REPLACE INTO hail_damage_grid (
+                        event_name, grid_version, cell_size_km, i, j,
+                        center_lat, center_lon,
+                        bbox_min_lat, bbox_max_lat, bbox_min_lon, bbox_max_lon,
+                        authoritative_hail_mm, authoritative_hail_in,
+                        damage_probability, damage_severity, cell_confidence,
+                        dwell_seconds, evidence_mask, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    event_name, grid_version, cell["cell_size_km"],
+                    cell["i"], cell["j"],
+                    cell["center_lat"], cell["center_lon"],
+                    cell["bbox_min_lat"], cell["bbox_max_lat"],
+                    cell["bbox_min_lon"], cell["bbox_max_lon"],
+                    cell["authoritative_hail_mm"], cell["authoritative_hail_in"],
+                    cell["damage_probability"], cell["damage_severity"],
+                    cell["cell_confidence"], cell["dwell_seconds"],
+                    cell["evidence_mask"], cell["created_at"], cell["updated_at"],
+                ))
+                inserted += 1
+            except Exception as e:
+                logger.warning("Failed to persist grid cell (%d,%d): %s", cell["i"], cell["j"], e)
 
-    conn.commit()
-    conn.close()
-    return inserted
+        conn.commit()
+        conn.close()
+        return inserted
 
 
 # =========================================================================
@@ -425,18 +515,35 @@ def query_damage_grid(
 ) -> List[Dict]:
     """Query damage grid cells for an event."""
     ensure_damage_grid_table(db_path)
-    conn = sqlite3.connect(db_path, timeout=10)
-    conn.row_factory = sqlite3.Row
-    rows = conn.execute("""
-        SELECT * FROM hail_damage_grid
-        WHERE event_name = ?
-          AND damage_probability >= ?
-          AND cell_confidence >= ?
-        ORDER BY damage_probability DESC
-        LIMIT ?
-    """, (event_name, min_prob, min_conf, max_cells)).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+
+    if is_postgres():
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT * FROM hail_damage_grid
+            WHERE event_name = %s
+              AND damage_probability >= %s
+              AND cell_confidence >= %s
+            ORDER BY damage_probability DESC
+            LIMIT %s
+        """, (event_name, min_prob, min_conf, max_cells))
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return [dict(r) for r in rows]
+    else:
+        conn = sqlite3.connect(db_path, timeout=10)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("""
+            SELECT * FROM hail_damage_grid
+            WHERE event_name = ?
+              AND damage_probability >= ?
+              AND cell_confidence >= ?
+            ORDER BY damage_probability DESC
+            LIMIT ?
+        """, (event_name, min_prob, min_conf, max_cells)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
 
 
 def query_damage_grid_bbox(
@@ -449,19 +556,37 @@ def query_damage_grid_bbox(
 ) -> List[Dict]:
     """Query damage grid cells by bounding box."""
     ensure_damage_grid_table(db_path)
-    conn = sqlite3.connect(db_path, timeout=10)
-    conn.row_factory = sqlite3.Row
-    rows = conn.execute("""
-        SELECT * FROM hail_damage_grid
-        WHERE center_lat BETWEEN ? AND ?
-          AND center_lon BETWEEN ? AND ?
-          AND damage_probability >= ?
-          AND cell_confidence >= ?
-        ORDER BY damage_probability DESC
-        LIMIT ?
-    """, (min_lat, max_lat, min_lon, max_lon, min_prob, min_conf, max_cells)).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+
+    if is_postgres():
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT * FROM hail_damage_grid
+            WHERE center_lat BETWEEN %s AND %s
+              AND center_lon BETWEEN %s AND %s
+              AND damage_probability >= %s
+              AND cell_confidence >= %s
+            ORDER BY damage_probability DESC
+            LIMIT %s
+        """, (min_lat, max_lat, min_lon, max_lon, min_prob, min_conf, max_cells))
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return [dict(r) for r in rows]
+    else:
+        conn = sqlite3.connect(db_path, timeout=10)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("""
+            SELECT * FROM hail_damage_grid
+            WHERE center_lat BETWEEN ? AND ?
+              AND center_lon BETWEEN ? AND ?
+              AND damage_probability >= ?
+              AND cell_confidence >= ?
+            ORDER BY damage_probability DESC
+            LIMIT ?
+        """, (min_lat, max_lat, min_lon, max_lon, min_prob, min_conf, max_cells)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
 
 
 def cells_to_geojson(cells: List[Dict]) -> Dict:

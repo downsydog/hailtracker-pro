@@ -3,13 +3,15 @@ Swath Database Manager
 Handles storage and retrieval of hail swaths and detections
 """
 
-import sqlite3
 import json
+import logging
 import os
 from typing import List, Dict, Optional
 from datetime import datetime
 
 from src.radar.swath_generator import SwathGenerator, HailDetection
+
+logger = logging.getLogger(__name__)
 
 
 class SwathDatabase:
@@ -20,13 +22,21 @@ class SwathDatabase:
         Initialize swath database
 
         Args:
-            db_path: Path to SQLite database
+            db_path: Path to database (ignored when PostgreSQL is active)
         """
         self.db_path = db_path
         self._ensure_schema()
 
     def _ensure_schema(self):
         """Create swath tables if they don't exist"""
+        from src.db.engine import is_postgres, ensure_schema
+
+        if is_postgres():
+            ensure_schema()
+            return
+
+        # SQLite path
+        import sqlite3 as _sqlite3
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
 
         schema_path = 'src/db/swath_schema.sql'
@@ -34,20 +44,25 @@ class SwathDatabase:
             with open(schema_path, 'r') as f:
                 schema = f.read()
 
-            conn = sqlite3.connect(self.db_path)
+            conn = _sqlite3.connect(self.db_path)
             conn.executescript(schema)
             conn.commit()
             conn.close()
 
-            print(f"Swath database initialized: {self.db_path}")
+            logger.info("Swath database initialized: %s", self.db_path)
         else:
-            print(f"Warning: Schema file not found: {schema_path}")
+            logger.warning("Schema file not found: %s", schema_path)
 
-    def get_connection(self):
-        """Get database connection with row factory"""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
+    def _get_connection(self):
+        """Get database connection via central engine."""
+        from src.db.engine import get_connection
+        return get_connection()
+
+    @staticmethod
+    def _ph():
+        """Parameter placeholder for current backend."""
+        from src.db.engine import placeholder
+        return placeholder()
 
     # ========================================================================
     # CREATE EVENTS
@@ -129,50 +144,66 @@ class SwathDatabase:
             event_name = f"{location} - {date_str}"
 
         # Insert event
-        conn = self.get_connection()
-        cursor = conn.cursor()
+        from src.db.engine import is_postgres
+        p = self._ph()
 
-        cursor.execute("""
-            INSERT INTO hail_events (
-                event_name, event_date, start_time, end_time,
-                center_lat, center_lon, swath_polygon, swath_area_sqmi,
-                max_hail_size, avg_hail_size, max_reflectivity, avg_reflectivity,
-                storm_motion_dir, storm_motion_speed,
-                swath_method, num_detections, data_source
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            event_name, event_date, start_time, end_time,
-            center_lat, center_lon, swath_json, swath_area,
-            max_hail, avg_hail, max_reflectivity, avg_reflectivity,
-            storm_motion_dir, storm_motion_speed,
-            swath_method, len(detections), data_source
-        ))
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        event_id = cursor.lastrowid
-
-        # Insert individual detections
-        for detection in detections:
-            cursor.execute("""
-                INSERT INTO hail_detections (
-                    event_id, detection_time, lat, lon,
-                    hail_size, reflectivity,
+            if is_postgres():
+                cursor.execute(f"""
+                    INSERT INTO hail_events (
+                        event_name, event_date, start_time, end_time,
+                        center_lat, center_lon, swath_polygon, swath_area_sqmi,
+                        max_hail_size, avg_hail_size, max_reflectivity, avg_reflectivity,
+                        storm_motion_dir, storm_motion_speed,
+                        swath_method, num_detections, data_source
+                    ) VALUES ({', '.join([p] * 17)})
+                    RETURNING id
+                """, (
+                    event_name, event_date, start_time, end_time,
+                    center_lat, center_lon, swath_json, swath_area,
+                    max_hail, avg_hail, max_reflectivity, avg_reflectivity,
                     storm_motion_dir, storm_motion_speed,
+                    swath_method, len(detections), data_source
+                ))
+                event_id = cursor.fetchone()[0]
+            else:
+                cursor.execute(f"""
+                    INSERT INTO hail_events (
+                        event_name, event_date, start_time, end_time,
+                        center_lat, center_lon, swath_polygon, swath_area_sqmi,
+                        max_hail_size, avg_hail_size, max_reflectivity, avg_reflectivity,
+                        storm_motion_dir, storm_motion_speed,
+                        swath_method, num_detections, data_source
+                    ) VALUES ({', '.join([p] * 17)})
+                """, (
+                    event_name, event_date, start_time, end_time,
+                    center_lat, center_lon, swath_json, swath_area,
+                    max_hail, avg_hail, max_reflectivity, avg_reflectivity,
+                    storm_motion_dir, storm_motion_speed,
+                    swath_method, len(detections), data_source
+                ))
+                event_id = cursor.lastrowid
+
+            # Insert individual detections
+            for detection in detections:
+                cursor.execute(f"""
+                    INSERT INTO hail_detections (
+                        event_id, detection_time, lat, lon,
+                        hail_size, reflectivity,
+                        storm_motion_dir, storm_motion_speed,
+                        data_source
+                    ) VALUES ({', '.join([p] * 9)})
+                """, (
+                    event_id, detection.timestamp, detection.lat, detection.lon,
+                    detection.hail_size, detection.reflectivity,
+                    detection.storm_motion_dir, detection.storm_motion_speed,
                     data_source
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                event_id, detection.timestamp, detection.lat, detection.lon,
-                detection.hail_size, detection.reflectivity,
-                detection.storm_motion_dir, detection.storm_motion_speed,
-                data_source
-            ))
+                ))
 
-        conn.commit()
-        conn.close()
-
-        print(f"Created hail event #{event_id}: {event_name}")
-        print(f"   - {len(detections)} detections")
-        print(f"   - Swath area: {swath_area} sq mi")
-        print(f"   - Method: {swath_method}")
+        logger.info("Created hail event #%d: %s (%d detections, %.1f sqmi, %s)",
+                     event_id, event_name, len(detections), swath_area, swath_method)
 
         return event_id
 
@@ -227,28 +258,45 @@ class SwathDatabase:
             'coordinates': swath_polygon['coordinates']
         })
 
-        conn = self.get_connection()
-        cursor = conn.cursor()
+        from src.db.engine import is_postgres
+        p = self._ph()
 
-        cursor.execute("""
-            INSERT INTO hail_events (
-                event_name, event_date, center_lat, center_lon,
-                swath_polygon, swath_area_sqmi, max_hail_size,
-                storm_motion_dir, storm_motion_speed,
-                swath_method, data_source
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            event_name, event_date, center_lat, center_lon,
-            swath_json, swath_area, max_hail_size,
-            storm_motion_dir, storm_motion_speed,
-            swath_method, data_source
-        ))
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        event_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
+            if is_postgres():
+                cursor.execute(f"""
+                    INSERT INTO hail_events (
+                        event_name, event_date, center_lat, center_lon,
+                        swath_polygon, swath_area_sqmi, max_hail_size,
+                        storm_motion_dir, storm_motion_speed,
+                        swath_method, data_source
+                    ) VALUES ({', '.join([p] * 11)})
+                    RETURNING id
+                """, (
+                    event_name, event_date, center_lat, center_lon,
+                    swath_json, swath_area, max_hail_size,
+                    storm_motion_dir, storm_motion_speed,
+                    swath_method, data_source
+                ))
+                event_id = cursor.fetchone()[0]
+            else:
+                cursor.execute(f"""
+                    INSERT INTO hail_events (
+                        event_name, event_date, center_lat, center_lon,
+                        swath_polygon, swath_area_sqmi, max_hail_size,
+                        storm_motion_dir, storm_motion_speed,
+                        swath_method, data_source
+                    ) VALUES ({', '.join([p] * 11)})
+                """, (
+                    event_name, event_date, center_lat, center_lon,
+                    swath_json, swath_area, max_hail_size,
+                    storm_motion_dir, storm_motion_speed,
+                    swath_method, data_source
+                ))
+                event_id = cursor.lastrowid
 
-        print(f"Created manual event #{event_id}: {event_name}")
+        logger.info("Created manual event #%d: %s", event_id, event_name)
 
         return event_id
 
@@ -266,13 +314,12 @@ class SwathDatabase:
         Returns:
             Event dict with parsed swath polygon
         """
+        p = self._ph()
 
-        conn = self.get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute("SELECT * FROM hail_events WHERE id = ?", (event_id,))
-        event = cursor.fetchone()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"SELECT * FROM hail_events WHERE id = {p}", (event_id,))
+            event = cursor.fetchone()
 
         if not event:
             return None
@@ -280,7 +327,7 @@ class SwathDatabase:
         event_dict = dict(event)
 
         # Parse swath polygon JSON
-        if event_dict['swath_polygon']:
+        if event_dict.get('swath_polygon'):
             event_dict['swath_polygon'] = json.loads(event_dict['swath_polygon'])
 
         return event_dict
@@ -295,23 +342,21 @@ class SwathDatabase:
         Returns:
             List of event dicts
         """
+        p = self._ph()
 
-        conn = self.get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            SELECT * FROM hail_events
-            ORDER BY event_date DESC, start_time DESC
-            LIMIT ?
-        """, (limit,))
-
-        events = cursor.fetchall()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"""
+                SELECT * FROM hail_events
+                ORDER BY event_date DESC, start_time DESC
+                LIMIT {p}
+            """, (limit,))
+            events = cursor.fetchall()
 
         result = []
         for event in events:
             event_dict = dict(event)
-            if event_dict['swath_polygon']:
+            if event_dict.get('swath_polygon'):
                 event_dict['swath_polygon'] = json.loads(event_dict['swath_polygon'])
             result.append(event_dict)
 
@@ -328,23 +373,21 @@ class SwathDatabase:
         Returns:
             List of event dicts
         """
+        p = self._ph()
 
-        conn = self.get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            SELECT * FROM hail_events
-            WHERE event_date BETWEEN ? AND ?
-            ORDER BY event_date DESC, start_time DESC
-        """, (start_date, end_date))
-
-        events = cursor.fetchall()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"""
+                SELECT * FROM hail_events
+                WHERE event_date BETWEEN {p} AND {p}
+                ORDER BY event_date DESC, start_time DESC
+            """, (start_date, end_date))
+            events = cursor.fetchall()
 
         result = []
         for event in events:
             event_dict = dict(event)
-            if event_dict['swath_polygon']:
+            if event_dict.get('swath_polygon'):
                 event_dict['swath_polygon'] = json.loads(event_dict['swath_polygon'])
             result.append(event_dict)
 
@@ -360,18 +403,16 @@ class SwathDatabase:
         Returns:
             List of detection dicts
         """
+        p = self._ph()
 
-        conn = self.get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            SELECT * FROM hail_detections
-            WHERE event_id = ?
-            ORDER BY detection_time
-        """, (event_id,))
-
-        detections = cursor.fetchall()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"""
+                SELECT * FROM hail_detections
+                WHERE event_id = {p}
+                ORDER BY detection_time
+            """, (event_id,))
+            detections = cursor.fetchall()
 
         return [dict(d) for d in detections]
 
@@ -387,26 +428,39 @@ class SwathDatabase:
         Returns:
             List of event dicts within radius
         """
+        from src.db.engine import is_postgres
+        p = self._ph()
+        radius_meters = radius_miles * 1609.34
 
-        # Convert radius to degrees (rough approximation)
-        radius_deg = radius_miles / 69.0
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        conn = self.get_connection()
-        cursor = conn.cursor()
+            if is_postgres():
+                # PostGIS: true geodesic distance via geography cast
+                cursor.execute(f"""
+                    SELECT * FROM hail_events
+                    WHERE ST_DWithin(
+                        center_geom::geography,
+                        ST_SetSRID(ST_MakePoint({p}, {p}), 4326)::geography,
+                        {p}
+                    )
+                    ORDER BY event_date DESC
+                """, (lon, lat, radius_meters))
+            else:
+                # SQLite: bounding box approximation
+                radius_deg = radius_miles / 69.0
+                cursor.execute(f"""
+                    SELECT * FROM hail_events
+                    WHERE ABS(center_lat - {p}) < {p} AND ABS(center_lon - {p}) < {p}
+                    ORDER BY event_date DESC
+                """, (lat, radius_deg, lon, radius_deg))
 
-        cursor.execute("""
-            SELECT * FROM hail_events
-            WHERE ABS(center_lat - ?) < ? AND ABS(center_lon - ?) < ?
-            ORDER BY event_date DESC
-        """, (lat, radius_deg, lon, radius_deg))
-
-        events = cursor.fetchall()
-        conn.close()
+            events = cursor.fetchall()
 
         result = []
         for event in events:
             event_dict = dict(event)
-            if event_dict['swath_polygon']:
+            if event_dict.get('swath_polygon'):
                 event_dict['swath_polygon'] = json.loads(event_dict['swath_polygon'])
             result.append(event_dict)
 
@@ -423,30 +477,30 @@ class SwathDatabase:
         Returns:
             List of event dicts
         """
+        p = self._ph()
 
-        conn = self.get_connection()
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        if max_size:
-            cursor.execute("""
-                SELECT * FROM hail_events
-                WHERE max_hail_size BETWEEN ? AND ?
-                ORDER BY max_hail_size DESC
-            """, (min_size, max_size))
-        else:
-            cursor.execute("""
-                SELECT * FROM hail_events
-                WHERE max_hail_size >= ?
-                ORDER BY max_hail_size DESC
-            """, (min_size,))
+            if max_size:
+                cursor.execute(f"""
+                    SELECT * FROM hail_events
+                    WHERE max_hail_size BETWEEN {p} AND {p}
+                    ORDER BY max_hail_size DESC
+                """, (min_size, max_size))
+            else:
+                cursor.execute(f"""
+                    SELECT * FROM hail_events
+                    WHERE max_hail_size >= {p}
+                    ORDER BY max_hail_size DESC
+                """, (min_size,))
 
-        events = cursor.fetchall()
-        conn.close()
+            events = cursor.fetchall()
 
         result = []
         for event in events:
             event_dict = dict(event)
-            if event_dict['swath_polygon']:
+            if event_dict.get('swath_polygon'):
                 event_dict['swath_polygon'] = json.loads(event_dict['swath_polygon'])
             result.append(event_dict)
 
@@ -465,18 +519,17 @@ class SwathDatabase:
             locations: Number of affected locations
             vehicles: Number of affected vehicles
         """
+        from src.db.engine import is_postgres
+        p = self._ph()
+        now_expr = 'NOW()' if is_postgres() else 'CURRENT_TIMESTAMP'
 
-        conn = self.get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            UPDATE hail_events
-            SET affected_locations = ?, estimated_vehicles = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-        """, (locations, vehicles, event_id))
-
-        conn.commit()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"""
+                UPDATE hail_events
+                SET affected_locations = {p}, estimated_vehicles = {p}, updated_at = {now_expr}
+                WHERE id = {p}
+            """, (locations, vehicles, event_id))
 
     def delete_event(self, event_id: int) -> bool:
         """
@@ -488,15 +541,12 @@ class SwathDatabase:
         Returns:
             True if deleted, False if not found
         """
+        p = self._ph()
 
-        conn = self.get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute("DELETE FROM hail_events WHERE id = ?", (event_id,))
-        deleted = cursor.rowcount > 0
-
-        conn.commit()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"DELETE FROM hail_events WHERE id = {p}", (event_id,))
+            deleted = cursor.rowcount > 0
 
         return deleted
 
@@ -511,78 +561,74 @@ class SwathDatabase:
         Returns:
             Statistics dict with counts and extremes
         """
+        from src.db.engine import is_postgres
 
-        conn = self.get_connection()
-        cursor = conn.cursor()
+        # Backend-aware month extraction
+        if is_postgres():
+            month_expr = "to_char(event_date, 'YYYY-MM')"
+        else:
+            month_expr = "strftime('%Y-%m', event_date)"
 
-        # Total events
-        cursor.execute("SELECT COUNT(*) as count FROM hail_events")
-        total_events = cursor.fetchone()['count']
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        # Total detections
-        cursor.execute("SELECT COUNT(*) as count FROM hail_detections")
-        total_detections = cursor.fetchone()['count']
+            cursor.execute("SELECT COUNT(*) as count FROM hail_events")
+            total_events = cursor.fetchone()['count']
 
-        # Total area affected
-        cursor.execute("SELECT SUM(swath_area_sqmi) as total FROM hail_events")
-        total_area = cursor.fetchone()['total'] or 0
+            cursor.execute("SELECT COUNT(*) as count FROM hail_detections")
+            total_detections = cursor.fetchone()['count']
 
-        # Largest event
-        cursor.execute("""
-            SELECT event_name, swath_area_sqmi, max_hail_size, event_date
-            FROM hail_events
-            ORDER BY swath_area_sqmi DESC
-            LIMIT 1
-        """)
-        largest = cursor.fetchone()
+            cursor.execute("SELECT SUM(swath_area_sqmi) as total FROM hail_events")
+            total_area = cursor.fetchone()['total'] or 0
 
-        # Most intense (highest reflectivity)
-        cursor.execute("""
-            SELECT event_name, max_reflectivity, max_hail_size, event_date
-            FROM hail_events
-            WHERE max_reflectivity IS NOT NULL
-            ORDER BY max_reflectivity DESC
-            LIMIT 1
-        """)
-        most_intense = cursor.fetchone()
+            cursor.execute("""
+                SELECT event_name, swath_area_sqmi, max_hail_size, event_date
+                FROM hail_events
+                ORDER BY swath_area_sqmi DESC
+                LIMIT 1
+            """)
+            largest = cursor.fetchone()
 
-        # Largest hail
-        cursor.execute("""
-            SELECT event_name, max_hail_size, event_date
-            FROM hail_events
-            ORDER BY max_hail_size DESC
-            LIMIT 1
-        """)
-        largest_hail = cursor.fetchone()
+            cursor.execute("""
+                SELECT event_name, max_reflectivity, max_hail_size, event_date
+                FROM hail_events
+                WHERE max_reflectivity IS NOT NULL
+                ORDER BY max_reflectivity DESC
+                LIMIT 1
+            """)
+            most_intense = cursor.fetchone()
 
-        # Events by method
-        cursor.execute("""
-            SELECT swath_method, COUNT(*) as count
-            FROM hail_events
-            GROUP BY swath_method
-        """)
-        by_method = {row['swath_method']: row['count'] for row in cursor.fetchall()}
+            cursor.execute("""
+                SELECT event_name, max_hail_size, event_date
+                FROM hail_events
+                ORDER BY max_hail_size DESC
+                LIMIT 1
+            """)
+            largest_hail = cursor.fetchone()
 
-        # Events by month
-        cursor.execute("""
-            SELECT strftime('%Y-%m', event_date) as month, COUNT(*) as count
-            FROM hail_events
-            GROUP BY month
-            ORDER BY month DESC
-            LIMIT 12
-        """)
-        by_month = {row['month']: row['count'] for row in cursor.fetchall()}
+            cursor.execute("""
+                SELECT swath_method, COUNT(*) as count
+                FROM hail_events
+                GROUP BY swath_method
+            """)
+            by_method = {row['swath_method']: row['count'] for row in cursor.fetchall()}
 
-        # Recent events
-        cursor.execute("""
-            SELECT event_name, event_date, max_hail_size, swath_area_sqmi
-            FROM hail_events
-            ORDER BY event_date DESC
-            LIMIT 5
-        """)
-        recent = [dict(row) for row in cursor.fetchall()]
+            cursor.execute(f"""
+                SELECT {month_expr} as month, COUNT(*) as count
+                FROM hail_events
+                GROUP BY month
+                ORDER BY month DESC
+                LIMIT 12
+            """)
+            by_month = {row['month']: row['count'] for row in cursor.fetchall()}
 
-        conn.close()
+            cursor.execute("""
+                SELECT event_name, event_date, max_hail_size, swath_area_sqmi
+                FROM hail_events
+                ORDER BY event_date DESC
+                LIMIT 5
+            """)
+            recent = [dict(row) for row in cursor.fetchall()]
 
         return {
             'total_events': total_events,
@@ -787,12 +833,24 @@ class SwathDatabase:
         Returns:
             True if point is inside swath
         """
+        from src.db.engine import is_postgres
+        p = self._ph()
 
-        event = self.get_event_by_id(event_id)
-        if not event or not event['swath_polygon']:
-            return False
-
-        return SwathGenerator.point_in_swath(lat, lon, event['swath_polygon'])
+        if is_postgres():
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(f"""
+                    SELECT 1 FROM hail_events
+                    WHERE id = {p}
+                      AND swath_geom IS NOT NULL
+                      AND ST_Contains(swath_geom, ST_SetSRID(ST_MakePoint({p}, {p}), 4326))
+                """, (event_id, lon, lat))
+                return cursor.fetchone() is not None
+        else:
+            event = self.get_event_by_id(event_id)
+            if not event or not event.get('swath_polygon'):
+                return False
+            return SwathGenerator.point_in_swath(lat, lon, event['swath_polygon'])
 
     def find_events_affecting_point(self, lat: float, lon: float) -> List[Dict]:
         """
@@ -805,15 +863,34 @@ class SwathDatabase:
         Returns:
             List of events containing the point
         """
+        from src.db.engine import is_postgres
+        p = self._ph()
 
-        # First get events near the point (quick filter)
-        nearby_events = self.get_events_by_location(lat, lon, radius_miles=100)
+        if is_postgres():
+            # PostGIS: true spatial containment via GiST index
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(f"""
+                    SELECT * FROM hail_events
+                    WHERE swath_geom IS NOT NULL
+                      AND ST_Contains(swath_geom, ST_SetSRID(ST_MakePoint({p}, {p}), 4326))
+                    ORDER BY event_date DESC
+                """, (lon, lat))
+                events = cursor.fetchall()
 
-        # Then check actual polygon containment
-        affecting_events = []
-        for event in nearby_events:
-            if event['swath_polygon']:
-                if SwathGenerator.point_in_swath(lat, lon, event['swath_polygon']):
-                    affecting_events.append(event)
-
-        return affecting_events
+            result = []
+            for event in events:
+                event_dict = dict(event)
+                if event_dict.get('swath_polygon'):
+                    event_dict['swath_polygon'] = json.loads(event_dict['swath_polygon'])
+                result.append(event_dict)
+            return result
+        else:
+            # SQLite: bounding-box filter + Python-side containment
+            nearby_events = self.get_events_by_location(lat, lon, radius_miles=100)
+            affecting_events = []
+            for event in nearby_events:
+                if event.get('swath_polygon'):
+                    if SwathGenerator.point_in_swath(lat, lon, event['swath_polygon']):
+                        affecting_events.append(event)
+            return affecting_events

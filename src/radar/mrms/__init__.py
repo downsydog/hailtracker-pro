@@ -12,5 +12,6 @@ Env gates:
 
 from .cache import MRMSCache
 from .updater import MRMSUpdater
+from .redis_cache import RedisMRMSCache, get_mrms_cache
 
-__all__ = ['MRMSCache', 'MRMSUpdater']
+__all__ = ['MRMSCache', 'MRMSUpdater', 'RedisMRMSCache', 'get_mrms_cache']

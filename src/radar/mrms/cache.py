@@ -66,6 +66,17 @@ class MRMSCache:
         with self._lock:
             self._last_error = msg
 
+    def mark_alive(self, source_time: str = '', provider: str = '',
+                   status: str = 'ok_empty') -> None:
+        """Record a successful provider contact without writing grid data.
+
+        Updates source_time metadata (keeps MRMS "fresh" for health checks)
+        but does NOT write any grid to memory or clear the existing cached
+        grid.  Clears last_error.
+        """
+        with self._lock:
+            self._last_error = None
+
     def query_point(self, lat: float, lon: float) -> Optional[float]:
         """
         Query MESH value at a single point (nearest-neighbor).

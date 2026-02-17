@@ -7,6 +7,8 @@ REST API for admin functionality: team management, settings, and billing.
 from flask import Blueprint, request, jsonify, current_app, session, g
 from functools import wraps
 import sqlite3
+from src.db.engine import get_raw_connection, is_postgres
+from src.db.compat import sql
 from datetime import datetime, timedelta
 import json
 import secrets
@@ -29,6 +31,8 @@ def admin_required(f):
 
 def get_db():
     """Get database connection using app config or CRM database."""
+    if is_postgres():
+        return get_raw_connection()
     import os
     # Use app config database path if set (for testing), otherwise default to CRM database
     db_path = current_app.config.get('DATABASE_PATH')
@@ -43,6 +47,13 @@ def get_db():
 def ensure_tables_exist(conn):
     """Ensure admin tables exist."""
     cursor = conn.cursor()
+
+    if is_postgres():
+        # PG schema is fully migration-driven (migrations 001-003).
+        # No DDL should run during requests.
+        return
+
+    # ---- SQLite mode (original behavior) ----
 
     # Users table
     cursor.execute('''
@@ -155,10 +166,10 @@ def ensure_tables_exist(conn):
 def log_activity(conn, user_id, action, details=None):
     """Log user activity."""
     cursor = conn.cursor()
-    cursor.execute('''
+    cursor.execute(sql.adapt('''
         INSERT INTO user_activity_log (user_id, action, details, ip_address, created_at)
         VALUES (?, ?, ?, ?, ?)
-    ''', (
+    '''), (
         user_id,
         action,
         json.dumps(details) if details else None,
@@ -209,7 +220,7 @@ def list_users():
     where_sql = ' AND '.join(where_clauses)
 
     # Get users
-    cursor.execute(f'''
+    cursor.execute(sql.adapt(f'''
         SELECT
             id, email, username, full_name, phone, role,
             CASE WHEN active = 1 THEN 'active' ELSE 'inactive' END as status,
@@ -217,7 +228,7 @@ def list_users():
         FROM users
         WHERE {where_sql}
         ORDER BY created_at DESC
-    ''', params)
+    '''), params)
 
     users = [dict(row) for row in cursor.fetchall()]
 
@@ -250,13 +261,13 @@ def get_user(user_id):
     ensure_tables_exist(conn)
     cursor = conn.cursor()
 
-    cursor.execute('''
+    cursor.execute(sql.adapt('''
         SELECT
             id, email, first_name, last_name, phone, role, status,
             avatar_url, last_login_at, created_at, updated_at
         FROM users
         WHERE id = ? AND deleted_at IS NULL
-    ''', (user_id,))
+    '''), (user_id,))
 
     user = cursor.fetchone()
     if not user:
@@ -266,13 +277,13 @@ def get_user(user_id):
     user = dict(user)
 
     # Get recent activity
-    cursor.execute('''
+    cursor.execute(sql.adapt('''
         SELECT action, details, ip_address, created_at
         FROM user_activity_log
         WHERE user_id = ?
         ORDER BY created_at DESC
         LIMIT 20
-    ''', (user_id,))
+    '''), (user_id,))
 
     user['activity'] = [dict(row) for row in cursor.fetchall()]
 
@@ -297,7 +308,7 @@ def create_user():
         return jsonify({'error': 'Email is required'}), 422
 
     # Check if email exists
-    cursor.execute('SELECT id FROM users WHERE email = ? AND deleted_at IS NULL', (data['email'].lower(),))
+    cursor.execute(sql.adapt('SELECT id FROM users WHERE email = ? AND deleted_at IS NULL'), (data['email'].lower(),))
     if cursor.fetchone():
         conn.close()
         return jsonify({'error': 'Email already exists'}), 422
@@ -313,12 +324,7 @@ def create_user():
     invite_token = secrets.token_urlsafe(32)
     now = datetime.now().isoformat()
 
-    cursor.execute('''
-        INSERT INTO users (
-            email, first_name, last_name, role, status,
-            invite_token, invite_sent_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)
-    ''', (
+    insert_params = (
         data['email'].lower(),
         data.get('first_name', ''),
         data.get('last_name', ''),
@@ -326,12 +332,28 @@ def create_user():
         invite_token,
         now if data.get('send_invite', True) else None,
         now, now
-    ))
+    )
 
-    user_id = cursor.lastrowid
+    if is_postgres():
+        cursor.execute(sql.adapt('''
+            INSERT INTO users (
+                email, first_name, last_name, role, status,
+                invite_token, invite_sent_at, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+            RETURNING id
+        '''), insert_params)
+        user_id = cursor.fetchone()['id']
+    else:
+        cursor.execute(sql.adapt('''
+            INSERT INTO users (
+                email, first_name, last_name, role, status,
+                invite_token, invite_sent_at, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+        '''), insert_params)
+        user_id = cursor.lastrowid
 
     # Update seats used
-    cursor.execute('UPDATE billing SET seats_used = seats_used + 1, updated_at = ?', (now,))
+    cursor.execute(sql.adapt('UPDATE billing SET seats_used = seats_used + 1, updated_at = ?'), (now,))
 
     conn.commit()
 
@@ -340,7 +362,7 @@ def create_user():
 
     # TODO: Send invite email if send_invite is true
 
-    cursor.execute('SELECT * FROM users WHERE id = ?', (user_id,))
+    cursor.execute(sql.adapt('SELECT * FROM users WHERE id = ?'), (user_id,))
     user = dict(cursor.fetchone())
 
     conn.close()
@@ -357,7 +379,7 @@ def update_user(user_id):
     ensure_tables_exist(conn)
     cursor = conn.cursor()
 
-    cursor.execute('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL', (user_id,))
+    cursor.execute(sql.adapt('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL'), (user_id,))
     user = cursor.fetchone()
     if not user:
         conn.close()
@@ -391,15 +413,15 @@ def update_user(user_id):
 
     params.append(user_id)
 
-    cursor.execute(f'''
+    cursor.execute(sql.adapt(f'''
         UPDATE users SET {', '.join(updates)} WHERE id = ?
-    ''', params)
+    '''), params)
 
     conn.commit()
 
     log_activity(conn, g.current_user.get('id'), 'user_updated', {'user_id': user_id})
 
-    cursor.execute('SELECT * FROM users WHERE id = ?', (user_id,))
+    cursor.execute(sql.adapt('SELECT * FROM users WHERE id = ?'), (user_id,))
     updated = dict(cursor.fetchone())
 
     conn.close()
@@ -421,20 +443,20 @@ def deactivate_user(user_id):
         conn.close()
         return jsonify({'error': 'Cannot deactivate your own account'}), 422
 
-    cursor.execute('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL', (user_id,))
+    cursor.execute(sql.adapt('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL'), (user_id,))
     if not cursor.fetchone():
         conn.close()
         return jsonify({'error': 'User not found'}), 404
 
     now = datetime.now().isoformat()
 
-    cursor.execute('''
+    cursor.execute(sql.adapt('''
         UPDATE users SET status = 'inactive', deleted_at = ?, updated_at = ?
         WHERE id = ?
-    ''', (now, now, user_id))
+    '''), (now, now, user_id))
 
     # Update seats used
-    cursor.execute('UPDATE billing SET seats_used = seats_used - 1, updated_at = ?', (now,))
+    cursor.execute(sql.adapt('UPDATE billing SET seats_used = seats_used - 1, updated_at = ?'), (now,))
 
     conn.commit()
 
@@ -454,7 +476,7 @@ def reset_user_password(user_id):
     ensure_tables_exist(conn)
     cursor = conn.cursor()
 
-    cursor.execute('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL', (user_id,))
+    cursor.execute(sql.adapt('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL'), (user_id,))
     user = cursor.fetchone()
     if not user:
         conn.close()
@@ -465,13 +487,13 @@ def reset_user_password(user_id):
     expires = (datetime.now() + timedelta(hours=24)).isoformat()
     now = datetime.now().isoformat()
 
-    cursor.execute('''
+    cursor.execute(sql.adapt('''
         UPDATE users SET
             password_reset_token = ?,
             password_reset_expires = ?,
             updated_at = ?
         WHERE id = ?
-    ''', (reset_token, expires, now, user_id))
+    '''), (reset_token, expires, now, user_id))
 
     conn.commit()
 
@@ -493,7 +515,7 @@ def resend_invite(user_id):
     ensure_tables_exist(conn)
     cursor = conn.cursor()
 
-    cursor.execute('SELECT * FROM users WHERE id = ? AND status = "pending" AND deleted_at IS NULL', (user_id,))
+    cursor.execute(sql.adapt("SELECT * FROM users WHERE id = ? AND status = 'pending' AND deleted_at IS NULL"), (user_id,))
     user = cursor.fetchone()
     if not user:
         conn.close()
@@ -503,10 +525,10 @@ def resend_invite(user_id):
     invite_token = secrets.token_urlsafe(32)
     now = datetime.now().isoformat()
 
-    cursor.execute('''
+    cursor.execute(sql.adapt('''
         UPDATE users SET invite_token = ?, invite_sent_at = ?, updated_at = ?
         WHERE id = ?
-    ''', (invite_token, now, now, user_id))
+    '''), (invite_token, now, now, user_id))
 
     conn.commit()
 
@@ -627,18 +649,18 @@ def update_settings():
         else:
             str_value = str(value)
 
-        cursor.execute('''
+        cursor.execute(sql.adapt('''
             UPDATE company_settings
             SET setting_value = ?, updated_at = ?, updated_by = ?
             WHERE setting_key = ?
-        ''', (str_value, now, user_id, key))
+        '''), (str_value, now, user_id, key))
 
         # Insert if not exists
         if cursor.rowcount == 0:
-            cursor.execute('''
+            cursor.execute(sql.adapt('''
                 INSERT INTO company_settings (setting_key, setting_value, updated_at, updated_by)
                 VALUES (?, ?, ?, ?)
-            ''', (key, str_value, now, user_id))
+            '''), (key, str_value, now, user_id))
 
     conn.commit()
 
@@ -666,11 +688,11 @@ def update_branding():
 
     for key in branding_keys:
         if key in data:
-            cursor.execute('''
+            cursor.execute(sql.adapt('''
                 UPDATE company_settings
                 SET setting_value = ?, updated_at = ?, updated_by = ?
                 WHERE setting_key = ?
-            ''', (str(data[key]), now, user_id, key))
+            '''), (str(data[key]), now, user_id, key))
 
     conn.commit()
 
@@ -806,7 +828,7 @@ def get_billing():
                 plan_name as description
             FROM billing
             WHERE monthly_price > 0
-        ) ORDER BY date DESC LIMIT 10
+        ) AS inv ORDER BY date DESC LIMIT 10
     ''')
 
     # This would normally come from Stripe
@@ -855,14 +877,14 @@ def upgrade_plan():
     # In production, this would create a Stripe checkout session
     # For now, just update the local record
 
-    cursor.execute('''
+    cursor.execute(sql.adapt('''
         UPDATE billing SET
             plan_id = ?,
             plan_name = ?,
             seats_included = ?,
             monthly_price = ?,
             updated_at = ?
-    ''', (plan_id, plan['name'], plan['seats'], plan['price'], now))
+    '''), (plan_id, plan['name'], plan['seats'], plan['price'], now))
 
     conn.commit()
 
@@ -906,7 +928,7 @@ def get_activity():
     limit = request.args.get('limit', 50, type=int)
     limit = min(limit, 200)
 
-    cursor.execute('''
+    cursor.execute(sql.adapt('''
         SELECT
             al.*,
             u.email as user_email,
@@ -915,7 +937,7 @@ def get_activity():
         LEFT JOIN users u ON al.user_id = u.id
         ORDER BY al.created_at DESC
         LIMIT ?
-    ''', (limit,))
+    '''), (limit,))
 
     activity = [dict(row) for row in cursor.fetchall()]
 

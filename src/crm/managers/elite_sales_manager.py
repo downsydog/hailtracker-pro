@@ -32,6 +32,9 @@ class EliteSalesManager:
 
     def _ensure_tables_exist(self):
         """Create elite sales tables if they don't exist"""
+        from src.db.engine import is_postgres
+        if is_postgres():
+            return
         with self.db.get_connection() as conn:
             cursor = conn.cursor()
 

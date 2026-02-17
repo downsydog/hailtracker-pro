@@ -6,6 +6,8 @@ REST API for estimate management with line items, status workflow, and job conve
 
 from flask import Blueprint, request, jsonify, current_app, session, g
 import sqlite3
+from src.db.engine import get_raw_connection, is_postgres
+from src.db.compat import sql
 from datetime import datetime, timedelta
 import json
 from src.core.auth.decorators import (
@@ -17,6 +19,8 @@ estimates_api_bp = Blueprint('estimates_api', __name__, url_prefix='/api/estimat
 
 def get_db():
     """Get database connection."""
+    if is_postgres():
+        return get_raw_connection()
     db_path = current_app.config.get('DATABASE_PATH', 'data/hailtracker.db')
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -27,51 +31,55 @@ def ensure_tables_exist(conn):
     """Ensure estimate tables exist."""
     cursor = conn.cursor()
 
-    # Estimates table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS estimates (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            estimate_number TEXT UNIQUE,
-            customer_id INTEGER NOT NULL,
-            vehicle_id INTEGER,
-            status TEXT DEFAULT 'DRAFT',
-            subtotal REAL DEFAULT 0,
-            tax_rate REAL DEFAULT 0,
-            tax_amount REAL DEFAULT 0,
-            total REAL DEFAULT 0,
-            notes TEXT,
-            terms TEXT,
-            valid_until TEXT,
-            sent_at TEXT,
-            approved_date TEXT,
-            declined_at TEXT,
-            converted_at TEXT,
-            converted_job_id INTEGER,
-            created_by INTEGER,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            deleted_at TEXT,
-            FOREIGN KEY (customer_id) REFERENCES customers(id),
-            FOREIGN KEY (vehicle_id) REFERENCES vehicles(id)
-        )
-    ''')
+    if is_postgres():
+        # PG schema is fully migration-driven (migrations 001-003).
+        # No DDL should run during requests.
+        return
+    else:
+        # SQLite DDL
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS estimates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                estimate_number TEXT UNIQUE,
+                customer_id INTEGER NOT NULL,
+                vehicle_id INTEGER,
+                status TEXT DEFAULT 'DRAFT',
+                subtotal REAL DEFAULT 0,
+                tax_rate REAL DEFAULT 0,
+                tax_amount REAL DEFAULT 0,
+                total REAL DEFAULT 0,
+                notes TEXT,
+                terms TEXT,
+                valid_until TEXT,
+                sent_at TEXT,
+                approved_date TEXT,
+                declined_at TEXT,
+                converted_at TEXT,
+                converted_job_id INTEGER,
+                created_by INTEGER,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                deleted_at TEXT,
+                FOREIGN KEY (customer_id) REFERENCES customers(id),
+                FOREIGN KEY (vehicle_id) REFERENCES vehicles(id)
+            )
+        ''')
 
-    # Estimate line items table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS estimate_items (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            estimate_id INTEGER NOT NULL,
-            service_type TEXT,
-            description TEXT NOT NULL,
-            quantity REAL DEFAULT 1,
-            unit_price REAL DEFAULT 0,
-            line_total REAL DEFAULT 0,
-            sort_order INTEGER DEFAULT 0,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (estimate_id) REFERENCES estimates(id) ON DELETE CASCADE
-        )
-    ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS estimate_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                estimate_id INTEGER NOT NULL,
+                service_type TEXT,
+                description TEXT NOT NULL,
+                quantity REAL DEFAULT 1,
+                unit_price REAL DEFAULT 0,
+                line_total REAL DEFAULT 0,
+                sort_order INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (estimate_id) REFERENCES estimates(id) ON DELETE CASCADE
+            )
+        ''')
 
     conn.commit()
 
@@ -81,11 +89,11 @@ def generate_estimate_number(conn):
     cursor = conn.cursor()
     year = datetime.now().strftime('%Y')
 
-    cursor.execute('''
+    cursor.execute(sql.adapt('''
         SELECT estimate_number FROM estimates
         WHERE estimate_number LIKE ?
         ORDER BY id DESC LIMIT 1
-    ''', (f'EST-{year}-%',))
+    '''), (f'EST-{year}-%',))
 
     last = cursor.fetchone()
     if last:
@@ -105,15 +113,15 @@ def recalculate_totals(conn, estimate_id):
     cursor = conn.cursor()
 
     # Get sum of line items
-    cursor.execute('''
+    cursor.execute(sql.adapt('''
         SELECT COALESCE(SUM(line_total), 0) as subtotal
         FROM estimate_items
         WHERE estimate_id = ?
-    ''', (estimate_id,))
+    '''), (estimate_id,))
     subtotal = cursor.fetchone()['subtotal']
 
     # Get tax rate
-    cursor.execute('SELECT tax_rate FROM estimates WHERE id = ?', (estimate_id,))
+    cursor.execute(sql.adapt('SELECT tax_rate FROM estimates WHERE id = ?'), (estimate_id,))
     result = cursor.fetchone()
     tax_rate = result['tax_rate'] if result else 0
 
@@ -122,11 +130,11 @@ def recalculate_totals(conn, estimate_id):
     total = subtotal + tax_amount
 
     # Update estimate
-    cursor.execute('''
+    cursor.execute(sql.adapt('''
         UPDATE estimates
         SET subtotal = ?, tax_amount = ?, total = ?, updated_at = ?
         WHERE id = ?
-    ''', (subtotal, tax_amount, total, datetime.now().isoformat(), estimate_id))
+    '''), (subtotal, tax_amount, total, datetime.now().isoformat(), estimate_id))
 
     conn.commit()
 
@@ -202,18 +210,18 @@ def list_estimates():
     sort_column = valid_sorts.get(sort_by, 'e.created_at')
 
     # Get total count
-    cursor.execute(f'''
+    cursor.execute(sql.adapt(f'''
         SELECT COUNT(*) as count
         FROM estimates e
         LEFT JOIN jobs j ON e.job_id = j.id
         LEFT JOIN customers c ON j.customer_id = c.id
         LEFT JOIN vehicles v ON j.vehicle_id = v.id
         WHERE {where_sql}
-    ''', params)
+    '''), params)
     total = cursor.fetchone()['count']
 
     # Get estimates
-    cursor.execute(f'''
+    cursor.execute(sql.adapt(f'''
         SELECT
             e.*,
             c.first_name || ' ' || c.last_name as customer_name,
@@ -230,7 +238,7 @@ def list_estimates():
         WHERE {where_sql}
         ORDER BY {sort_column} {sort_dir}
         LIMIT ? OFFSET ?
-    ''', params + [per_page, offset])
+    '''), params + [per_page, offset])
 
     estimates = [dict(row) for row in cursor.fetchall()]
 
@@ -280,7 +288,7 @@ def get_estimate(estimate_id):
     cursor = conn.cursor()
 
     # Get estimate
-    cursor.execute('''
+    cursor.execute(sql.adapt('''
         SELECT
             e.*,
             c.first_name || ' ' || c.last_name as customer_name,
@@ -300,7 +308,7 @@ def get_estimate(estimate_id):
         LEFT JOIN jobs j ON e.job_id = j.id
         LEFT JOIN customers c ON j.customer_id = c.id
         LEFT JOIN vehicles v ON j.vehicle_id = v.id
-        WHERE e.id = ?     ''', (estimate_id,))
+        WHERE e.id = ?     '''), (estimate_id,))
 
     estimate = cursor.fetchone()
     if not estimate:
@@ -310,11 +318,11 @@ def get_estimate(estimate_id):
     estimate = dict(estimate)
 
     # Get line items
-    cursor.execute('''
+    cursor.execute(sql.adapt('''
         SELECT * FROM estimate_items
         WHERE estimate_id = ?
         ORDER BY sort_order, id
-    ''', (estimate_id,))
+    '''), (estimate_id,))
 
     estimate['items'] = [dict(row) for row in cursor.fetchall()]
 
@@ -349,13 +357,14 @@ def create_estimate():
 
     now = datetime.now().isoformat()
 
-    cursor.execute('''
+    insert_sql = '''
         INSERT INTO estimates (
             estimate_number, customer_id, vehicle_id, status,
             tax_rate, notes, terms, valid_until,
             created_by, created_at, updated_at
         ) VALUES (?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?)
-    ''', (
+    '''
+    insert_params = (
         estimate_number,
         data['customer_id'],
         data.get('vehicle_id'),
@@ -365,21 +374,26 @@ def create_estimate():
         valid_until,
         g.current_user.get('id') if g.current_user else None,
         now, now
-    ))
+    )
 
-    estimate_id = cursor.lastrowid
+    if is_postgres():
+        cursor.execute(sql.adapt(insert_sql) + ' RETURNING id', insert_params)
+        estimate_id = cursor.fetchone()['id']
+    else:
+        cursor.execute(sql.adapt(insert_sql), insert_params)
+        estimate_id = cursor.lastrowid
 
     # Add line items if provided
     if data.get('items'):
         for idx, item in enumerate(data['items']):
             line_total = (item.get('quantity', 1) or 1) * (item.get('unit_price', 0) or 0)
-            cursor.execute('''
+            cursor.execute(sql.adapt('''
                 INSERT INTO estimate_items (
                     estimate_id, service_type, description,
                     quantity, unit_price, line_total, sort_order,
                     created_at, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
+            '''), (
                 estimate_id,
                 item.get('service_type', 'PDR'),
                 item.get('description', ''),
@@ -396,7 +410,7 @@ def create_estimate():
     recalculate_totals(conn, estimate_id)
 
     # Get created estimate
-    cursor.execute('SELECT * FROM estimates WHERE id = ?', (estimate_id,))
+    cursor.execute(sql.adapt('SELECT * FROM estimates WHERE id = ?'), (estimate_id,))
     estimate = dict(cursor.fetchone())
 
     conn.close()
@@ -414,9 +428,9 @@ def update_estimate(estimate_id):
     cursor = conn.cursor()
 
     # Check estimate exists and is editable
-    cursor.execute('''
+    cursor.execute(sql.adapt('''
         SELECT * FROM estimates WHERE id = ?
-    ''', (estimate_id,))
+    '''), (estimate_id,))
 
     estimate = cursor.fetchone()
     if not estimate:
@@ -462,16 +476,16 @@ def update_estimate(estimate_id):
     params.append(now)
     params.append(estimate_id)
 
-    cursor.execute(f'''
+    cursor.execute(sql.adapt(f'''
         UPDATE estimates SET {', '.join(updates)} WHERE id = ?
-    ''', params)
+    '''), params)
 
     conn.commit()
 
     # Recalculate totals (in case tax rate changed)
     recalculate_totals(conn, estimate_id)
 
-    cursor.execute('SELECT * FROM estimates WHERE id = ?', (estimate_id,))
+    cursor.execute(sql.adapt('SELECT * FROM estimates WHERE id = ?'), (estimate_id,))
     updated = dict(cursor.fetchone())
 
     conn.close()
@@ -488,17 +502,17 @@ def delete_estimate(estimate_id):
     ensure_tables_exist(conn)
     cursor = conn.cursor()
 
-    cursor.execute('''
+    cursor.execute(sql.adapt('''
         SELECT * FROM estimates WHERE id = ?
-    ''', (estimate_id,))
+    '''), (estimate_id,))
 
     if not cursor.fetchone():
         conn.close()
         return jsonify({'error': 'Estimate not found'}), 404
 
-    cursor.execute('''
+    cursor.execute(sql.adapt('''
         UPDATE estimates SET status = 'CANCELLED', updated_at = ? WHERE id = ?
-    ''', (datetime.now().isoformat(), estimate_id))
+    '''), (datetime.now().isoformat(), estimate_id))
 
     conn.commit()
     conn.close()
@@ -518,9 +532,9 @@ def add_line_item(estimate_id):
     cursor = conn.cursor()
 
     # Check estimate exists and is editable
-    cursor.execute('''
+    cursor.execute(sql.adapt('''
         SELECT * FROM estimates WHERE id = ?
-    ''', (estimate_id,))
+    '''), (estimate_id,))
 
     estimate = cursor.fetchone()
     if not estimate:
@@ -542,21 +556,22 @@ def add_line_item(estimate_id):
     line_total = quantity * unit_price
 
     # Get next sort order
-    cursor.execute('''
+    cursor.execute(sql.adapt('''
         SELECT COALESCE(MAX(sort_order), -1) + 1 as next_order
         FROM estimate_items WHERE estimate_id = ?
-    ''', (estimate_id,))
+    '''), (estimate_id,))
     sort_order = cursor.fetchone()['next_order']
 
     now = datetime.now().isoformat()
 
-    cursor.execute('''
+    item_insert_sql = '''
         INSERT INTO estimate_items (
             estimate_id, service_type, description,
             quantity, unit_price, line_total, sort_order,
             created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (
+    '''
+    item_insert_params = (
         estimate_id,
         data.get('service_type', 'PDR'),
         data['description'],
@@ -565,15 +580,20 @@ def add_line_item(estimate_id):
         line_total,
         sort_order,
         now, now
-    ))
+    )
 
-    item_id = cursor.lastrowid
+    if is_postgres():
+        cursor.execute(sql.adapt(item_insert_sql) + ' RETURNING id', item_insert_params)
+        item_id = cursor.fetchone()['id']
+    else:
+        cursor.execute(sql.adapt(item_insert_sql), item_insert_params)
+        item_id = cursor.lastrowid
     conn.commit()
 
     # Recalculate totals
     totals = recalculate_totals(conn, estimate_id)
 
-    cursor.execute('SELECT * FROM estimate_items WHERE id = ?', (item_id,))
+    cursor.execute(sql.adapt('SELECT * FROM estimate_items WHERE id = ?'), (item_id,))
     item = dict(cursor.fetchone())
     item['estimate_totals'] = totals
 
@@ -592,11 +612,11 @@ def update_line_item(estimate_id, item_id):
     cursor = conn.cursor()
 
     # Check estimate and item exist
-    cursor.execute('''
+    cursor.execute(sql.adapt('''
         SELECT e.*, ei.id as item_exists
         FROM estimates e
         LEFT JOIN estimate_items ei ON ei.estimate_id = e.id AND ei.id = ?
-        WHERE e.id = ?     ''', (item_id, estimate_id))
+        WHERE e.id = ?     '''), (item_id, estimate_id))
 
     result = cursor.fetchone()
     if not result:
@@ -615,14 +635,14 @@ def update_line_item(estimate_id, item_id):
     now = datetime.now().isoformat()
 
     # Get current values for calculation
-    cursor.execute('SELECT * FROM estimate_items WHERE id = ?', (item_id,))
+    cursor.execute(sql.adapt('SELECT * FROM estimate_items WHERE id = ?'), (item_id,))
     current = dict(cursor.fetchone())
 
     quantity = data.get('quantity', current['quantity']) or 1
     unit_price = data.get('unit_price', current['unit_price']) or 0
     line_total = quantity * unit_price
 
-    cursor.execute('''
+    cursor.execute(sql.adapt('''
         UPDATE estimate_items SET
             service_type = ?,
             description = ?,
@@ -631,7 +651,7 @@ def update_line_item(estimate_id, item_id):
             line_total = ?,
             updated_at = ?
         WHERE id = ?
-    ''', (
+    '''), (
         data.get('service_type', current['service_type']),
         data.get('description', current['description']),
         quantity,
@@ -646,7 +666,7 @@ def update_line_item(estimate_id, item_id):
     # Recalculate totals
     totals = recalculate_totals(conn, estimate_id)
 
-    cursor.execute('SELECT * FROM estimate_items WHERE id = ?', (item_id,))
+    cursor.execute(sql.adapt('SELECT * FROM estimate_items WHERE id = ?'), (item_id,))
     item = dict(cursor.fetchone())
     item['estimate_totals'] = totals
 
@@ -665,11 +685,11 @@ def delete_line_item(estimate_id, item_id):
     cursor = conn.cursor()
 
     # Check estimate and item exist
-    cursor.execute('''
+    cursor.execute(sql.adapt('''
         SELECT e.status
         FROM estimates e
         JOIN estimate_items ei ON ei.estimate_id = e.id
-        WHERE e.id = ? AND ei.id = ?     ''', (estimate_id, item_id))
+        WHERE e.id = ? AND ei.id = ?     '''), (estimate_id, item_id))
 
     result = cursor.fetchone()
     if not result:
@@ -680,7 +700,7 @@ def delete_line_item(estimate_id, item_id):
         conn.close()
         return jsonify({'error': 'Cannot edit converted estimate'}), 422
 
-    cursor.execute('DELETE FROM estimate_items WHERE id = ?', (item_id,))
+    cursor.execute(sql.adapt('DELETE FROM estimate_items WHERE id = ?'), (item_id,))
     conn.commit()
 
     # Recalculate totals
@@ -702,12 +722,12 @@ def send_estimate(estimate_id):
     ensure_tables_exist(conn)
     cursor = conn.cursor()
 
-    cursor.execute('''
+    cursor.execute(sql.adapt('''
         SELECT e.*, c.email as customer_email, c.first_name || ' ' || c.last_name as customer_name
         FROM estimates e
         JOIN jobs j ON e.job_id = j.id
         JOIN customers c ON j.customer_id = c.id
-        WHERE e.id = ?     ''', (estimate_id,))
+        WHERE e.id = ?     '''), (estimate_id,))
 
     estimate = cursor.fetchone()
     if not estimate:
@@ -719,7 +739,7 @@ def send_estimate(estimate_id):
         return jsonify({'error': 'Estimate already converted'}), 422
 
     # Check has line items
-    cursor.execute('SELECT COUNT(*) as count FROM estimate_items WHERE estimate_id = ?', (estimate_id,))
+    cursor.execute(sql.adapt('SELECT COUNT(*) as count FROM estimate_items WHERE estimate_id = ?'), (estimate_id,))
     if cursor.fetchone()['count'] == 0:
         conn.close()
         return jsonify({'error': 'Cannot send estimate with no line items'}), 422
@@ -727,17 +747,17 @@ def send_estimate(estimate_id):
     now = datetime.now().isoformat()
 
     # Update status to SENT
-    cursor.execute('''
+    cursor.execute(sql.adapt('''
         UPDATE estimates SET status = 'SENT', sent_at = ?, updated_at = ?
         WHERE id = ?
-    ''', (now, now, estimate_id))
+    '''), (now, now, estimate_id))
 
     conn.commit()
 
     # TODO: Actually send email using email_manager
     # For now, just mark as sent
 
-    cursor.execute('SELECT * FROM estimates WHERE id = ?', (estimate_id,))
+    cursor.execute(sql.adapt('SELECT * FROM estimates WHERE id = ?'), (estimate_id,))
     updated = dict(cursor.fetchone())
 
     conn.close()
@@ -757,9 +777,9 @@ def approve_estimate(estimate_id):
     ensure_tables_exist(conn)
     cursor = conn.cursor()
 
-    cursor.execute('''
+    cursor.execute(sql.adapt('''
         SELECT * FROM estimates WHERE id = ?
-    ''', (estimate_id,))
+    '''), (estimate_id,))
 
     estimate = cursor.fetchone()
     if not estimate:
@@ -772,14 +792,14 @@ def approve_estimate(estimate_id):
 
     now = datetime.now().isoformat()
 
-    cursor.execute('''
+    cursor.execute(sql.adapt('''
         UPDATE estimates SET status = 'APPROVED', approved_date = ?, updated_at = ?
         WHERE id = ?
-    ''', (now, now, estimate_id))
+    '''), (now, now, estimate_id))
 
     conn.commit()
 
-    cursor.execute('SELECT * FROM estimates WHERE id = ?', (estimate_id,))
+    cursor.execute(sql.adapt('SELECT * FROM estimates WHERE id = ?'), (estimate_id,))
     updated = dict(cursor.fetchone())
 
     conn.close()
@@ -796,9 +816,9 @@ def decline_estimate(estimate_id):
     ensure_tables_exist(conn)
     cursor = conn.cursor()
 
-    cursor.execute('''
+    cursor.execute(sql.adapt('''
         SELECT * FROM estimates WHERE id = ?
-    ''', (estimate_id,))
+    '''), (estimate_id,))
 
     estimate = cursor.fetchone()
     if not estimate:
@@ -812,18 +832,18 @@ def decline_estimate(estimate_id):
     now = datetime.now().isoformat()
     data = request.get_json() or {}
 
-    cursor.execute('''
+    cursor.execute(sql.adapt('''
         UPDATE estimates SET
             status = 'DECLINED',
             declined_at = ?,
             notes = COALESCE(notes, '') || CASE WHEN notes IS NOT NULL AND notes != '' THEN '\n' ELSE '' END || ?,
             updated_at = ?
         WHERE id = ?
-    ''', (now, f'Declined: {data.get("reason", "")}', now, estimate_id))
+    '''), (now, f'Declined: {data.get("reason", "")}', now, estimate_id))
 
     conn.commit()
 
-    cursor.execute('SELECT * FROM estimates WHERE id = ?', (estimate_id,))
+    cursor.execute(sql.adapt('SELECT * FROM estimates WHERE id = ?'), (estimate_id,))
     updated = dict(cursor.fetchone())
 
     conn.close()
@@ -840,14 +860,14 @@ def convert_to_job(estimate_id):
     ensure_tables_exist(conn)
     cursor = conn.cursor()
 
-    cursor.execute('''
+    cursor.execute(sql.adapt('''
         SELECT e.*, c.first_name || ' ' || c.last_name as customer_name,
                v.year as vehicle_year, v.make as vehicle_make, v.model as vehicle_model
         FROM estimates e
         JOIN jobs j ON e.job_id = j.id
         JOIN customers c ON j.customer_id = c.id
         LEFT JOIN vehicles v ON j.vehicle_id = v.id
-        WHERE e.id = ?     ''', (estimate_id,))
+        WHERE e.id = ?     '''), (estimate_id,))
 
     estimate = cursor.fetchone()
     if not estimate:
@@ -867,13 +887,14 @@ def convert_to_job(estimate_id):
 
     # Create job
     # First check if jobs table exists
-    cursor.execute('''
-        SELECT name FROM sqlite_master WHERE type='table' AND name='jobs'
-    ''')
+    if is_postgres():
+        cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name='jobs'")
+    else:
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='jobs'")
 
     if cursor.fetchone():
         # Get line items for job description
-        cursor.execute('SELECT * FROM estimate_items WHERE estimate_id = ?', (estimate_id,))
+        cursor.execute(sql.adapt('SELECT * FROM estimate_items WHERE estimate_id = ?'), (estimate_id,))
         items = cursor.fetchall()
 
         description_lines = [f"Converted from Estimate {estimate['estimate_number']}"]
@@ -882,13 +903,14 @@ def convert_to_job(estimate_id):
 
         description = '\n'.join(description_lines)
 
-        cursor.execute('''
+        job_insert_sql = '''
             INSERT INTO jobs (
                 customer_id, vehicle_id, status, description,
                 estimated_cost, source, source_id,
                 created_by, created_at, updated_at
             ) VALUES (?, ?, 'PENDING', ?, ?, 'ESTIMATE', ?, ?, ?, ?)
-        ''', (
+        '''
+        job_insert_params = (
             estimate['customer_id'],
             estimate['vehicle_id'],
             description,
@@ -896,26 +918,31 @@ def convert_to_job(estimate_id):
             estimate_id,
             g.current_user.get('id') if g.current_user else None,
             now, now
-        ))
+        )
 
-        job_id = cursor.lastrowid
+        if is_postgres():
+            cursor.execute(sql.adapt(job_insert_sql) + ' RETURNING id', job_insert_params)
+            job_id = cursor.fetchone()['id']
+        else:
+            cursor.execute(sql.adapt(job_insert_sql), job_insert_params)
+            job_id = cursor.lastrowid
     else:
         # Jobs table doesn't exist, just mark as converted
         job_id = None
 
     # Update estimate
-    cursor.execute('''
+    cursor.execute(sql.adapt('''
         UPDATE estimates SET
             status = 'CONVERTED',
             converted_at = ?,
             converted_job_id = ?,
             updated_at = ?
         WHERE id = ?
-    ''', (now, job_id, now, estimate_id))
+    '''), (now, job_id, now, estimate_id))
 
     conn.commit()
 
-    cursor.execute('SELECT * FROM estimates WHERE id = ?', (estimate_id,))
+    cursor.execute(sql.adapt('SELECT * FROM estimates WHERE id = ?'), (estimate_id,))
     updated = dict(cursor.fetchone())
 
     conn.close()

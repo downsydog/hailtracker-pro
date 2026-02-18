@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, useCallback } from "react"
+import { Component, useEffect, useRef, useState, useCallback } from "react"
+import type { ErrorInfo, ReactNode } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
 import L from "leaflet"
@@ -144,7 +145,7 @@ export function HailMapPage() {
     queryKey: ["hail-events-map", selectedDate],
     queryFn: () => selectedDate
       ? hailEventsApi.list({ event_date: selectedDate }) // Filter by specific date
-      : hailEventsApi.list({ days: 365 }), // Show last year when no date selected
+      : hailEventsApi.list({ days: 7 }), // Show last 7 days when no date selected
   })
 
   // Fetch real GeoJSON swaths - all swaths, filtered client-side by selectedDate
@@ -426,17 +427,20 @@ export function HailMapPage() {
     // Hide per-cell swaths when active events layer is ON to avoid double overlays
     if (!layers.swaths || layers.activeEvents) return
 
-    // Only show swaths when a date is selected from the calendar
-    // Note: swaths use start_time (ISO timestamp), not event_date
+    // Filter swaths by selected date, or show last 7 days by default
     const filteredSwaths = selectedDate
       ? swaths.filter((s) => {
-          // Use start_time or event_date (fallback for compatibility)
           const swathDate = s.properties.event_date || s.properties.start_time
           if (!swathDate) return false
-          // Compare just the date part (YYYY-MM-DD)
           return swathDate.substring(0, 10) === selectedDate.substring(0, 10)
         })
-      : [] // Show NO swaths until a date is selected
+      : swaths.filter((s) => {
+          const swathDate = s.properties.event_date || s.properties.start_time
+          if (!swathDate) return false
+          const cutoff = new Date()
+          cutoff.setDate(cutoff.getDate() - 7)
+          return new Date(swathDate) >= cutoff
+        })
 
     // First try to use real GeoJSON swaths
     if (filteredSwaths.length > 0) {
@@ -475,15 +479,20 @@ export function HailMapPage() {
       })
     }
 
-    // Only show events when a date is selected from the calendar
+    // Filter events by selected date, or show last 7 days by default
     const filteredEvents = selectedDate
       ? events.filter((e) => {
           const eventDate = e.event_date
           if (!eventDate) return false
-          // Compare just the date part (YYYY-MM-DD)
           return eventDate.substring(0, 10) === selectedDate.substring(0, 10)
         })
-      : [] // Show NO events until a date is selected
+      : events.filter((e) => {
+          const eventDate = e.event_date
+          if (!eventDate) return false
+          const cutoff = new Date()
+          cutoff.setDate(cutoff.getDate() - 7)
+          return new Date(eventDate) >= cutoff
+        })
 
     // Render events - use swath_polygon if available, otherwise fall back to circle
     filteredEvents.forEach((event) => {
@@ -1246,6 +1255,17 @@ export function HailMapPage() {
           </div>
         )}
 
+        {/* Empty State - no storms, no swaths, no active cells */}
+        {events.length === 0 && swaths.length === 0 && activeCells.length === 0 && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] bg-card border rounded-lg shadow-lg px-6 py-3 flex items-center gap-3">
+            <Activity className="h-5 w-5 text-green-500" />
+            <div>
+              <p className="font-medium text-sm">No active hail detected</p>
+              <p className="text-xs text-muted-foreground">Monitoring CONUS radar network. Swaths appear here when storms produce hail.</p>
+            </div>
+          </div>
+        )}
+
         {/* Stats Bar */}
         <div className="absolute bottom-4 left-4 right-4 sm:left-auto sm:right-4 sm:w-96 bg-card rounded-lg shadow-lg border p-4 z-[1000]">
           <div className="grid grid-cols-4 gap-4 text-center">
@@ -1575,5 +1595,55 @@ export function HailMapPage() {
         }
       `}</style>
     </div>
+  )
+}
+
+class HailMapErrorBoundary extends Component<
+  { children: ReactNode },
+  { hasError: boolean; error: Error | null }
+> {
+  constructor(props: { children: ReactNode }) {
+    super(props)
+    this.state = { hasError: false, error: null }
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error }
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("HailMap error:", error, info)
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
+          <AlertTriangle className="h-12 w-12 text-red-500" />
+          <h2 className="text-xl font-semibold">Hail Map Error</h2>
+          <p className="text-muted-foreground text-center max-w-md">
+            Something went wrong loading the hail map. Try refreshing the page.
+          </p>
+          <p className="text-xs text-muted-foreground font-mono">
+            {this.state.error?.message}
+          </p>
+          <button
+            className="px-4 py-2 bg-primary text-primary-foreground rounded-md"
+            onClick={() => window.location.reload()}
+          >
+            Reload Page
+          </button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
+export function HailMapPageWithBoundary() {
+  return (
+    <HailMapErrorBoundary>
+      <HailMapPage />
+    </HailMapErrorBoundary>
   )
 }

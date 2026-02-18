@@ -1306,46 +1306,52 @@ class StormMonitor:
         logger.info("[PERSIST_DEBUG] cycle_total=%d | beginning persist cycle", len(events))
         print(f"[PERSIST_DEBUG] cycle_total={len(events)} | beginning persist cycle", flush=True)
 
-        from src.db.engine import get_connection
+        from src.db.engine import get_connection, is_postgres, placeholder as ph
+
+        _pg = is_postgres()
+        _ph = ph()  # '%s' for PG, '?' for SQLite
+        # PG uses GREATEST() for scalar max; SQLite uses MAX()
+        _scalar_max = 'GREATEST' if _pg else 'MAX'
 
         try:
-            with get_connection('sqlite:///data/hailtracker_crm.db') as conn:
-                # Ensure partial unique index for NEXRAD_REALTIME upsert
-                conn.execute("""
-                    CREATE UNIQUE INDEX IF NOT EXISTS idx_hail_events_rt_upsert
-                    ON hail_events(event_name) WHERE data_source = 'NEXRAD_REALTIME'
-                """)
+            with get_connection() as conn:
+                if not _pg:
+                    # SQLite-only: ensure partial unique index + column migrations
+                    conn.execute("""
+                        CREATE UNIQUE INDEX IF NOT EXISTS idx_hail_events_rt_upsert
+                        ON hail_events(event_name) WHERE data_source = 'NEXRAD_REALTIME'
+                    """)
+                    for col_def in [
+                        ('evidence_mrms', 'INTEGER DEFAULT 0'),
+                        ('evidence_dualpol', 'INTEGER DEFAULT 0'),
+                        ('evidence_multi_radar', 'INTEGER DEFAULT 0'),
+                        ('evidence_spc', 'INTEGER DEFAULT 0'),
+                        ('evidence_lsr', 'INTEGER DEFAULT 0'),
+                        ('evidence_persistence', 'INTEGER DEFAULT 0'),
+                        ('bbox_min_lat', 'REAL'),
+                        ('bbox_max_lat', 'REAL'),
+                        ('bbox_min_lon', 'REAL'),
+                        ('bbox_max_lon', 'REAL'),
+                        ('severity', "TEXT DEFAULT 'MINOR'"),
+                        ('status', "TEXT DEFAULT 'CANDIDATE'"),
+                        ('swath_area_km2', 'REAL'),
+                        ('swath_area_method', 'TEXT'),
+                        ('mrms_core_15_geojson', 'TEXT'),
+                        ('mrms_core_25_geojson', 'TEXT'),
+                        ('mrms_core_40_geojson', 'TEXT'),
+                        ('mrms_core_15_km2', 'REAL DEFAULT 0'),
+                        ('mrms_core_25_km2', 'REAL DEFAULT 0'),
+                        ('mrms_core_40_km2', 'REAL DEFAULT 0'),
+                    ]:
+                        try:
+                            conn.execute(f"ALTER TABLE hail_events ADD COLUMN {col_def[0]} {col_def[1]}")
+                        except Exception:
+                            pass  # column already exists
 
-                # Migrate: add columns if missing
-                for col_def in [
-                    ('evidence_mrms', 'INTEGER DEFAULT 0'),
-                    ('evidence_dualpol', 'INTEGER DEFAULT 0'),
-                    ('evidence_multi_radar', 'INTEGER DEFAULT 0'),
-                    ('evidence_spc', 'INTEGER DEFAULT 0'),
-                    ('evidence_lsr', 'INTEGER DEFAULT 0'),
-                    ('evidence_persistence', 'INTEGER DEFAULT 0'),
-                    ('bbox_min_lat', 'REAL'),
-                    ('bbox_max_lat', 'REAL'),
-                    ('bbox_min_lon', 'REAL'),
-                    ('bbox_max_lon', 'REAL'),
-                    ('severity', "TEXT DEFAULT 'MINOR'"),
-                    ('status', "TEXT DEFAULT 'CANDIDATE'"),
-                    ('swath_area_km2', 'REAL'),
-                    ('swath_area_method', 'TEXT'),
-                    ('mrms_core_15_geojson', 'TEXT'),
-                    ('mrms_core_25_geojson', 'TEXT'),
-                    ('mrms_core_40_geojson', 'TEXT'),
-                    ('mrms_core_15_km2', 'REAL DEFAULT 0'),
-                    ('mrms_core_25_km2', 'REAL DEFAULT 0'),
-                    ('mrms_core_40_km2', 'REAL DEFAULT 0'),
-                ]:
-                    try:
-                        conn.execute(f"ALTER TABLE hail_events ADD COLUMN {col_def[0]} {col_def[1]}")
-                    except Exception:
-                        pass  # column already exists
+                cur = conn.cursor()
 
                 # Fix legacy 0-1 confidence values from event_persister
-                conn.execute("""
+                cur.execute("""
                     UPDATE hail_events
                     SET confidence_score = ROUND(confidence_score * 100)
                     WHERE data_source = 'NEXRAD_REALTIME'
@@ -1502,7 +1508,7 @@ class StormMonitor:
                         logger.info(_pd_msg)
                         print(_pd_msg, flush=True)
 
-                        conn.execute("""
+                        cur.execute(f"""
                             INSERT INTO hail_events (
                                 event_name, event_date, start_time, end_time,
                                 center_lat, center_lon, swath_polygon, swath_area_sqmi,
@@ -1513,29 +1519,29 @@ class StormMonitor:
                                 bbox_min_lat, bbox_max_lat, bbox_min_lon, bbox_max_lon,
                                 severity, status,
                                 swath_area_km2, swath_area_method
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NEXRAD_REALTIME', ?,
-                                      ?, ?, ?, ?, ?, ?,
-                                      ?, ?, ?, ?,
-                                      ?, ?,
-                                      ?, ?)
+                            ) VALUES ({_ph}, {_ph}, {_ph}, {_ph}, {_ph}, {_ph}, {_ph}, {_ph}, {_ph}, {_ph}, {_ph}, {_ph}, {_ph}, {_ph}, 'NEXRAD_REALTIME', {_ph},
+                                      {_ph}, {_ph}, {_ph}, {_ph}, {_ph}, {_ph},
+                                      {_ph}, {_ph}, {_ph}, {_ph},
+                                      {_ph}, {_ph},
+                                      {_ph}, {_ph})
                             ON CONFLICT(event_name) WHERE data_source = 'NEXRAD_REALTIME'
                             DO UPDATE SET
                                 end_time = excluded.end_time,
                                 swath_polygon = excluded.swath_polygon,
                                 swath_area_sqmi = excluded.swath_area_sqmi,
-                                max_hail_size = MAX(hail_events.max_hail_size, excluded.max_hail_size),
+                                max_hail_size = {_scalar_max}(hail_events.max_hail_size, excluded.max_hail_size),
                                 avg_hail_size = excluded.avg_hail_size,
                                 max_reflectivity = excluded.max_reflectivity,
                                 avg_reflectivity = excluded.avg_reflectivity,
                                 swath_method = excluded.swath_method,
                                 num_detections = excluded.num_detections,
-                                confidence_score = MAX(hail_events.confidence_score, excluded.confidence_score),
-                                evidence_mrms = MAX(hail_events.evidence_mrms, excluded.evidence_mrms),
-                                evidence_dualpol = MAX(hail_events.evidence_dualpol, excluded.evidence_dualpol),
-                                evidence_multi_radar = MAX(hail_events.evidence_multi_radar, excluded.evidence_multi_radar),
-                                evidence_spc = MAX(hail_events.evidence_spc, excluded.evidence_spc),
-                                evidence_lsr = MAX(hail_events.evidence_lsr, excluded.evidence_lsr),
-                                evidence_persistence = MAX(hail_events.evidence_persistence, excluded.evidence_persistence),
+                                confidence_score = {_scalar_max}(hail_events.confidence_score, excluded.confidence_score),
+                                evidence_mrms = {_scalar_max}(hail_events.evidence_mrms, excluded.evidence_mrms),
+                                evidence_dualpol = {_scalar_max}(hail_events.evidence_dualpol, excluded.evidence_dualpol),
+                                evidence_multi_radar = {_scalar_max}(hail_events.evidence_multi_radar, excluded.evidence_multi_radar),
+                                evidence_spc = {_scalar_max}(hail_events.evidence_spc, excluded.evidence_spc),
+                                evidence_lsr = {_scalar_max}(hail_events.evidence_lsr, excluded.evidence_lsr),
+                                evidence_persistence = {_scalar_max}(hail_events.evidence_persistence, excluded.evidence_persistence),
                                 bbox_min_lat = excluded.bbox_min_lat,
                                 bbox_max_lat = excluded.bbox_max_lat,
                                 bbox_min_lon = excluded.bbox_min_lon,
@@ -1553,18 +1559,18 @@ class StormMonitor:
                             ev.start_time.strftime('%Y-%m-%d'),
                             ev.start_time.isoformat(),
                             ev.end_time.isoformat(),
-                            ev.centroid_lat, ev.centroid_lon,
-                            swath_json, swath_area_sqmi,
-                            max_hail_size, avg_hail_size,
-                            ev.max_reflectivity, round(ev.max_reflectivity * 0.85, 1),
+                            float(ev.centroid_lat), float(ev.centroid_lon),
+                            swath_json, float(swath_area_sqmi),
+                            float(max_hail_size), float(avg_hail_size),
+                            float(ev.max_reflectivity), float(round(ev.max_reflectivity * 0.85, 1)),
                             swath_method, len(ev.cell_ids),
-                            ev.commercial_confidence,
+                            float(ev.commercial_confidence),
                             int(ev.evidence_mrms), int(ev.evidence_dualpol),
                             int(ev.evidence_multi_radar), int(ev.evidence_spc),
                             int(ev.evidence_lsr), int(ev.evidence_persistence),
-                            bbox_min_lat, bbox_max_lat, bbox_min_lon, bbox_max_lon,
+                            float(bbox_min_lat), float(bbox_max_lat), float(bbox_min_lon), float(bbox_max_lon),
                             severity, status,
-                            swath_area_km2, swath_area_method,
+                            float(swath_area_km2), swath_area_method,
                         ))
                         persisted += 1
                         if status == 'CONFIRMED':
@@ -1630,29 +1636,28 @@ class StormMonitor:
                 from src.radar.damage_grid import persist_damage_grid
                 for dg_event_id, dg_cells in damage_grid_work:
                     try:
-                        n_grid = persist_damage_grid(
-                            dg_event_id, dg_cells, 'data/hailtracker_crm.db',
-                        )
+                        n_grid = persist_damage_grid(dg_event_id, dg_cells)
                         print(f"    Damage grid: {n_grid} cells for {dg_event_id}")
                     except Exception as dg_err:
                         print(f"    [DAMAGE-GRID-WARN] {dg_event_id}: {dg_err}")
 
-            # Event footprint enrichment AFTER damage grid (deferred-work pattern)
-            try:
-                from src.radar.event_footprint import update_event_footprints
-                n_enriched = update_event_footprints(
-                    'data/hailtracker_crm.db',
-                    mrms_cache=getattr(self, '_mrms_cache', None),
-                )
-                if n_enriched > 0:
-                    print(f"    Event footprints: {n_enriched} events enriched")
-            except Exception as fp_err:
-                print(f"    [FOOTPRINT-WARN] {fp_err}")
+            # Event footprint enrichment (SQLite-only; PG uses PostGIS natively)
+            if not _pg:
+                try:
+                    from src.radar.event_footprint import update_event_footprints
+                    n_enriched = update_event_footprints(
+                        'data/hailtracker_crm.db',
+                        mrms_cache=getattr(self, '_mrms_cache', None),
+                    )
+                    if n_enriched > 0:
+                        print(f"    Event footprints: {n_enriched} events enriched")
+                except Exception as fp_err:
+                    print(f"    [FOOTPRINT-WARN] {fp_err}")
 
             # Update swath intelligence AFTER footprint enrichment (deferred-work pattern)
             try:
                 from src.swath.intelligence_engine import update_swaths
-                n_swaths = update_swaths('data/hailtracker_crm.db')
+                n_swaths = update_swaths()
                 if n_swaths > 0:
                     print(f"    Swath intelligence: {n_swaths} swaths updated")
             except Exception as swath_err:

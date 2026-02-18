@@ -4,9 +4,14 @@ HailTracker Pro Flask Application
 Multi-tenant SaaS for PDR fleet prospecting.
 """
 
-from flask import Flask, jsonify
-from .config import config
-from .extensions import db, jwt, migrate, cors
+try:
+    from flask import Flask, jsonify
+    from .config import config
+    from .extensions import db, jwt, migrate, cors
+    _FLASK_DEPS_AVAILABLE = True
+except ImportError:
+    # Celery workers may import this package without the full Flask stack
+    _FLASK_DEPS_AVAILABLE = False
 
 
 def create_app(config_name='default'):

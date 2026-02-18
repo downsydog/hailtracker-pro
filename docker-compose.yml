@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   hailtracker:
     build: .
@@ -15,7 +13,7 @@ services:
       - ENABLE_MRMS=${ENABLE_MRMS:-true}
       - MRMS_REFRESH_SECONDS=${MRMS_REFRESH_SECONDS:-120}
       - MRMS_PROVIDER=${MRMS_PROVIDER:-aws}
-      - DATABASE_URL=${DATABASE_URL:-sqlite:///database/hailtracker_pro.db}
+      - DATABASE_URL=postgresql://hailtracker:${POSTGRES_PASSWORD:-hailtracker_dev}@postgres:5432/hailtracker
       - DB_POOL_MIN=${DB_POOL_MIN:-2}
       - DB_POOL_MAX=${DB_POOL_MAX:-10}
       - LOG_FORMAT=${LOG_FORMAT:-text}
@@ -23,13 +21,17 @@ services:
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
       - STORM_MAX_WORKERS=${STORM_MAX_WORKERS:-6}
       - STORM_DISCOVERY_BATCH=${STORM_DISCOVERY_BATCH:-20}
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
     volumes:
       - ./data:/app/data
       - ./database:/app/database
     depends_on:
       postgres:
         condition: service_healthy
-        required: false
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:5000/api/system/health"]
       interval: 30s
@@ -38,10 +40,8 @@ services:
       start_period: 30s
 
   postgres:
-    image: postgres:16-alpine
+    image: postgis/postgis:16-3.4-alpine
     restart: unless-stopped
-    profiles:
-      - postgres
     environment:
       POSTGRES_DB: hailtracker
       POSTGRES_USER: hailtracker
@@ -59,8 +59,6 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    profiles:
-      - workers
     ports:
       - "6379:6379"
     healthcheck:
@@ -68,6 +66,107 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  celery-radar:
+    build: .
+    restart: unless-stopped
+    command: ["bash", "-c", "eval \"$(micromamba shell hook --shell bash)\" && micromamba activate hail && exec celery -A backend.app.celery_app:celery_app worker -Q radar -c 1 --loglevel=info"]
+    env_file:
+      - .env
+    environment:
+      - SKIP_HEAVY_ML=${SKIP_HEAVY_ML:-true}
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY is required}
+      - ENABLE_MRMS=${ENABLE_MRMS:-true}
+      - MRMS_PROVIDER=${MRMS_PROVIDER:-aws}
+      - DATABASE_URL=postgresql://hailtracker:${POSTGRES_PASSWORD:-hailtracker_dev}@postgres:5432/hailtracker
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - STORM_MAX_WORKERS=${STORM_MAX_WORKERS:-6}
+      - STORM_DISCOVERY_BATCH=${STORM_DISCOVERY_BATCH:-20}
+    volumes:
+      - ./data:/app/data
+      - ./database:/app/database
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery-backfill:
+    build: .
+    restart: unless-stopped
+    profiles:
+      - workers
+      - production
+    command: ["bash", "-c", "eval \"$(micromamba shell hook --shell bash)\" && micromamba activate hail && exec celery -A backend.app.celery_app:celery_app worker -Q radar_backfill -c 1 --loglevel=info"]
+    env_file:
+      - .env
+    environment:
+      - SKIP_HEAVY_ML=${SKIP_HEAVY_ML:-true}
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY is required}
+      - ENABLE_MRMS=${ENABLE_MRMS:-true}
+      - MRMS_PROVIDER=${MRMS_PROVIDER:-aws}
+      - DATABASE_URL=postgresql://hailtracker:${POSTGRES_PASSWORD:-hailtracker_dev}@postgres:5432/hailtracker
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - STORM_MAX_WORKERS=${STORM_MAX_WORKERS:-6}
+      - STORM_DISCOVERY_BATCH=${STORM_DISCOVERY_BATCH:-20}
+      - BACKFILL_MAX_RUNTIME=${BACKFILL_MAX_RUNTIME:-3600}
+      - BACKFILL_MAX_WINDOWS=${BACKFILL_MAX_WINDOWS:-1800}
+    volumes:
+      - ./data:/app/data
+      - ./database:/app/database
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery-ops:
+    build: .
+    restart: unless-stopped
+    profiles:
+      - workers
+      - production
+    command: ["bash", "-c", "eval \"$(micromamba shell hook --shell bash)\" && micromamba activate hail && exec celery -A backend.app.celery_app:celery_app worker -Q radar_ops -c 1 --loglevel=info"]
+    env_file:
+      - .env
+    environment:
+      - SKIP_HEAVY_ML=${SKIP_HEAVY_ML:-true}
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY is required}
+      - DATABASE_URL=postgresql://hailtracker:${POSTGRES_PASSWORD:-hailtracker_dev}@postgres:5432/hailtracker
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - WATCHDOG_WEBHOOK_URL=${WATCHDOG_WEBHOOK_URL:-}
+    volumes:
+      - ./data:/app/data
+      - ./database:/app/database
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery-beat:
+    build: .
+    restart: unless-stopped
+    command: ["bash", "-c", "eval \"$(micromamba shell hook --shell bash)\" && micromamba activate hail && exec celery -A backend.app.celery_app:celery_app beat --loglevel=info"]
+    env_file:
+      - .env
+    environment:
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY is required}
+      - DATABASE_URL=postgresql://hailtracker:${POSTGRES_PASSWORD:-hailtracker_dev}@postgres:5432/hailtracker
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
 volumes:
   pgdata:

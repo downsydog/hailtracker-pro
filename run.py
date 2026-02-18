@@ -80,6 +80,16 @@ def main():
         'DATABASE_PATH': str(PROJECT_ROOT / 'database' / 'hailtracker_pro.db')
     })
 
+    # Apply PostGIS migrations (001-004) on startup if using PostgreSQL
+    try:
+        from src.db.engine import ensure_schema, get_engine_info
+        ensure_schema()
+        info = get_engine_info()
+        logger.info("Database backend: %s  (%s)", info['backend'],
+                     info.get('database', ''))
+    except Exception as e:
+        logger.warning("Schema migration on startup failed (non-fatal): %s", e)
+
     # Start StormMonitor (real radar engine) if requested — ONE engine only
     monitor = None
     if args.monitor:

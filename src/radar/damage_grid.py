@@ -447,19 +447,25 @@ def persist_damage_grid(
         inserted = 0
         for cell in cells:
             try:
+                cur.execute("SAVEPOINT cell_sp")
                 cur.execute(insert_sql, (
-                    event_name, grid_version, cell["cell_size_km"],
+                    event_name, grid_version, float(cell["cell_size_km"]),
                     cell["i"], cell["j"],
-                    cell["center_lat"], cell["center_lon"],
-                    cell["bbox_min_lat"], cell["bbox_max_lat"],
-                    cell["bbox_min_lon"], cell["bbox_max_lon"],
-                    cell["authoritative_hail_mm"], cell["authoritative_hail_in"],
-                    cell["damage_probability"], cell["damage_severity"],
-                    cell["cell_confidence"], cell["dwell_seconds"],
+                    float(cell["center_lat"]), float(cell["center_lon"]),
+                    float(cell["bbox_min_lat"]), float(cell["bbox_max_lat"]),
+                    float(cell["bbox_min_lon"]), float(cell["bbox_max_lon"]),
+                    float(cell["authoritative_hail_mm"]), float(cell["authoritative_hail_in"]),
+                    float(cell["damage_probability"]), cell["damage_severity"],
+                    float(cell["cell_confidence"]), float(cell["dwell_seconds"]),
                     cell["evidence_mask"], cell["created_at"], cell["updated_at"],
                 ))
+                cur.execute("RELEASE SAVEPOINT cell_sp")
                 inserted += 1
             except Exception as e:
+                try:
+                    cur.execute("ROLLBACK TO SAVEPOINT cell_sp")
+                except Exception:
+                    pass
                 logger.warning("Failed to persist grid cell (%d,%d): %s", cell["i"], cell["j"], e)
         conn.commit()
         cur.close()

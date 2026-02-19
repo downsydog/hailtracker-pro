@@ -245,6 +245,15 @@ def create_app(config=None):
         """Main dashboard page."""
         return render_template('index.html')
 
+    @app.route('/hail-map')
+    def public_hail_map():
+        """Public hail map - no auth required."""
+        from flask import g
+        nav_config = g.get('nav_config') or {'layout': 'desktop', 'primary_action': None, 'items': []}
+        return render_template('app/hail/map.html',
+                             nav_config=nav_config,
+                             current_user=g.get('current_user'))
+
     @app.route('/map')
     def map_view():
         """Full-screen map view."""
@@ -272,59 +281,85 @@ def create_app(config=None):
     @app.route('/api/events')
     def api_events():
         """Get hail events with optional filters."""
-        # Parse query parameters
+        from src.db.engine import is_postgres, placeholder as ph
         days = request.args.get('days', 30, type=int)
         min_size = request.args.get('min_size', 0, type=float)
-        state = request.args.get('state')
-        country = request.args.get('country')
         limit = request.args.get('limit', 100, type=int)
+        severity = request.args.get('severity')
 
         conn = get_db()
-        cursor = conn.cursor()
+        pg = is_postgres()
+        p = ph()
 
-        # Build query
-        query = """
-            SELECT id, event_date, latitude, longitude,
-                   max_hail_size_inches, state_province, city, country,
-                   primary_radar, pdr_opportunity_score
-            FROM hail_events
-            WHERE event_date >= date('now', ?)
-        """
-        params = [f'-{days} days']
+        if pg:
+            import psycopg2.extras
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        else:
+            cursor = conn.cursor()
+
+        # PostgreSQL uses CURRENT_DATE - INTERVAL; SQLite uses date('now', ...)
+        if pg:
+            date_filter = f"event_date >= CURRENT_DATE - INTERVAL '{days} days'"
+            query = f"""
+                SELECT id, event_name, event_date, start_time, end_time,
+                       center_lat, center_lon, max_hail_size,
+                       severity, status, swath_polygon, confidence_score
+                FROM hail_events
+                WHERE {date_filter}
+            """
+            params = []
+        else:
+            query = f"""
+                SELECT id, event_name, event_date, start_time, end_time,
+                       center_lat, center_lon, max_hail_size,
+                       severity, status, swath_polygon, confidence_score
+                FROM hail_events
+                WHERE event_date >= date('now', {p})
+            """
+            params = [f'-{days} days']
 
         if min_size > 0:
-            query += " AND max_hail_size_inches >= ?"
+            query += f" AND max_hail_size >= {p}"
             params.append(min_size)
 
-        if state:
-            query += " AND state_province = ?"
-            params.append(state)
+        if severity:
+            query += f" AND severity = {p}"
+            params.append(severity)
 
-        if country:
-            query += " AND country = ?"
-            params.append(country)
-
-        query += " ORDER BY event_date DESC LIMIT ?"
+        query += f" ORDER BY event_date DESC LIMIT {p}"
         params.append(limit)
 
-        cursor.execute(query, params)
-        rows = cursor.fetchall()
-        conn.close()
+        try:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+        except Exception as e:
+            logger.error("Error querying /api/events: %s", e)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            return jsonify({'events': [], 'count': 0, 'error': str(e)}), 500
+        finally:
+            conn.close()
 
         events = []
         for row in rows:
-            events.append({
-                'id': row['id'],
-                'event_date': row['event_date'],
-                'lat': row['latitude'],
-                'lon': row['longitude'],
-                'max_hail_size_inches': row['max_hail_size_inches'],
-                'state_province': row['state_province'],
-                'city': row['city'],
-                'country': row['country'],
-                'primary_radar': row['primary_radar'],
-                'pdr_score': row['pdr_opportunity_score']
-            })
+            r = dict(row)
+            ev = {
+                'id': r.get('id'),
+                'event_name': r.get('event_name'),
+                'event_date': str(r['event_date']) if r.get('event_date') else None,
+                'start_time': r['start_time'].isoformat() if r.get('start_time') else None,
+                'end_time': r['end_time'].isoformat() if r.get('end_time') else None,
+                'lat': r.get('center_lat'),
+                'lon': r.get('center_lon'),
+                'max_hail_size': r.get('max_hail_size'),
+                'severity': r.get('severity'),
+                'status': r.get('status'),
+                'swath_polygon': r.get('swath_polygon'),
+                'confidence_score': r.get('confidence_score'),
+            }
+            events.append(ev)
 
         return jsonify({
             'events': events,
@@ -332,45 +367,47 @@ def create_app(config=None):
             'filters': {
                 'days': days,
                 'min_size': min_size,
-                'state': state,
-                'country': country
+                'severity': severity
             }
         })
 
     @app.route('/api/events/<int:event_id>')
     def api_event_detail(event_id):
         """Get detailed event information."""
+        from src.db.engine import is_postgres, placeholder as ph
         conn = get_db()
-        cursor = conn.cursor()
+        pg = is_postgres()
+        p = ph()
 
-        cursor.execute("""
-            SELECT * FROM hail_events WHERE id = ?
-        """, (event_id,))
+        if pg:
+            import psycopg2.extras
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        else:
+            cursor = conn.cursor()
 
-        row = cursor.fetchone()
-        conn.close()
+        try:
+            cursor.execute(f"SELECT * FROM hail_events WHERE id = {p}", (event_id,))
+            row = cursor.fetchone()
+        except Exception as e:
+            logger.error("Error querying event %s: %s", event_id, e)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            return jsonify({'error': str(e)}), 500
+        finally:
+            conn.close()
 
         if not row:
             return jsonify({'error': 'Event not found'}), 404
 
-        event = dict(row)
-
-        # Add radar info
-        if event.get('primary_radar'):
-            radar = get_radar_by_code(event['primary_radar'])
-            if radar:
-                event['radar_info'] = {
-                    'site_code': radar.site_code,
-                    'name': radar.name,
-                    'lat': radar.latitude,
-                    'lon': radar.longitude
-                }
-
+        event = {k: (v.isoformat() if hasattr(v, 'isoformat') else v) for k, v in dict(row).items()}
         return jsonify(event)
 
     @app.route('/api/events/search')
     def api_event_search():
         """Search events by location."""
+        from src.db.engine import is_postgres, placeholder as ph
         lat = request.args.get('lat', type=float)
         lon = request.args.get('lon', type=float)
         radius_km = request.args.get('radius_km', 50, type=float)
@@ -380,43 +417,71 @@ def create_app(config=None):
             return jsonify({'error': 'lat and lon required'}), 400
 
         conn = get_db()
-        cursor = conn.cursor()
+        pg = is_postgres()
+        p = ph()
 
-        # Bounding box search
+        if pg:
+            import psycopg2.extras
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        else:
+            cursor = conn.cursor()
+
         lat_delta = radius_km / 111.0
         lon_delta = radius_km / (111.0 * 0.85)
 
-        cursor.execute("""
-            SELECT id, event_date, latitude, longitude,
-                   max_hail_size_inches, state_province, city
-            FROM hail_events
-            WHERE event_date >= date('now', ?)
-              AND latitude BETWEEN ? AND ?
-              AND longitude BETWEEN ? AND ?
-            ORDER BY event_date DESC
-            LIMIT 100
-        """, (
-            f'-{days} days',
-            lat - lat_delta, lat + lat_delta,
-            lon - lon_delta, lon + lon_delta
-        ))
+        if pg:
+            date_filter = f"event_date >= CURRENT_DATE - INTERVAL '{days} days'"
+            query = f"""
+                SELECT id, event_name, event_date, center_lat, center_lon,
+                       max_hail_size, severity, status
+                FROM hail_events
+                WHERE {date_filter}
+                  AND center_lat BETWEEN {p} AND {p}
+                  AND center_lon BETWEEN {p} AND {p}
+                ORDER BY event_date DESC LIMIT 100
+            """
+            params = [lat - lat_delta, lat + lat_delta,
+                      lon - lon_delta, lon + lon_delta]
+        else:
+            query = f"""
+                SELECT id, event_name, event_date, center_lat, center_lon,
+                       max_hail_size, severity, status
+                FROM hail_events
+                WHERE event_date >= date('now', {p})
+                  AND center_lat BETWEEN {p} AND {p}
+                  AND center_lon BETWEEN {p} AND {p}
+                ORDER BY event_date DESC LIMIT 100
+            """
+            params = [f'-{days} days',
+                      lat - lat_delta, lat + lat_delta,
+                      lon - lon_delta, lon + lon_delta]
 
-        rows = cursor.fetchall()
-        conn.close()
+        try:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+        except Exception as e:
+            logger.error("Error in /api/events/search: %s", e)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            return jsonify({'events': [], 'count': 0, 'error': str(e)}), 500
+        finally:
+            conn.close()
 
-        # Filter by actual distance and calculate
         events = []
         for row in rows:
-            dist = haversine_distance(lat, lon, row['latitude'], row['longitude'])
+            r = dict(row)
+            dist = haversine_distance(lat, lon, r['center_lat'], r['center_lon'])
             if dist <= radius_km:
                 events.append({
-                    'id': row['id'],
-                    'event_date': row['event_date'],
-                    'lat': row['latitude'],
-                    'lon': row['longitude'],
-                    'max_hail_size_inches': row['max_hail_size_inches'],
-                    'state_province': row['state_province'],
-                    'city': row['city'],
+                    'id': r['id'],
+                    'event_name': r.get('event_name'),
+                    'event_date': str(r['event_date']) if r.get('event_date') else None,
+                    'lat': r['center_lat'],
+                    'lon': r['center_lon'],
+                    'max_hail_size': r.get('max_hail_size'),
+                    'severity': r.get('severity'),
                     'distance_km': round(dist, 1)
                 })
 
@@ -2432,25 +2497,33 @@ def create_app(config=None):
     app.register_blueprint(app_bp)
     logger.info("Unified App routes registered at /app")
 
-    # Register health checks (HARDEN-3)
+    # Register health checks (HARDEN-3, expanded Phase 3)
     try:
-        from src.observability.health import get_health_check
-        from src.db.engine import get_connection
-
-        hc = get_health_check()
-
-        def _check_db():
-            try:
-                with get_connection() as conn:
-                    conn.cursor().execute('SELECT 1')
-                return {'ok': True}
-            except Exception as e:
-                return {'ok': False, 'error': str(e)}
-
-        hc.register('database', _check_db)
-        logger.info("Health checks registered (database)")
+        from src.observability.health import register_all_checks
+        import os as _os
+        _redis_url = _os.environ.get(
+            'REDIS_URL',
+            _os.environ.get('CELERY_BROKER_URL', 'redis://localhost:6379/0'),
+        )
+        register_all_checks(redis_url=_redis_url)
+        logger.info("Health checks registered (database, redis, radar_pipeline)")
     except Exception as e:
         logger.warning("Could not register health checks: %s", e)
+
+    # Register Prometheus /metrics endpoint (Phase 3)
+    try:
+        from src.observability.metrics import register_metrics_endpoint
+        register_metrics_endpoint(app)
+        logger.info("Prometheus /metrics endpoint registered")
+    except Exception as e:
+        logger.warning("Could not register /metrics endpoint: %s", e)
+
+    # Install structured log context filter (Phase 3)
+    try:
+        from src.observability.log_context import install_context_filter
+        install_context_filter()
+    except Exception:
+        pass
 
     return app
 

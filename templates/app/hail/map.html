@@ -1,0 +1,602 @@
+{% extends 'layouts/base_app.html' %}
+
+{% block title %}Sales Map - HailTracker Pro{% endblock %}
+
+{% block content %}
+{% from 'components/ui/_page_header.html' import page_header %}
+{% from 'components/ui/_drawer.html' import drawer %}
+{% from 'components/ui/_empty_state.html' import empty_state %}
+
+{# Leaflet CSS #}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.css" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.Default.css" />
+
+<style>
+    .leaflet-container { background: #1a1a2e; }
+
+    /* Custom legend */
+    .map-legend {
+        background: white;
+        padding: 12px 16px;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        font-size: 12px;
+        line-height: 1.5;
+    }
+    .map-legend h4 { margin: 0 0 8px 0; font-weight: 600; color: #374151; }
+    .legend-item { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+    .legend-color { width: 16px; height: 16px; border-radius: 4px; }
+    .legend-color.swath-severe { background: rgba(239, 68, 68, 0.4); border: 2px solid #ef4444; }
+    .legend-color.swath-moderate { background: rgba(251, 191, 36, 0.4); border: 2px solid #f59e0b; }
+    .legend-color.swath-minor { background: rgba(34, 197, 94, 0.4); border: 2px solid #22c55e; }
+    .legend-color.territory { background: rgba(59, 130, 246, 0.2); border: 2px dashed #3b82f6; }
+    .legend-color.lead-hot { background: #ef4444; border-radius: 50%; }
+    .legend-color.lead-warm { background: #f59e0b; border-radius: 50%; }
+    .legend-color.lead-cold { background: #3b82f6; border-radius: 50%; }
+
+    /* Lead marker styles */
+    .lead-marker {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        border: 3px solid white;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        font-weight: bold;
+        color: white;
+    }
+    .lead-marker.hot { background: #ef4444; }
+    .lead-marker.warm { background: #f59e0b; }
+    .lead-marker.cold { background: #3b82f6; }
+    .lead-marker.converted { background: #22c55e; }
+
+    /* Popup styling */
+    .leaflet-popup-content-wrapper {
+        border-radius: 12px;
+        padding: 0;
+    }
+    .leaflet-popup-content { margin: 0; min-width: 200px; }
+    .popup-header { padding: 12px 16px; border-bottom: 1px solid #e5e7eb; }
+    .popup-body { padding: 12px 16px; }
+    .popup-actions { padding: 12px 16px; border-top: 1px solid #e5e7eb; display: flex; gap: 8px; }
+
+    /* Layer control */
+    .layer-control {
+        position: absolute;
+        top: 80px;
+        right: 16px;
+        z-index: 1000;
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        padding: 12px;
+        min-width: 180px;
+    }
+    .layer-control h4 { margin: 0 0 8px 0; font-size: 12px; font-weight: 600; color: #6b7280; text-transform: uppercase; }
+    .layer-toggle { display: flex; align-items: center; gap: 8px; padding: 6px 0; cursor: pointer; }
+    .layer-toggle input { cursor: pointer; }
+    .layer-toggle label { cursor: pointer; font-size: 14px; color: #374151; }
+</style>
+
+<div class="space-y-4">
+    {# Header #}
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900">Sales Map</h1>
+            <p class="text-gray-500">Hail swaths, territories, and leads visualization</p>
+        </div>
+        <div class="flex items-center gap-2">
+            <span id="live-indicator" class="flex items-center gap-2 text-sm text-green-600 bg-green-50 px-3 py-1.5 rounded-full">
+                <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                Live
+            </span>
+            <button onclick="refreshMap()" class="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg">
+                <i data-lucide="refresh-cw" class="w-5 h-5"></i>
+            </button>
+        </div>
+    </div>
+
+    {# Map Container #}
+    <div class="relative bg-white rounded-xl border border-gray-200 overflow-hidden" style="height: calc(100vh - 220px); min-height: 500px;">
+        <div id="map" class="w-full h-full"></div>
+
+        {# Error banner - shown when API calls fail #}
+        <div id="api-error-banner" class="hidden absolute top-4 left-1/2 -translate-x-1/2 z-[1001] bg-red-50 border border-red-200 rounded-lg shadow-lg px-4 py-3 max-w-lg w-full">
+            <div class="flex items-start gap-3">
+                <svg class="w-5 h-5 text-red-500 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"></path></svg>
+                <div class="flex-1">
+                    <p class="text-sm font-medium text-red-800">Failed to load map data</p>
+                    <p id="api-error-detail" class="text-xs text-red-600 mt-1"></p>
+                </div>
+                <button onclick="document.getElementById('api-error-banner').classList.add('hidden')" class="text-red-400 hover:text-red-600">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            <button onclick="loadMapData()" class="mt-2 text-xs font-medium text-red-700 hover:text-red-900 underline">Retry</button>
+        </div>
+
+        {# Layer Controls #}
+        <div class="layer-control">
+            <h4>Layers</h4>
+            <div class="layer-toggle">
+                <input type="checkbox" id="layer-swaths" checked>
+                <label for="layer-swaths">Hail Swaths</label>
+            </div>
+            <div class="layer-toggle">
+                <input type="checkbox" id="layer-territories" checked>
+                <label for="layer-territories">Territories</label>
+            </div>
+            <div class="layer-toggle">
+                <input type="checkbox" id="layer-leads" checked>
+                <label for="layer-leads">Leads</label>
+            </div>
+            <div class="layer-toggle">
+                <input type="checkbox" id="layer-radar">
+                <label for="layer-radar">Radar Coverage</label>
+            </div>
+        </div>
+
+        {# Stats Bar #}
+        <div class="absolute bottom-4 left-4 right-4 sm:left-auto sm:right-4 sm:w-80 bg-white rounded-lg shadow-lg border border-gray-200 p-4">
+            <div class="grid grid-cols-3 gap-4 text-center">
+                <div>
+                    <p id="stat-events" class="text-2xl font-bold text-red-600">0</p>
+                    <p class="text-xs text-gray-500">Active Storms</p>
+                </div>
+                <div>
+                    <p id="stat-leads" class="text-2xl font-bold text-blue-600">0</p>
+                    <p class="text-xs text-gray-500">Leads in View</p>
+                </div>
+                <div>
+                    <p id="stat-hot" class="text-2xl font-bold text-orange-600">0</p>
+                    <p class="text-xs text-gray-500">Hot Leads</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# Lead Detail Drawer #}
+{% call drawer('lead-drawer', title='Lead Details', size='md') %}
+<div id="lead-drawer-content">
+    <div class="space-y-4">
+        <div>
+            <p class="text-sm text-gray-500">Name</p>
+            <p id="drawer-lead-name" class="font-medium text-gray-900">--</p>
+        </div>
+        <div>
+            <p class="text-sm text-gray-500">Phone</p>
+            <a id="drawer-lead-phone" href="#" class="font-medium text-blue-600">--</a>
+        </div>
+        <div>
+            <p class="text-sm text-gray-500">Address</p>
+            <p id="drawer-lead-address" class="font-medium text-gray-900">--</p>
+        </div>
+        <div>
+            <p class="text-sm text-gray-500">Vehicle</p>
+            <p id="drawer-lead-vehicle" class="font-medium text-gray-900">--</p>
+        </div>
+        <div>
+            <p class="text-sm text-gray-500">Temperature</p>
+            <span id="drawer-lead-temp" class="px-2 py-1 text-xs font-medium rounded-full">--</span>
+        </div>
+        <div>
+            <p class="text-sm text-gray-500">Source</p>
+            <p id="drawer-lead-source" class="font-medium text-gray-900">--</p>
+        </div>
+    </div>
+    <div class="mt-6 space-y-3">
+        <a id="drawer-lead-link" href="#" class="block w-full py-2 bg-blue-600 text-white text-center rounded-lg font-medium hover:bg-blue-700">
+            View Full Details
+        </a>
+        <a id="drawer-lead-directions" href="#" target="_blank" class="block w-full py-2 bg-white border border-gray-300 text-gray-700 text-center rounded-lg font-medium hover:bg-gray-50">
+            Get Directions
+        </a>
+    </div>
+</div>
+{% endcall %}
+
+{# Leaflet JS #}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.4.1/dist/leaflet.markercluster.js"></script>
+<script src="/static/js/api-client.js"></script>
+
+<script>
+// Map instance and layers
+let map;
+let swathLayer;
+let territoryLayer;
+let leadsLayer;
+let radarLayer;
+
+// Data
+let hailEvents = [];
+let leads = [];
+let territories = [];
+
+// Initialize map
+document.addEventListener('DOMContentLoaded', () => {
+    initMap();
+    loadMapData();
+    setupLayerControls();
+});
+
+function initMap() {
+    // Initialize map centered on US
+    map = L.map('map', {
+        center: [39.8283, -98.5795],
+        zoom: 5,
+        zoomControl: true
+    });
+
+    // Dark tile layer
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; OpenStreetMap, &copy; CARTO',
+        maxZoom: 19
+    }).addTo(map);
+
+    // Initialize layer groups
+    swathLayer = L.layerGroup().addTo(map);
+    territoryLayer = L.layerGroup().addTo(map);
+    leadsLayer = L.markerClusterGroup({
+        maxClusterRadius: 50,
+        spiderfyOnMaxZoom: true,
+        showCoverageOnHover: false,
+        iconCreateFunction: function(cluster) {
+            const count = cluster.getChildCount();
+            return L.divIcon({
+                html: `<div class="lead-marker warm">${count}</div>`,
+                className: '',
+                iconSize: [32, 32]
+            });
+        }
+    }).addTo(map);
+    radarLayer = L.layerGroup();
+
+    // Add legend
+    addLegend();
+
+    // Map events
+    map.on('moveend', updateStats);
+}
+
+function addLegend() {
+    const legend = L.control({ position: 'bottomleft' });
+    legend.onAdd = function() {
+        const div = L.DomUtil.create('div', 'map-legend');
+        div.innerHTML = `
+            <h4>Legend</h4>
+            <div class="legend-item"><div class="legend-color swath-severe"></div><span>Severe Hail (2"+)</span></div>
+            <div class="legend-item"><div class="legend-color swath-moderate"></div><span>Moderate (1-2")</span></div>
+            <div class="legend-item"><div class="legend-color swath-minor"></div><span>Minor (&lt;1")</span></div>
+            <div class="legend-item"><div class="legend-color territory"></div><span>Territory</span></div>
+            <div class="legend-item"><div class="legend-color lead-hot"></div><span>Hot Lead</span></div>
+            <div class="legend-item"><div class="legend-color lead-warm"></div><span>Warm Lead</span></div>
+            <div class="legend-item"><div class="legend-color lead-cold"></div><span>Cold Lead</span></div>
+        `;
+        return div;
+    };
+    legend.addTo(map);
+}
+
+async function loadMapData() {
+    const errors = [];
+
+    // Load hail events (swaths) - public endpoint
+    try {
+        const eventsResponse = await api.get('/api/events?limit=50');
+        hailEvents = eventsResponse.events || eventsResponse || [];
+        renderSwaths(hailEvents);
+    } catch (error) {
+        console.warn('Failed to load hail events:', error);
+        errors.push(`/api/events → ${error.message || error}`);
+    }
+
+    // Load leads with location data - requires auth, graceful fallback
+    try {
+        const leadsResponse = await api.get('/api/leads?per_page=200');
+        leads = (leadsResponse.leads || []).filter(l => l.latitude && l.longitude);
+        renderLeads(leads);
+    } catch (error) {
+        if (error.status === 401) {
+            console.info('Leads require authentication - skipping');
+        } else {
+            console.warn('Failed to load leads:', error);
+            errors.push(`/api/leads → ${error.message || error}`);
+        }
+    }
+
+    // Load territories (mock for now - would come from API)
+    territories = getSampleTerritories();
+    renderTerritories(territories);
+
+    updateStats();
+
+    // Show error banner if any critical endpoints failed
+    if (errors.length > 0) {
+        const banner = document.getElementById('api-error-banner');
+        const detail = document.getElementById('api-error-detail');
+        if (banner && detail) {
+            detail.textContent = errors.join('; ');
+            banner.classList.remove('hidden');
+        }
+    } else {
+        const banner = document.getElementById('api-error-banner');
+        if (banner) banner.classList.add('hidden');
+    }
+}
+
+function renderSwaths(events) {
+    swathLayer.clearLayers();
+
+    events.forEach(event => {
+        const lat = event.lat || event.latitude || event.center_lat;
+        const lon = event.lon || event.longitude || event.center_lon;
+        if (!lat || !lon) return;
+
+        // Determine severity color
+        const maxHail = parseFloat(event.max_hail_size || event.max_hail_size_inches) || 1;
+        let color, fillColor;
+        if (maxHail >= 2) {
+            color = '#ef4444'; fillColor = 'rgba(239, 68, 68, 0.3)';
+        } else if (maxHail >= 1) {
+            color = '#f59e0b'; fillColor = 'rgba(251, 191, 36, 0.3)';
+        } else {
+            color = '#22c55e'; fillColor = 'rgba(34, 197, 94, 0.3)';
+        }
+
+        // If the event has a GeoJSON swath polygon, render it
+        if (event.swath_polygon) {
+            try {
+                const geojson = typeof event.swath_polygon === 'string'
+                    ? JSON.parse(event.swath_polygon) : event.swath_polygon;
+                const layer = L.geoJSON(geojson, {
+                    style: { color, fillColor, fillOpacity: 0.4, weight: 2 }
+                });
+                layer.bindPopup(`
+                    <div class="popup-header">
+                        <strong>${event.event_name || 'Hail Event'}</strong>
+                    </div>
+                    <div class="popup-body">
+                        <p><strong>Date:</strong> ${event.event_date || 'N/A'}</p>
+                        <p><strong>Max Hail:</strong> ${maxHail}" diameter</p>
+                        <p><strong>Severity:</strong> ${event.severity || 'Unknown'}</p>
+                    </div>
+                `);
+                swathLayer.addLayer(layer);
+                return;
+            } catch (e) {
+                // Fall through to circle rendering
+            }
+        }
+
+        // Fallback: circle approximation
+        const center = [lat, lon];
+        const radiusMeters = Math.max(5000, maxHail * 8000);
+
+        const circle = L.circle(center, {
+            radius: radiusMeters,
+            color: color,
+            fillColor: fillColor,
+            fillOpacity: 0.4,
+            weight: 2
+        });
+
+        circle.bindPopup(`
+            <div class="popup-header">
+                <strong>${event.event_name || 'Hail Event'}</strong>
+            </div>
+            <div class="popup-body">
+                <p><strong>Date:</strong> ${event.event_date || 'N/A'}</p>
+                <p><strong>Max Hail:</strong> ${maxHail}" diameter</p>
+                <p><strong>Severity:</strong> ${event.severity || 'Unknown'}</p>
+            </div>
+        `);
+
+        swathLayer.addLayer(circle);
+    });
+}
+
+function renderLeads(leads) {
+    leadsLayer.clearLayers();
+
+    leads.forEach(lead => {
+        if (!lead.latitude || !lead.longitude) return;
+
+        const temp = (lead.temperature || 'WARM').toLowerCase();
+        const tempClass = temp === 'hot' ? 'hot' : temp === 'cold' ? 'cold' : 'warm';
+        const initial = (lead.first_name || lead.company_name || '?')[0].toUpperCase();
+
+        const icon = L.divIcon({
+            html: `<div class="lead-marker ${tempClass}">${initial}</div>`,
+            className: '',
+            iconSize: [28, 28],
+            iconAnchor: [14, 14]
+        });
+
+        const marker = L.marker([lead.latitude, lead.longitude], { icon });
+
+        const name = `${lead.first_name || ''} ${lead.last_name || ''}`.trim() || lead.company_name || 'Unknown';
+        const vehicle = lead.vehicle_year ? `${lead.vehicle_year} ${lead.vehicle_make || ''} ${lead.vehicle_model || ''}` : 'N/A';
+
+        marker.bindPopup(`
+            <div class="popup-header">
+                <strong>${name}</strong>
+                <span class="px-2 py-0.5 text-xs font-medium rounded-full ml-2" style="background: ${temp === 'hot' ? '#fef2f2' : temp === 'cold' ? '#eff6ff' : '#fffbeb'}; color: ${temp === 'hot' ? '#dc2626' : temp === 'cold' ? '#2563eb' : '#d97706'}">
+                    ${temp.toUpperCase()}
+                </span>
+            </div>
+            <div class="popup-body">
+                ${lead.phone ? `<p><strong>Phone:</strong> <a href="tel:${lead.phone}">${lead.phone}</a></p>` : ''}
+                <p><strong>Vehicle:</strong> ${vehicle}</p>
+                <p><strong>Source:</strong> ${(lead.source || '').replace(/_/g, ' ')}</p>
+            </div>
+            <div class="popup-actions">
+                <a href="/app/leads/${lead.id}" class="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">View</a>
+                <a href="https://www.google.com/maps/dir/?api=1&destination=${lead.latitude},${lead.longitude}" target="_blank" class="px-3 py-1.5 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200">Directions</a>
+            </div>
+        `);
+
+        leadsLayer.addLayer(marker);
+    });
+}
+
+function renderTerritories(territories) {
+    territoryLayer.clearLayers();
+
+    territories.forEach(territory => {
+        if (!territory.bounds) return;
+
+        const polygon = L.polygon(territory.bounds, {
+            color: '#3b82f6',
+            fillColor: 'rgba(59, 130, 246, 0.1)',
+            fillOpacity: 0.2,
+            weight: 2,
+            dashArray: '5, 5'
+        });
+
+        polygon.bindPopup(`
+            <div class="popup-header">
+                <strong>${territory.name}</strong>
+            </div>
+            <div class="popup-body">
+                <p><strong>Rep:</strong> ${territory.rep || 'Unassigned'}</p>
+                <p><strong>Leads:</strong> ${territory.lead_count || 0}</p>
+            </div>
+        `);
+
+        territoryLayer.addLayer(polygon);
+    });
+}
+
+function getSampleTerritories() {
+    // Sample territories - in production these would come from API
+    return [
+        {
+            name: 'Dallas Metro',
+            rep: 'John Smith',
+            lead_count: 45,
+            bounds: [
+                [33.1, -97.1], [33.1, -96.5], [32.6, -96.5], [32.6, -97.1]
+            ]
+        },
+        {
+            name: 'Denver Area',
+            rep: 'Jane Doe',
+            lead_count: 32,
+            bounds: [
+                [40.0, -105.2], [40.0, -104.6], [39.5, -104.6], [39.5, -105.2]
+            ]
+        },
+        {
+            name: 'Oklahoma City',
+            rep: 'Mike Johnson',
+            lead_count: 28,
+            bounds: [
+                [35.7, -97.8], [35.7, -97.2], [35.2, -97.2], [35.2, -97.8]
+            ]
+        }
+    ];
+}
+
+function setupLayerControls() {
+    document.getElementById('layer-swaths').addEventListener('change', (e) => {
+        if (e.target.checked) {
+            map.addLayer(swathLayer);
+        } else {
+            map.removeLayer(swathLayer);
+        }
+    });
+
+    document.getElementById('layer-territories').addEventListener('change', (e) => {
+        if (e.target.checked) {
+            map.addLayer(territoryLayer);
+        } else {
+            map.removeLayer(territoryLayer);
+        }
+    });
+
+    document.getElementById('layer-leads').addEventListener('change', (e) => {
+        if (e.target.checked) {
+            map.addLayer(leadsLayer);
+        } else {
+            map.removeLayer(leadsLayer);
+        }
+    });
+
+    document.getElementById('layer-radar').addEventListener('change', (e) => {
+        if (e.target.checked) {
+            map.addLayer(radarLayer);
+            loadRadarCoverage();
+        } else {
+            map.removeLayer(radarLayer);
+        }
+    });
+}
+
+async function loadRadarCoverage() {
+    try {
+        const response = await api.get('/api/radars');
+        const radars = response.radars || response || [];
+
+        radarLayer.clearLayers();
+
+        radars.forEach(radar => {
+            const rLat = radar.lat || radar.latitude;
+            const rLon = radar.lon || radar.longitude;
+            if (!rLat || !rLon) return;
+
+            // 230km coverage radius
+            const circle = L.circle([rLat, rLon], {
+                radius: 230000,
+                color: '#6366f1',
+                fillColor: 'rgba(99, 102, 241, 0.1)',
+                fillOpacity: 0.1,
+                weight: 1
+            });
+
+            circle.bindPopup(`<strong>${radar.site_code || radar.code || ''}</strong><br>${radar.name || ''}`);
+            radarLayer.addLayer(circle);
+        });
+    } catch (error) {
+        console.error('Failed to load radar coverage:', error);
+    }
+}
+
+function updateStats() {
+    const bounds = map.getBounds();
+
+    // Count events in view
+    const eventsInView = hailEvents.filter(e =>
+        e.latitude && e.longitude &&
+        bounds.contains([e.latitude, e.longitude])
+    ).length;
+
+    // Count leads in view
+    const leadsInView = leads.filter(l =>
+        l.latitude && l.longitude &&
+        bounds.contains([l.latitude, l.longitude])
+    );
+
+    const hotLeads = leadsInView.filter(l => (l.temperature || '').toUpperCase() === 'HOT').length;
+
+    document.getElementById('stat-events').textContent = eventsInView;
+    document.getElementById('stat-leads').textContent = leadsInView.length;
+    document.getElementById('stat-hot').textContent = hotLeads;
+}
+
+function refreshMap() {
+    loadMapData();
+    api.showToast('Map refreshed', 'success');
+}
+
+// Refresh icons after page load
+if (typeof lucide !== 'undefined') {
+    lucide.createIcons();
+}
+</script>
+{% endblock %}

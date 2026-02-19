@@ -118,10 +118,10 @@ def _forward_position(lat: float, lon: float, bearing_deg: float,
 
 def _time_gap_minutes(ev_a: dict, ev_b: dict) -> float:
     """Minimum temporal gap (minutes) between two events' time ranges."""
-    a_start = datetime.fromisoformat(ev_a['start_time'])
-    a_end = datetime.fromisoformat(ev_a['end_time'])
-    b_start = datetime.fromisoformat(ev_b['start_time'])
-    b_end = datetime.fromisoformat(ev_b['end_time'])
+    a_start = _parse_utc(ev_a['start_time'])
+    a_end = _parse_utc(ev_a['end_time'])
+    b_start = _parse_utc(ev_b['start_time'])
+    b_end = _parse_utc(ev_b['end_time'])
     latest_start = max(a_start, b_start)
     earliest_end = min(a_end, b_end)
     if latest_start <= earliest_end:
@@ -129,9 +129,16 @@ def _time_gap_minutes(ev_a: dict, ev_b: dict) -> float:
     return (latest_start - earliest_end).total_seconds() / 60.0
 
 
-def _parse_utc(s: str) -> datetime:
-    """Parse ISO timestamp, ensure UTC timezone."""
-    dt = datetime.fromisoformat(s)
+def _parse_utc(s) -> datetime:
+    """Parse ISO timestamp or pass through datetime, ensure UTC timezone.
+
+    PostgreSQL returns ``datetime`` objects from TIMESTAMP columns while
+    SQLite returns ISO-format strings.  Handle both transparently.
+    """
+    if isinstance(s, datetime):
+        dt = s
+    else:
+        dt = datetime.fromisoformat(str(s))
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt
@@ -307,7 +314,10 @@ def _generate_stable_swath_id(first_event: dict) -> str:
     Once created and stored in DB, the ID never changes.
     """
     start = first_event['start_time']
-    date_str = start[:10].replace('-', '')
+    if isinstance(start, datetime):
+        date_str = start.strftime('%Y%m%d')
+    else:
+        date_str = start[:10].replace('-', '')
     lat = first_event['center_lat']
     lon = first_event['center_lon']
     # Grid snap to 0.1 degree
@@ -323,7 +333,10 @@ def _generate_swath_id(cluster: List[dict]) -> str:
     """Legacy: deterministic swath ID from sorted member event names."""
     names = sorted(ev['event_name'] for ev in cluster)
     earliest = min(ev['start_time'] for ev in cluster)
-    date_str = earliest[:10].replace('-', '')
+    if isinstance(earliest, datetime):
+        date_str = earliest.strftime('%Y%m%d')
+    else:
+        date_str = earliest[:10].replace('-', '')
     centroid_lat = sum(ev['center_lat'] for ev in cluster) / len(cluster)
     centroid_lon = sum(ev['center_lon'] for ev in cluster) / len(cluster)
     hash_input = '|'.join(names).encode()
@@ -648,18 +661,18 @@ def _build_swath_from_events(
     Uses stable swath_id (not regenerated).
     """
     n = len(events)
-    events_sorted = sorted(events, key=lambda e: e['start_time'])
+    events_sorted = sorted(events, key=lambda e: _parse_utc(e['start_time']))
 
-    first_seen = min(ev['start_time'] for ev in events)
-    last_seen = max(ev['end_time'] for ev in events)
+    first_seen = min(_parse_utc(ev['start_time']) for ev in events)
+    last_seen = max(_parse_utc(ev['end_time']) for ev in events)
     # Preserve original first_seen if swath existed before
     if previous_swath and previous_swath.get('first_seen_utc'):
-        prev_first = previous_swath['first_seen_utc']
+        prev_first = _parse_utc(previous_swath['first_seen_utc'])
         if prev_first < first_seen:
             first_seen = prev_first
 
-    first_dt = _parse_utc(first_seen)
-    last_dt = _parse_utc(last_seen)
+    first_dt = first_seen
+    last_dt = last_seen
     duration_min = max(0, (last_dt - first_dt).total_seconds() / 60.0)
 
     centroid_lat = sum(ev['center_lat'] for ev in events) / n
@@ -944,9 +957,13 @@ def _fetch_recent_events(conn) -> List[dict]:
     else:
         time_filter = f"start_time >= datetime('now', {p} || ' minutes')"
 
-    # Try extended columns, fallback to base
+    # Try extended columns, fallback to base.
+    # Use SAVEPOINT so a column-missing error doesn't poison the PG transaction.
+    pg = is_postgres()
     try:
         cur = _dict_cursor(conn)
+        if pg:
+            cur.execute("SAVEPOINT fetch_events_sp")
         cur.execute(f"""
             SELECT event_name, center_lat, center_lon,
                    start_time, end_time,
@@ -960,10 +977,14 @@ def _fetch_recent_events(conn) -> List[dict]:
               AND {time_filter}
         """, (f"-{EVENT_WINDOW_MINUTES}",))
         rows = cur.fetchall()
+        if pg:
+            cur.execute("RELEASE SAVEPOINT fetch_events_sp")
     except Exception:
         try:
+            if pg:
+                conn.cursor().execute("ROLLBACK TO SAVEPOINT fetch_events_sp")
             cur = _dict_cursor(conn)
-            cur.execute("""
+            cur.execute(f"""
                 SELECT event_name, center_lat, center_lon,
                        start_time, end_time,
                        max_hail_size, confidence_score,
@@ -971,7 +992,8 @@ def _fetch_recent_events(conn) -> List[dict]:
                 FROM hail_events
                 WHERE status = 'CONFIRMED'
                   AND data_source = 'NEXRAD_REALTIME'
-            """)
+                  AND {time_filter}
+            """, (f"-{EVENT_WINDOW_MINUTES}",))
             rows = cur.fetchall()
         except Exception:
             return []

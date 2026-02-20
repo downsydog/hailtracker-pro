@@ -570,11 +570,12 @@ async function loadRadarCoverage() {
 function updateStats() {
     const bounds = map.getBounds();
 
-    // Count events in view
-    const eventsInView = hailEvents.filter(e =>
-        e.latitude && e.longitude &&
-        bounds.contains([e.latitude, e.longitude])
-    ).length;
+    // Count events in view (API may return lat/lon or latitude/longitude)
+    const eventsInView = hailEvents.filter(e => {
+        const lat = e.lat || e.latitude || e.center_lat;
+        const lon = e.lon || e.longitude || e.center_lon;
+        return lat && lon && bounds.contains([lat, lon]);
+    }).length;
 
     // Count leads in view
     const leadsInView = leads.filter(l =>

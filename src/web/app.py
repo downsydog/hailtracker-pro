@@ -17,7 +17,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from flask import Flask, render_template, jsonify, request, send_file
+from flask import Flask, render_template, jsonify, request, send_file, redirect
 from flask_login import LoginManager, login_required, current_user
 import sqlite3
 
@@ -261,18 +261,18 @@ def create_app(config=None):
 
     @app.route('/events')
     def events_view():
-        """Events list view."""
-        return render_template('events.html')
+        """Events list view — redirects to hail-map until dedicated template is built."""
+        return redirect('/hail-map')
 
     @app.route('/opportunities')
     def opportunities_view():
-        """PDR opportunities view."""
-        return render_template('opportunities.html')
+        """PDR opportunities view — redirects to hail-map until dedicated template is built."""
+        return redirect('/hail-map')
 
     @app.route('/markets')
     def markets_view():
-        """Market analysis view."""
-        return render_template('markets.html')
+        """Market analysis view — redirects to hail-map until dedicated template is built."""
+        return redirect('/hail-map')
 
     # ====================
     # API Routes - Events

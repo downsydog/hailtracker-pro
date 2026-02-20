@@ -10,6 +10,7 @@ from typing import List, Dict, Optional
 from datetime import datetime
 
 from src.radar.swath_generator import SwathGenerator, HailDetection
+from src.db.main_db import MAIN_DB_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 class SwathDatabase:
     """Manage hail swath data in database"""
 
-    def __init__(self, db_path='data/hailtracker_crm.db'):
+    def __init__(self, db_path=MAIN_DB_PATH):
         """
         Initialize swath database
 

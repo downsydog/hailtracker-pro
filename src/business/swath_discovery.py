@@ -46,6 +46,7 @@ from src.radar.geo_utils import GeoUtils
 from src.fleet.scrapers.yellowpages import YellowPagesScraper
 from src.fleet.scrapers.bbb import BBBScraper
 from src.fleet.scrapers.foursquare_api import FoursquareAPI
+from src.db.main_db import MAIN_DB_PATH
 from src.fleet.apis.yelp_api import YelpAPI
 from src.fleet.apis.here_api import HereAPI
 from src.fleet.apis.tomtom_api import TomTomAPI
@@ -130,7 +131,8 @@ class SwathDiscoveryService:
             3: get_categories_by_tier(3),
         }
 
-    def __init__(self, db_path: str = None, crm_db_path: str = None):
+    def __init__(self, db_path: str = None, crm_db_path: str = None,
+                 hail_db_path: str = None):
         """Initialize the SwathDiscoveryService."""
         data_dir = Path(__file__).parent.parent.parent / 'data'
 
@@ -142,6 +144,7 @@ class SwathDiscoveryService:
 
         self.db_path = db_path
         self.crm_db_path = crm_db_path
+        self.hail_db_path = hail_db_path or MAIN_DB_PATH
 
         # Initialize scrapers
         self.yp_scraper = YellowPagesScraper(db_path)
@@ -835,7 +838,7 @@ out center meta;'''
         if not event_ids:
             return []
 
-        conn = sqlite3.connect(self.crm_db_path)
+        conn = sqlite3.connect(self.hail_db_path)
         conn.row_factory = sqlite3.Row
 
         placeholders = ','.join('?' * len(event_ids))

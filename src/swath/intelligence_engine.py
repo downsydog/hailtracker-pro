@@ -23,6 +23,8 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
+from src.db.main_db import MAIN_DB_PATH
+
 logger = logging.getLogger(__name__)
 
 
@@ -1199,7 +1201,7 @@ def fetch_swaths_geojson(
     return results
 
 
-def update_swaths(db_path: str = 'data/hailtracker_crm.db') -> int:
+def update_swaths(db_path: str = MAIN_DB_PATH) -> int:
     """
     Main entry point: fetch CONFIRMED events, assign to swaths via
     motion coherence, aggregate metrics, persist.

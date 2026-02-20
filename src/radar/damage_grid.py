@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 from src.db.engine import get_raw_connection, is_postgres
+from src.db.main_db import MAIN_DB_PATH
 from src.db.compat import sql
 
 logger = logging.getLogger(__name__)
@@ -324,7 +325,7 @@ def _cell_confidence(event_confidence: float, evidence_mask: int) -> float:
 # DATABASE PERSISTENCE
 # =========================================================================
 
-def ensure_damage_grid_table(db_path: str = "data/hailtracker_crm.db"):
+def ensure_damage_grid_table(db_path: str = MAIN_DB_PATH):
     """Create hail_damage_grid table if it doesn't exist (idempotent)."""
     if is_postgres():
         conn = get_raw_connection()
@@ -402,7 +403,7 @@ def ensure_damage_grid_table(db_path: str = "data/hailtracker_crm.db"):
 def persist_damage_grid(
     event_name: str,
     cells: List[Dict],
-    db_path: str = "data/hailtracker_crm.db",
+    db_path: str = MAIN_DB_PATH,
     grid_version: int = 1,
 ):
     """
@@ -514,7 +515,7 @@ def persist_damage_grid(
 
 def query_damage_grid(
     event_name: str,
-    db_path: str = "data/hailtracker_crm.db",
+    db_path: str = MAIN_DB_PATH,
     min_prob: float = 0.0,
     min_conf: float = 0.0,
     max_cells: int = 20000,
@@ -555,7 +556,7 @@ def query_damage_grid(
 def query_damage_grid_bbox(
     min_lon: float, min_lat: float,
     max_lon: float, max_lat: float,
-    db_path: str = "data/hailtracker_crm.db",
+    db_path: str = MAIN_DB_PATH,
     min_prob: float = 0.0,
     min_conf: float = 0.0,
     max_cells: int = 20000,

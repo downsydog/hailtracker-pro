@@ -1645,8 +1645,9 @@ class StormMonitor:
             if not _pg:
                 try:
                     from src.radar.event_footprint import update_event_footprints
+                    from src.db.main_db import MAIN_DB_PATH as _main_path
                     n_enriched = update_event_footprints(
-                        'data/hailtracker_crm.db',
+                        _main_path,
                         mrms_cache=getattr(self, '_mrms_cache', None),
                     )
                     if n_enriched > 0:

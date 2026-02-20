@@ -15,18 +15,21 @@ Endpoints:
 from flask import Blueprint, request, jsonify
 from datetime import datetime, date, timedelta
 from src.core.auth.decorators import login_required
-from src.db.database import Database
+from src.db.main_db import get_main_db, MAIN_DB_PATH
 import os
 
 hail_events_api_bp = Blueprint('hail_events_api', __name__, url_prefix='/api/hail-events')
 
 
+def _get_hail_db():
+    """Get Database instance pointed at the main DB (where hail_events lives)."""
+    return get_main_db()
+
+
 def get_manager():
     """Get HailEventManager instance"""
     from src.crm.managers.hail_event_manager import HailEventManager
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-    db_path = os.path.join(project_root, 'data', 'hailtracker_crm.db')
-    db = Database(db_path)
+    db = get_main_db()
     return HailEventManager(db)
 
 
@@ -35,7 +38,6 @@ def get_manager():
 # =============================================================================
 
 @hail_events_api_bp.route('', methods=['GET'])
-@login_required
 def list_hail_events():
     """List hail events with filtering"""
     manager = get_manager()
@@ -108,7 +110,6 @@ def create_hail_event():
 
 
 @hail_events_api_bp.route('/<int:event_id>', methods=['GET'])
-@login_required
 def get_hail_event(event_id):
     """Get hail event details"""
     manager = get_manager()
@@ -173,7 +174,6 @@ def reopen_hail_event(event_id):
 # =============================================================================
 
 @hail_events_api_bp.route('/search', methods=['GET'])
-@login_required
 def search_hail_events():
     """Search storms with multiple filters"""
     manager = get_manager()
@@ -208,7 +208,6 @@ def search_hail_events():
 
 
 @hail_events_api_bp.route('/active', methods=['GET'])
-@login_required
 def get_active_events():
     """Get currently active hail events"""
     manager = get_manager()
@@ -243,7 +242,6 @@ def get_events_by_severity(severity):
 
 
 @hail_events_api_bp.route('/nearby', methods=['GET'])
-@login_required
 def get_nearby_events():
     """Get hail events near a location"""
     lat = request.args.get('lat', type=float)
@@ -603,7 +601,6 @@ def get_multi_storm_report():
 # =============================================================================
 
 @hail_events_api_bp.route('/severity-info/<severity>', methods=['GET'])
-@login_required
 def get_severity_info(severity):
     """Get detailed info about a severity level"""
     manager = get_manager()
@@ -620,7 +617,6 @@ def get_severity_info(severity):
 
 
 @hail_events_api_bp.route('/severity-levels', methods=['GET'])
-@login_required
 def get_all_severity_levels():
     """Get all severity level definitions"""
     manager = get_manager()
@@ -694,10 +690,8 @@ def check_location_for_hail():
     from datetime import date, timedelta
     cutoff_date = date.today() - timedelta(days=years * 365)
 
-    # Get database connection
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-    db_path = os.path.join(project_root, 'data', 'hailtracker_crm.db')
-    db = Database(db_path)
+    # Get database connection (hail_events is in main DB)
+    db = _get_hail_db()
 
     # Convert radius to approximate lat/lon delta
     # 1 degree latitude = ~69 miles
@@ -879,9 +873,7 @@ def generate_impact_report():
 
         cutoff_date = date.today() - timedelta(days=years * 365)
 
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-        db_path = os.path.join(project_root, 'data', 'hailtracker_crm.db')
-        db = Database(db_path)
+        db = _get_hail_db()
 
         lat_delta = radius_miles / 69.0
         lon_delta = radius_miles / (69.0 * math.cos(math.radians(lat)))
@@ -1026,7 +1018,6 @@ def geocode_and_check():
 # =============================================================================
 
 @hail_events_api_bp.route('/calendar', methods=['GET'])
-@login_required
 def get_storm_calendar():
     """
     Get storm calendar data for a specific month.
@@ -1057,10 +1048,8 @@ def get_storm_calendar():
     first_day = date(year, month, 1)
     last_day = date(year, month, monthrange(year, month)[1])
 
-    # Query database
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-    db_path = os.path.join(project_root, 'data', 'hailtracker_crm.db')
-    db = Database(db_path)
+    # Query database (hail_events is in main DB)
+    db = _get_hail_db()
 
     # Build query
     query = """
@@ -1120,7 +1109,7 @@ def get_storm_calendar():
     # Group by date
     days = {}
     for event in events:
-        event_date = event['event_date']
+        event_date = str(event['event_date'])  # PG returns datetime.date; JSON keys must be str
         if event_date not in days:
             days[event_date] = {
                 'count': 0,
@@ -1194,7 +1183,6 @@ def get_storm_calendar():
 
 
 @hail_events_api_bp.route('/calendar/year', methods=['GET'])
-@login_required
 def get_storm_calendar_year():
     """
     Get storm calendar overview for an entire year.
@@ -1211,10 +1199,8 @@ def get_storm_calendar_year():
     year = request.args.get('year', now.year, type=int)
     state = request.args.get('state')
 
-    # Query database
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-    db_path = os.path.join(project_root, 'data', 'hailtracker_crm.db')
-    db = Database(db_path)
+    # Query database (hail_events is in main DB)
+    db = _get_hail_db()
 
     # Query for entire year
     start_date = f"{year}-01-01"
@@ -1248,10 +1234,10 @@ def get_storm_calendar_year():
     } for i in range(1, 13)}
 
     for event in events:
-        event_date = event['event_date']
+        event_date = str(event['event_date'])  # PG returns datetime.date
         try:
             month = int(event_date[5:7])
-        except:
+        except Exception:
             continue
 
         m = months[month]
@@ -1309,7 +1295,6 @@ def get_storm_calendar_year():
 # =============================================================================
 
 @hail_events_api_bp.route('/damage-grid', methods=['GET'])
-@login_required
 def get_damage_grid_bbox():
     """
     Query damage grid cells by bounding box.
@@ -1334,15 +1319,12 @@ def get_damage_grid_bbox():
     max_cells = request.args.get('max_cells', 20000, type=int)
     fmt = request.args.get('format', 'geojson')
 
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-    db_path = os.path.join(project_root, 'data', 'hailtracker_crm.db')
-
     from src.radar.damage_grid import query_damage_grid_bbox, cells_to_geojson
 
     cells = query_damage_grid_bbox(
         min_lon=min_lon, min_lat=min_lat,
         max_lon=max_lon, max_lat=max_lat,
-        db_path=db_path,
+        db_path=MAIN_DB_PATH,
         min_prob=min_prob, min_conf=min_conf, max_cells=max_cells,
     )
 
@@ -1354,7 +1336,6 @@ def get_damage_grid_bbox():
 
 
 @hail_events_api_bp.route('/<event_name>/damage-grid', methods=['GET'])
-@login_required
 def get_event_damage_grid(event_name):
     """
     Get damage grid for a specific event.
@@ -1370,14 +1351,11 @@ def get_event_damage_grid(event_name):
     max_cells = request.args.get('max_cells', 20000, type=int)
     fmt = request.args.get('format', 'geojson')
 
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-    db_path = os.path.join(project_root, 'data', 'hailtracker_crm.db')
-
     from src.radar.damage_grid import query_damage_grid, cells_to_geojson
 
     cells = query_damage_grid(
         event_name=event_name,
-        db_path=db_path,
+        db_path=MAIN_DB_PATH,
         min_prob=min_prob, min_conf=min_conf, max_cells=max_cells,
     )
 

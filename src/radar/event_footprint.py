@@ -14,6 +14,8 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
+from src.db.main_db import MAIN_DB_PATH
+
 logger = logging.getLogger(__name__)
 
 _R_KM = 6371.0
@@ -505,7 +507,7 @@ def _ensure_columns(conn) -> None:
 # ---------------------------------------------------------------------------
 
 def update_event_footprints(
-    db_path: str = 'data/hailtracker_crm.db',
+    db_path: str = MAIN_DB_PATH,
     mrms_cache=None,
     recent_minutes: int = 90,
 ) -> int:

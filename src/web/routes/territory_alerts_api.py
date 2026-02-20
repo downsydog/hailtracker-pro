@@ -12,15 +12,23 @@ from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify
 from src.core.auth.decorators import login_required
 from src.db.database import Database
+from src.db.main_db import get_main_db
 
 territory_alerts_api_bp = Blueprint('territory_alerts_api', __name__, url_prefix='/api/territory-alerts')
 
+# Project root for CRM database path
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+_CRM_DB_PATH = os.path.join(_PROJECT_ROOT, 'data', 'hailtracker_crm.db')
+
 
 def get_db():
-    """Get database connection."""
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-    db_path = os.path.join(project_root, 'data', 'hailtracker_crm.db')
-    return Database(db_path)
+    """Get CRM database connection (user_territories, territory_alerts)."""
+    return Database(_CRM_DB_PATH)
+
+
+def get_hail_db():
+    """Get MAIN database connection (hail_events)."""
+    return get_main_db()
 
 
 def ensure_tables():
@@ -244,29 +252,68 @@ def list_alerts():
 
     ensure_tables()
     db = get_db()
+    hail_db = get_hail_db()
+    from src.db.engine import is_postgres
 
     cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
 
-    query = """
-        SELECT ta.*, ut.name as territory_name,
-               he.event_name, he.event_date, he.max_hail_size,
-               he.center_lat as event_lat, he.center_lon as event_lon,
-               he.affected_locations
-        FROM territory_alerts ta
-        JOIN user_territories ut ON ta.territory_id = ut.id
-        LEFT JOIN hail_events he ON ta.hail_event_id = he.id
-        WHERE ut.user_id = ? AND ta.sent_at >= ?
-    """
+    if is_postgres():
+        # In PG mode all tables are in one database — use a single JOIN
+        query = """
+            SELECT ta.*, ut.name as territory_name,
+                   he.event_name, he.event_date, he.max_hail_size,
+                   he.center_lat as event_lat, he.center_lon as event_lon,
+                   he.affected_locations
+            FROM territory_alerts ta
+            JOIN user_territories ut ON ta.territory_id = ut.id
+            LEFT JOIN hail_events he ON ta.hail_event_id = he.id
+            WHERE ut.user_id = ? AND ta.sent_at >= ?
+        """
+        if unread_only:
+            query += " AND ta.is_read = 0"
+        query += " ORDER BY ta.sent_at DESC LIMIT 100"
+        alerts = db.execute(query, (user_id, cutoff_date))
+    else:
+        # SQLite: hail_events is in main DB, territories in CRM DB.
+        # Fetch alerts + territory name from CRM, then enrich from main DB.
+        query = """
+            SELECT ta.*, ut.name as territory_name
+            FROM territory_alerts ta
+            JOIN user_territories ut ON ta.territory_id = ut.id
+            WHERE ut.user_id = ? AND ta.sent_at >= ?
+        """
+        if unread_only:
+            query += " AND ta.is_read = 0"
+        query += " ORDER BY ta.sent_at DESC LIMIT 100"
+        alerts = db.execute(query, (user_id, cutoff_date))
 
-    if unread_only:
-        query += " AND ta.is_read = 0"
+        # Enrich with hail_events data from main DB
+        event_ids = [a['hail_event_id'] for a in alerts if a.get('hail_event_id')]
+        hail_map = {}
+        if event_ids:
+            ph = ','.join(['?'] * len(event_ids))
+            events = hail_db.execute(f"""
+                SELECT id, event_name, event_date, max_hail_size,
+                       center_lat, center_lon, affected_locations
+                FROM hail_events WHERE id IN ({ph})
+            """, event_ids)
+            hail_map = {e['id']: e for e in events}
 
-    query += " ORDER BY ta.sent_at DESC LIMIT 100"
-
-    alerts = db.execute(query, (user_id, cutoff_date))
+        enriched = []
+        for a in alerts:
+            row = dict(a)
+            he = hail_map.get(row.get('hail_event_id'), {})
+            row['event_name'] = he.get('event_name')
+            row['event_date'] = str(he['event_date']) if he.get('event_date') else None
+            row['max_hail_size'] = he.get('max_hail_size')
+            row['event_lat'] = he.get('center_lat')
+            row['event_lon'] = he.get('center_lon')
+            row['affected_locations'] = he.get('affected_locations')
+            enriched.append(row)
+        alerts = enriched
 
     return jsonify({
-        'alerts': [dict(a) for a in alerts],
+        'alerts': [dict(a) if not isinstance(a, dict) else a for a in alerts],
         'count': len(alerts)
     })
 
@@ -353,10 +400,11 @@ def check_storms_in_territories():
             'alerts_created': 0
         })
 
-    # Get recent hail events
+    # Get recent hail events (hail_events lives in main DB, not CRM)
+    hail_db = get_hail_db()
     cutoff_time = (datetime.now() - timedelta(hours=hours_back)).isoformat()
 
-    events = db.execute("""
+    events = hail_db.execute("""
         SELECT * FROM hail_events
         WHERE created_at >= ? OR event_date >= ?
         ORDER BY event_date DESC

@@ -27,6 +27,9 @@ import os
 import logging
 import sqlite3
 import json
+from src.db.engine import get_raw_connection, is_postgres
+from src.db.main_db import MAIN_DB_PATH
+from src.db.compat import sql
 
 logger = logging.getLogger('FleetLocationsAPI')
 
@@ -1210,21 +1213,33 @@ def get_hail_affected_businesses():
 
         # Try to get recent hail events
         try:
-            import sqlite3
-            hail_db = os.path.join(PROJECT_ROOT, 'data', 'hailtracker_crm.db')
-            conn = sqlite3.connect(hail_db)
-            conn.row_factory = sqlite3.Row
+            if is_postgres():
+                conn = get_raw_connection()
+                cur = conn.cursor()
+                cur.execute('''
+                    SELECT center_lat as lat, center_lon as lon, event_date, max_hail_size
+                    FROM hail_events
+                    WHERE event_date >= CURRENT_DATE + (%s || ' days')::interval
+                    AND center_lat IS NOT NULL
+                    AND center_lon IS NOT NULL
+                ''', (f'-{days}',))
+                hail_events = [dict(h) for h in cur.fetchall()]
+                cur.close()
+                conn.close()
+            else:
+                conn = sqlite3.connect(MAIN_DB_PATH)
+                conn.row_factory = sqlite3.Row
 
-            hail_events = conn.execute('''
-                SELECT center_lat as lat, center_lon as lon, event_date, max_hail_size
-                FROM hail_events
-                WHERE event_date >= date('now', ? || ' days')
-                AND center_lat IS NOT NULL
-                AND center_lon IS NOT NULL
-            ''', (f'-{days}',)).fetchall()
+                hail_events = conn.execute('''
+                    SELECT center_lat as lat, center_lon as lon, event_date, max_hail_size
+                    FROM hail_events
+                    WHERE event_date >= date('now', ? || ' days')
+                    AND center_lat IS NOT NULL
+                    AND center_lon IS NOT NULL
+                ''', (f'-{days}',)).fetchall()
 
-            conn.close()
-            hail_events = [dict(h) for h in hail_events]
+                conn.close()
+                hail_events = [dict(h) for h in hail_events]
 
         except Exception as e:
             logger.warning(f"Could not fetch hail events: {e}")
@@ -1635,32 +1650,44 @@ def tile_discover_businesses():
 
         # Load swath polygons from database
         swaths = []
-        db_path = os.path.join(PROJECT_ROOT, 'data', 'hailtracker_crm.db')
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        placeholders = ','.join('?' * len(event_ids))
-        cursor = conn.execute(f'''
-            SELECT id, event_name, event_date, swath_polygon, max_hail_size
-            FROM hail_events
-            WHERE id IN ({placeholders})
-            AND swath_polygon IS NOT NULL
-        ''', event_ids)
+        if is_postgres():
+            conn = get_raw_connection()
+            cur = conn.cursor()
+            pg_placeholders = ','.join(['%s'] * len(event_ids))
+            cur.execute(f'''
+                SELECT id, event_name, event_date, swath_polygon, max_hail_size
+                FROM hail_events
+                WHERE id IN ({pg_placeholders})
+                AND swath_polygon IS NOT NULL
+            ''', event_ids)
+            rows = cur.fetchall()
+            cur.close()
+            conn.close()
+        else:
+            conn = sqlite3.connect(MAIN_DB_PATH)
+            conn.row_factory = sqlite3.Row
+            placeholders = ','.join('?' * len(event_ids))
+            rows = conn.execute(f'''
+                SELECT id, event_name, event_date, swath_polygon, max_hail_size
+                FROM hail_events
+                WHERE id IN ({placeholders})
+                AND swath_polygon IS NOT NULL
+            ''', event_ids).fetchall()
+            conn.close()
 
-        for row in cursor:
+        for row in rows:
             try:
                 polygon = json.loads(row['swath_polygon'])
                 swaths.append({
                     'event_id': row['id'],
                     'event_name': row['event_name'],
-                    'event_date': row['event_date'],
+                    'event_date': str(row['event_date']),
                     'max_hail_size': row['max_hail_size'],
                     'polygon': polygon,
                     **polygon  # Spread polygon fields for compatibility
                 })
             except Exception as e:
                 logger.debug(f"Skip invalid swath for event {row['id']}: {e}")
-
-        conn.close()
 
         if not swaths:
             return jsonify({
@@ -1796,32 +1823,44 @@ def fast_discover_businesses():
 
         # Load swath polygons from database
         swaths = []
-        db_path = os.path.join(PROJECT_ROOT, 'data', 'hailtracker_crm.db')
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        placeholders = ','.join('?' * len(event_ids))
-        cursor = conn.execute(f'''
-            SELECT id, event_name, event_date, swath_polygon, max_hail_size
-            FROM hail_events
-            WHERE id IN ({placeholders})
-            AND swath_polygon IS NOT NULL
-        ''', event_ids)
+        if is_postgres():
+            conn = get_raw_connection()
+            cur = conn.cursor()
+            pg_placeholders = ','.join(['%s'] * len(event_ids))
+            cur.execute(f'''
+                SELECT id, event_name, event_date, swath_polygon, max_hail_size
+                FROM hail_events
+                WHERE id IN ({pg_placeholders})
+                AND swath_polygon IS NOT NULL
+            ''', event_ids)
+            rows = cur.fetchall()
+            cur.close()
+            conn.close()
+        else:
+            conn = sqlite3.connect(MAIN_DB_PATH)
+            conn.row_factory = sqlite3.Row
+            placeholders = ','.join('?' * len(event_ids))
+            rows = conn.execute(f'''
+                SELECT id, event_name, event_date, swath_polygon, max_hail_size
+                FROM hail_events
+                WHERE id IN ({placeholders})
+                AND swath_polygon IS NOT NULL
+            ''', event_ids).fetchall()
+            conn.close()
 
-        for row in cursor:
+        for row in rows:
             try:
                 polygon = json.loads(row['swath_polygon'])
                 swaths.append({
                     'event_id': row['id'],
                     'event_name': row['event_name'],
-                    'event_date': row['event_date'],
+                    'event_date': str(row['event_date']),
                     'max_hail_size': row['max_hail_size'],
                     'polygon': polygon,
                     **polygon
                 })
             except Exception as e:
                 logger.debug(f"Skip invalid swath for event {row['id']}: {e}")
-
-        conn.close()
 
         if not swaths:
             return jsonify({
@@ -2103,9 +2142,11 @@ def get_email_template_for_business(business_id):
     """Get the best email template for a business, pre-filled with their info."""
     try:
         from src.fleet.email_templates import get_email_template, get_template_for_category
-        import sqlite3
 
-        # Get business from database
+        if is_postgres():
+            return jsonify({'error': 'Business lookup not available in PG mode yet'}), 404
+
+        # Get business from database (SQLite only - business_prospects.db not migrated)
         db_path = os.path.join(PROJECT_ROOT, 'data', 'business_prospects.db')
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
@@ -2193,9 +2234,11 @@ def get_call_script_for_business(business_id):
     """Get the best call script for a business, pre-filled with their info."""
     try:
         from src.fleet.call_scripts import get_call_script, get_script_for_category
-        import sqlite3
 
-        # Get business from database
+        if is_postgres():
+            return jsonify({'error': 'Business lookup not available in PG mode yet'}), 404
+
+        # Get business from database (SQLite only - business_prospects.db not migrated)
         db_path = os.path.join(PROJECT_ROOT, 'data', 'business_prospects.db')
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
@@ -2271,22 +2314,32 @@ def swath_damage_summary():
     min_prob = request.args.get('min_prob', 0.1, type=float)
     limit = request.args.get('limit', 500, type=int)
 
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-    db_path = os.path.join(project_root, 'data', 'hailtracker_crm.db')
-
     try:
         from src.radar.damage_grid import query_damage_grid_bbox, ensure_damage_grid_table
-        ensure_damage_grid_table(db_path)
+        if not is_postgres():
+            ensure_damage_grid_table(MAIN_DB_PATH)
 
         # 1. Get fleet locations in bbox
-        conn = sqlite3.connect(db_path, timeout=10)
-        conn.row_factory = sqlite3.Row
-        locations = conn.execute("""
-            SELECT id, name, lat, lon, category, estimated_vehicles, address, city, state
-            FROM fleet_locations
-            WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?
-            LIMIT ?
-        """, (min_lat, max_lat, min_lon, max_lon, limit)).fetchall()
+        if is_postgres():
+            conn = get_raw_connection()
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT id, name, lat, lon, category, estimated_vehicles, address, city, state
+                FROM fleet_locations
+                WHERE lat BETWEEN %s AND %s AND lon BETWEEN %s AND %s
+                LIMIT %s
+            """, (min_lat, max_lat, min_lon, max_lon, limit))
+            locations = cur.fetchall()
+            cur.close()
+        else:
+            conn = sqlite3.connect(db_path, timeout=10)
+            conn.row_factory = sqlite3.Row
+            locations = conn.execute("""
+                SELECT id, name, lat, lon, category, estimated_vehicles, address, city, state
+                FROM fleet_locations
+                WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?
+                LIMIT ?
+            """, (min_lat, max_lat, min_lon, max_lon, limit)).fetchall()
 
         # 2. Get damage grid cells in bbox
         grid_cells = query_damage_grid_bbox(

@@ -8,7 +8,8 @@ Usage:
     from src.radar.event_persister import persist_tracker_events
 
     # Called after each scan cycle in StormMonitor
-    persist_tracker_events(tracker, db_path='data/hailtracker_crm.db')
+    from src.db.main_db import MAIN_DB_PATH
+    persist_tracker_events(tracker, db_path=MAIN_DB_PATH)
 """
 
 import os
@@ -16,6 +17,8 @@ import json
 import logging
 from datetime import datetime
 from typing import Optional
+
+from src.db.main_db import MAIN_DB_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +48,7 @@ def _ensure_swath_columns(conn, is_pg: bool) -> None:
 
 def persist_tracker_events(
     tracker,
-    db_path: str = 'data/hailtracker_crm.db',
+    db_path: str = MAIN_DB_PATH,
     lookback_minutes: int = 360,
     join_distance_km: float = 25.0,
     buffer_km: float = 3.0,

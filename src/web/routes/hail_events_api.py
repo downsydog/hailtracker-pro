@@ -1369,3 +1369,57 @@ def get_event_damage_grid(event_name):
     geojson['event_name'] = event_name
     geojson['cell_count'] = len(cells)
     return jsonify(geojson)
+
+
+# =============================================================================
+# BUSINESSES IN SWATH (read from swath_businesses cache)
+# =============================================================================
+
+@hail_events_api_bp.route('/<int:event_id>/businesses', methods=['GET'])
+def get_event_businesses(event_id):
+    """
+    Return cached businesses discovered inside this event's hail swath.
+
+    Reads from the swath_businesses cache table in the CRM database.
+    Returns empty list if no businesses have been discovered yet.
+
+    Query params:
+        limit: max results (default 200)
+    """
+    import sqlite3 as _sqlite3
+
+    limit = min(int(request.args.get('limit', 200)), 500)
+
+    # swath_businesses cache lives in the CRM SQLite DB
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))))
+    crm_path = os.path.join(project_root, 'data', 'hailtracker_crm.db')
+
+    try:
+        conn = _sqlite3.connect(crm_path)
+        conn.row_factory = _sqlite3.Row
+        rows = conn.execute(
+            '''SELECT name, category, address, city, state, zip,
+                      phone, website, latitude, longitude,
+                      estimated_vehicles, source
+               FROM swath_businesses
+               WHERE event_id = ? AND in_swath = 1
+               ORDER BY estimated_vehicles DESC
+               LIMIT ?''',
+            (event_id, limit)
+        ).fetchall()
+        conn.close()
+
+        businesses = [dict(r) for r in rows]
+        return jsonify({
+            'event_id': event_id,
+            'businesses': businesses,
+            'count': len(businesses),
+        })
+    except (_sqlite3.OperationalError, FileNotFoundError):
+        # Table or file doesn't exist yet — no businesses discovered
+        return jsonify({
+            'event_id': event_id,
+            'businesses': [],
+            'count': 0,
+        })

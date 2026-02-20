@@ -330,6 +330,53 @@ async function loadMapData() {
     }
 }
 
+function buildPopupHtml(event, maxHail) {
+    const uid = 'biz-' + event.id;
+    return `
+        <div class="popup-header">
+            <strong>${event.event_name || 'Hail Event'}</strong>
+        </div>
+        <div class="popup-body">
+            <p><strong>Date:</strong> ${event.event_date || 'N/A'}</p>
+            <p><strong>Max Hail:</strong> ${maxHail}" diameter</p>
+            <p><strong>Severity:</strong> ${event.severity || 'Unknown'}</p>
+        </div>
+        <div class="popup-actions" style="flex-direction:column">
+            <button onclick="loadBusinesses(${event.id}, '${uid}')"
+                    class="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 w-full text-center">
+                Show Businesses
+            </button>
+            <div id="${uid}" style="max-height:200px;overflow-y:auto"></div>
+        </div>
+    `;
+}
+
+async function loadBusinesses(eventId, containerId) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    el.innerHTML = '<p class="text-xs text-gray-500 py-1">Loading...</p>';
+    try {
+        const data = await api.get('/api/hail-events/' + eventId + '/businesses?limit=50');
+        if (!data.businesses || data.businesses.length === 0) {
+            el.innerHTML = '<p class="text-xs text-gray-400 py-1">No businesses discovered yet.</p>';
+            return;
+        }
+        const rows = data.businesses.map(b => {
+            const phone = b.phone ? `<a href="tel:${b.phone}" class="text-blue-600">${b.phone}</a>` : '';
+            const addr = [b.address, b.city, b.state].filter(Boolean).join(', ');
+            return `<div style="border-bottom:1px solid #e5e7eb;padding:4px 0">
+                <strong class="text-sm">${b.name}</strong>
+                ${b.category ? `<span class="text-xs text-gray-500 ml-1">${b.category}</span>` : ''}
+                ${addr ? `<br><span class="text-xs text-gray-600">${addr}</span>` : ''}
+                ${phone ? `<br>${phone}` : ''}
+            </div>`;
+        }).join('');
+        el.innerHTML = `<p class="text-xs font-medium text-gray-700 pt-2 pb-1">${data.count} businesses</p>${rows}`;
+    } catch (err) {
+        el.innerHTML = '<p class="text-xs text-red-500 py-1">Failed to load businesses.</p>';
+    }
+}
+
 function renderSwaths(events) {
     swathLayer.clearLayers();
 
@@ -349,6 +396,8 @@ function renderSwaths(events) {
             color = '#22c55e'; fillColor = 'rgba(34, 197, 94, 0.3)';
         }
 
+        const popupHtml = buildPopupHtml(event, maxHail);
+
         // If the event has a GeoJSON swath polygon, render it
         if (event.swath_polygon) {
             try {
@@ -357,16 +406,7 @@ function renderSwaths(events) {
                 const layer = L.geoJSON(geojson, {
                     style: { color, fillColor, fillOpacity: 0.4, weight: 2 }
                 });
-                layer.bindPopup(`
-                    <div class="popup-header">
-                        <strong>${event.event_name || 'Hail Event'}</strong>
-                    </div>
-                    <div class="popup-body">
-                        <p><strong>Date:</strong> ${event.event_date || 'N/A'}</p>
-                        <p><strong>Max Hail:</strong> ${maxHail}" diameter</p>
-                        <p><strong>Severity:</strong> ${event.severity || 'Unknown'}</p>
-                    </div>
-                `);
+                layer.bindPopup(popupHtml, { maxWidth: 320, minWidth: 240 });
                 swathLayer.addLayer(layer);
                 return;
             } catch (e) {
@@ -386,16 +426,7 @@ function renderSwaths(events) {
             weight: 2
         });
 
-        circle.bindPopup(`
-            <div class="popup-header">
-                <strong>${event.event_name || 'Hail Event'}</strong>
-            </div>
-            <div class="popup-body">
-                <p><strong>Date:</strong> ${event.event_date || 'N/A'}</p>
-                <p><strong>Max Hail:</strong> ${maxHail}" diameter</p>
-                <p><strong>Severity:</strong> ${event.severity || 'Unknown'}</p>
-            </div>
-        `);
+        circle.bindPopup(popupHtml, { maxWidth: 320, minWidth: 240 });
 
         swathLayer.addLayer(circle);
     });

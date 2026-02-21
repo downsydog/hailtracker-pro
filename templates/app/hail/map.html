@@ -350,6 +350,16 @@ function buildPopupHtml(event, maxHail) {
                     class="px-3 py-1.5 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 w-full text-center mt-1">
                 Run Discovery
             </button>
+            <div style="display:flex;gap:4px;margin-top:4px">
+                <button onclick="convertToLeads(${event.id}, '${uid}')"
+                        class="px-3 py-1.5 text-xs bg-amber-600 text-white rounded-lg hover:bg-amber-700 flex-1 text-center">
+                    Convert to Leads
+                </button>
+                <button onclick="window.open('/api/hail-events/${event.id}/businesses.csv')"
+                        class="px-3 py-1.5 text-xs bg-gray-500 text-white rounded-lg hover:bg-gray-600 flex-1 text-center">
+                    Export CSV
+                </button>
+            </div>
             <div id="${uid}" style="max-height:200px;overflow-y:auto"></div>
         </div>
     `;
@@ -403,6 +413,28 @@ async function runDiscovery(eventId, containerId) {
             el.innerHTML = '<p class="text-xs text-yellow-600 py-1">Permission denied.</p>';
         } else {
             el.innerHTML = '<p class="text-xs text-red-500 py-1">Discovery failed.</p>';
+        }
+    }
+}
+
+async function convertToLeads(eventId, containerId) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    el.innerHTML = '<p class="text-xs text-amber-600 py-1">Converting to leads&hellip;</p>';
+    try {
+        const data = await api.post('/api/hail-events/' + eventId + '/convert-businesses-to-leads', { mode: 'all' });
+        if (data.success) {
+            el.innerHTML = `<p class="text-xs text-green-600 py-1">${data.created} leads created, ${data.skipped} skipped (of ${data.total_processed}).</p>`;
+        } else {
+            el.innerHTML = `<p class="text-xs text-red-500 py-1">${data.error || 'Conversion failed.'}</p>`;
+        }
+    } catch (err) {
+        if (err.status === 401) {
+            el.innerHTML = '<p class="text-xs text-yellow-600 py-1">Login required.</p>';
+        } else if (err.status === 403) {
+            el.innerHTML = '<p class="text-xs text-yellow-600 py-1">Permission denied.</p>';
+        } else {
+            el.innerHTML = '<p class="text-xs text-red-500 py-1">Conversion failed.</p>';
         }
     }
 }

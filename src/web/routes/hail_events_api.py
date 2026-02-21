@@ -1596,3 +1596,262 @@ def discover_event_businesses(event_id):
         'total_cached_count': total_count,
         'source': 'discovery'
     })
+
+
+# =============================================================================
+# CONVERT BUSINESSES TO LEADS
+# =============================================================================
+
+@hail_events_api_bp.route('/<int:event_id>/convert-businesses-to-leads', methods=['POST'])
+@login_required
+@require_any_permission('leads.view_all', 'admin.access')
+def convert_businesses_to_leads(event_id):
+    """
+    Convert discovered swath_businesses into CRM leads.
+
+    Reads cached businesses for this event, deduplicates against existing
+    leads/customers, and creates new lead records via CustomerManager.
+
+    JSON body (all optional):
+        mode: "all" | "top"  (default "all")
+        top_n: int           (default 50, used when mode="top")
+        min_estimated_vehicles: int  (filter, default 0)
+        force: bool          (skip dedup if true, default false)
+
+    Returns:
+        {success, event_id, created, skipped, total_processed}
+    """
+    import sqlite3 as _sqlite3
+    import logging
+
+    logger = logging.getLogger(__name__)
+    body = request.get_json(silent=True) or {}
+    mode = body.get('mode', 'all')
+    top_n = min(int(body.get('top_n', 50)), 500)
+    min_vehicles = int(body.get('min_estimated_vehicles', 0))
+    force = body.get('force', False)
+
+    # 1. Fetch swath_businesses from CRM DB
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))))
+    crm_path = os.path.join(project_root, 'data', 'hailtracker_crm.db')
+
+    try:
+        crm_conn = _sqlite3.connect(crm_path)
+        crm_conn.row_factory = _sqlite3.Row
+
+        query = '''SELECT id, name, category, address, city, state, zip,
+                          phone, website, email, latitude, longitude,
+                          estimated_vehicles, source, storm_date
+                   FROM swath_businesses
+                   WHERE event_id = ? AND in_swath = 1'''
+        params = [event_id]
+
+        if min_vehicles > 0:
+            query += ' AND estimated_vehicles >= ?'
+            params.append(min_vehicles)
+
+        query += ' ORDER BY estimated_vehicles DESC'
+
+        if mode == 'top':
+            query += ' LIMIT ?'
+            params.append(top_n)
+
+        rows = crm_conn.execute(query, params).fetchall()
+        businesses = [dict(r) for r in rows]
+        crm_conn.close()
+    except _sqlite3.OperationalError:
+        return jsonify({
+            'success': False,
+            'error': 'No businesses discovered yet for this event'
+        }), 404
+
+    if not businesses:
+        return jsonify({
+            'success': True,
+            'event_id': event_id,
+            'created': 0,
+            'skipped': 0,
+            'total_processed': 0,
+            'message': 'No businesses match the criteria'
+        })
+
+    # 2. Fetch event metadata from main DB
+    db = get_main_db()
+    event_rows = db.execute(
+        "SELECT event_date, max_hail_size, event_name FROM hail_events WHERE id = ?",
+        (event_id,)
+    )
+    event_meta = event_rows[0] if event_rows else {}
+    storm_date = event_meta.get('event_date', '')
+    max_hail = event_meta.get('max_hail_size', '')
+    event_name = event_meta.get('event_name', '')
+
+    # 3. Instantiate CustomerManager with CRM DB
+    from src.db.database import Database
+    from src.crm.managers.customer_manager import CustomerManager
+
+    crm_db = Database(crm_path)
+    mgr = CustomerManager(crm_db)
+
+    created = 0
+    skipped = 0
+    created_ids = []
+    converted_biz_ids = []
+
+    for biz in businesses:
+        # 4. Dedupe check (unless force=True)
+        if not force:
+            existing = None
+            if biz.get('email'):
+                existing = mgr._find_existing_lead_or_customer(
+                    email=biz['email']
+                )
+            if not existing and biz.get('phone'):
+                existing = mgr._find_existing_lead_or_customer(
+                    phone=biz['phone']
+                )
+            # Fallback: check company_name + city for this event's leads
+            if not existing and biz.get('name'):
+                dupes = crm_db.execute(
+                    "SELECT id FROM leads WHERE company_name = ? "
+                    "AND hail_event_id = ? AND deleted_at IS NULL",
+                    (biz['name'], event_id)
+                )
+                if dupes:
+                    existing = dupes[0]
+
+            if existing:
+                skipped += 1
+                continue
+
+        # 5. Build lead data
+        addr_parts = [biz.get('address', ''), biz.get('city', ''),
+                      biz.get('state', ''), biz.get('zip', '')]
+        full_addr = ', '.join(p for p in addr_parts if p)
+
+        provenance = []
+        if storm_date:
+            provenance.append(f"Storm: {storm_date}")
+        if max_hail:
+            provenance.append(f"Max hail: {max_hail}\"")
+        if event_name:
+            provenance.append(f"Event: {event_name}")
+        if biz.get('category'):
+            provenance.append(f"Category: {biz['category']}")
+        if full_addr:
+            provenance.append(f"Address: {full_addr}")
+        if biz.get('estimated_vehicles'):
+            provenance.append(f"Est. vehicles: {biz['estimated_vehicles']}")
+        if biz.get('website'):
+            provenance.append(f"Website: {biz['website']}")
+
+        lead_data = {
+            'company_name': biz.get('name', ''),
+            'phone': biz.get('phone', ''),
+            'email': biz.get('email', ''),
+            'source': 'HAIL_EVENT',
+            'hail_event_id': event_id,
+            'damage_type': 'HAIL',
+            'notes': ' | '.join(provenance),
+        }
+
+        try:
+            lead_id = mgr.create_lead(lead_data)
+            created += 1
+            created_ids.append(lead_id)
+            converted_biz_ids.append(biz['id'])
+        except Exception as e:
+            logger.warning("Failed to create lead for %s: %s",
+                           biz.get('name', ''), e)
+            skipped += 1
+
+    # 6. Mark converted businesses in swath_businesses cache
+    if converted_biz_ids:
+        try:
+            crm_conn = _sqlite3.connect(crm_path)
+            placeholders = ','.join('?' * len(converted_biz_ids))
+            crm_conn.execute(
+                f'UPDATE swath_businesses SET added_to_crm = 1 '
+                f'WHERE id IN ({placeholders})',
+                converted_biz_ids
+            )
+            crm_conn.commit()
+            crm_conn.close()
+        except _sqlite3.OperationalError:
+            pass
+
+    logger.info(
+        "Event %s: converted %d businesses to leads (%d skipped)",
+        event_id, created, skipped
+    )
+
+    return jsonify({
+        'success': True,
+        'event_id': event_id,
+        'created': created,
+        'skipped': skipped,
+        'total_processed': len(businesses)
+    })
+
+
+# =============================================================================
+# EXPORT BUSINESSES CSV
+# =============================================================================
+
+@hail_events_api_bp.route('/<int:event_id>/businesses.csv', methods=['GET'])
+@login_required
+def export_businesses_csv(event_id):
+    """
+    Export discovered businesses for a hail event as CSV.
+
+    Query params:
+        limit: max rows (default 500)
+
+    Returns: CSV file download.
+    """
+    import csv
+    import io
+    import sqlite3 as _sqlite3
+    from flask import Response
+
+    limit = min(int(request.args.get('limit', 500)), 2000)
+
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))))
+    crm_path = os.path.join(project_root, 'data', 'hailtracker_crm.db')
+
+    columns = ['name', 'category', 'address', 'city', 'state', 'zip',
+               'phone', 'website', 'estimated_vehicles',
+               'latitude', 'longitude', 'source']
+
+    try:
+        conn = _sqlite3.connect(crm_path)
+        conn.row_factory = _sqlite3.Row
+        rows = conn.execute(
+            f'''SELECT {", ".join(columns)}
+                FROM swath_businesses
+                WHERE event_id = ? AND in_swath = 1
+                ORDER BY estimated_vehicles DESC
+                LIMIT ?''',
+            (event_id, limit)
+        ).fetchall()
+        conn.close()
+    except _sqlite3.OperationalError:
+        rows = []
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(columns)
+    for row in rows:
+        writer.writerow([row[c] for c in columns])
+
+    csv_content = output.getvalue()
+    output.close()
+
+    filename = f"businesses_event_{event_id}.csv"
+    return Response(
+        csv_content,
+        mimetype='text/csv',
+        headers={'Content-Disposition': f'attachment; filename={filename}'}
+    )

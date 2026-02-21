@@ -307,7 +307,8 @@ def create_app(config=None):
             query = f"""
                 SELECT id, event_name, event_date, start_time, end_time,
                        center_lat, center_lon, max_hail_size,
-                       severity, status, swath_polygon, confidence_score
+                       severity, status, swath_polygon, confidence_score,
+                       evidence_mrms, evidence_dualpol, evidence_lsr
                 FROM hail_events
                 WHERE {date_filter}
             """
@@ -316,7 +317,8 @@ def create_app(config=None):
             query = f"""
                 SELECT id, event_name, event_date, start_time, end_time,
                        center_lat, center_lon, max_hail_size,
-                       severity, status, swath_polygon, confidence_score
+                       severity, status, swath_polygon, confidence_score,
+                       evidence_mrms, evidence_dualpol, evidence_lsr
                 FROM hail_events
                 WHERE event_date >= date('now', {p})
             """
@@ -362,6 +364,9 @@ def create_app(config=None):
                 'status': r.get('status'),
                 'swath_polygon': r.get('swath_polygon'),
                 'confidence_score': r.get('confidence_score'),
+                'evidence_mrms': bool(r.get('evidence_mrms', 0)),
+                'evidence_dualpol': bool(r.get('evidence_dualpol', 0)),
+                'evidence_lsr': bool(r.get('evidence_lsr', 0)),
             }
             events.append(ev)
 

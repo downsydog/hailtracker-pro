@@ -21,6 +21,48 @@ import os
 hail_events_api_bp = Blueprint('hail_events_api', __name__, url_prefix='/api/hail-events')
 
 
+def _require_confirmed_event(event_id):
+    """
+    No-guess monetization gate: only CONFIRMED events with hard hail
+    evidence are actionable for business discovery, lead conversion,
+    and CSV export.
+
+    Hard evidence = instrumented measurement or verified report:
+      - MRMS MESH (satellite/radar hail product)
+      - Dual-pol hail signature (HCA hydrometeor classification)
+      - Local storm report (human-verified)
+
+    Returns (event_row, None) on success, or (None, error_response) on rejection.
+    """
+    db = get_main_db()
+    rows = db.execute(
+        "SELECT id, status, evidence_mrms, evidence_dualpol, evidence_lsr, "
+        "confidence_score FROM hail_events WHERE id = ?",
+        (event_id,)
+    )
+    if not rows:
+        return None, (jsonify({'success': False, 'error': 'Event not found'}), 404)
+
+    ev = rows[0]
+    status = ev.get('status', 'CANDIDATE')
+    has_mrms = bool(ev.get('evidence_mrms', 0))
+    has_dualpol = bool(ev.get('evidence_dualpol', 0))
+    has_lsr = bool(ev.get('evidence_lsr', 0))
+    has_hard_evidence = has_mrms or has_dualpol or has_lsr
+
+    if status != 'CONFIRMED' or not has_hard_evidence:
+        return None, (jsonify({
+            'success': False,
+            'error': 'Event not confirmed with hard evidence',
+            'code': 'EVENT_NOT_CONFIRMED',
+            'detail': f'status={status}, mrms={has_mrms}, dualpol={has_dualpol}, lsr={has_lsr}',
+            'hint': 'Only CONFIRMED events with MRMS, dual-pol, or LSR evidence '
+                    'are eligible for business discovery and lead conversion.'
+        }), 403)
+
+    return ev, None
+
+
 def _get_hail_db():
     """Get Database instance pointed at the main DB (where hail_events lives)."""
     return get_main_db()
@@ -1450,6 +1492,12 @@ def discover_event_businesses(event_id):
     import logging
 
     logger = logging.getLogger(__name__)
+
+    # Gate: only CONFIRMED events with hard evidence
+    _, gate_err = _require_confirmed_event(event_id)
+    if gate_err:
+        return gate_err
+
     body = request.get_json(silent=True) or {}
     force_refresh = body.get('force_refresh', False)
 
@@ -1625,6 +1673,12 @@ def convert_businesses_to_leads(event_id):
     import logging
 
     logger = logging.getLogger(__name__)
+
+    # Gate: only CONFIRMED events with hard evidence
+    _, gate_err = _require_confirmed_event(event_id)
+    if gate_err:
+        return gate_err
+
     body = request.get_json(silent=True) or {}
     mode = body.get('mode', 'all')
     top_n = min(int(body.get('top_n', 50)), 500)
@@ -1814,6 +1868,11 @@ def export_businesses_csv(event_id):
     import io
     import sqlite3 as _sqlite3
     from flask import Response
+
+    # Gate: only CONFIRMED events with hard evidence
+    _, gate_err = _require_confirmed_event(event_id)
+    if gate_err:
+        return gate_err
 
     limit = min(int(request.args.get('limit', 500)), 2000)
 

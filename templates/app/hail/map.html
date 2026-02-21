@@ -332,20 +332,11 @@ async function loadMapData() {
 
 function buildPopupHtml(event, maxHail) {
     const uid = 'biz-' + event.id;
-    return `
-        <div class="popup-header">
-            <strong>${event.event_name || 'Hail Event'}</strong>
-        </div>
-        <div class="popup-body">
-            <p><strong>Date:</strong> ${event.event_date || 'N/A'}</p>
-            <p><strong>Max Hail:</strong> ${maxHail}" diameter</p>
-            <p><strong>Severity:</strong> ${event.severity || 'Unknown'}</p>
-        </div>
-        <div class="popup-actions" style="flex-direction:column">
-            <button onclick="loadBusinesses(${event.id}, '${uid}')"
-                    class="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 w-full text-center">
-                Show Businesses
-            </button>
+    const isConfirmed = event.status === 'CONFIRMED' && (event.evidence_mrms || event.evidence_dualpol || event.evidence_lsr);
+
+    let actionButtons = '';
+    if (isConfirmed) {
+        actionButtons = `
             <button onclick="runDiscovery(${event.id}, '${uid}')"
                     class="px-3 py-1.5 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 w-full text-center mt-1">
                 Run Discovery
@@ -359,7 +350,32 @@ function buildPopupHtml(event, maxHail) {
                         class="px-3 py-1.5 text-xs bg-gray-500 text-white rounded-lg hover:bg-gray-600 flex-1 text-center">
                     Export CSV
                 </button>
-            </div>
+            </div>`;
+    } else {
+        actionButtons = `
+            <p class="text-xs text-gray-400 italic mt-1">
+                Candidate — awaiting MRMS/LSR confirmation
+            </p>`;
+    }
+
+    return `
+        <div class="popup-header">
+            <strong>${event.event_name || 'Hail Event'}</strong>
+            <span class="text-xs ml-1 px-1.5 py-0.5 rounded ${isConfirmed ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}">
+                ${event.status || 'CANDIDATE'}
+            </span>
+        </div>
+        <div class="popup-body">
+            <p><strong>Date:</strong> ${event.event_date || 'N/A'}</p>
+            <p><strong>Max Hail:</strong> ${maxHail}" diameter</p>
+            <p><strong>Severity:</strong> ${event.severity || 'Unknown'}</p>
+        </div>
+        <div class="popup-actions" style="flex-direction:column">
+            <button onclick="loadBusinesses(${event.id}, '${uid}')"
+                    class="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 w-full text-center">
+                Show Businesses
+            </button>
+            ${actionButtons}
             <div id="${uid}" style="max-height:200px;overflow-y:auto"></div>
         </div>
     `;
@@ -410,7 +426,10 @@ async function runDiscovery(eventId, containerId) {
         if (err.status === 401) {
             el.innerHTML = '<p class="text-xs text-yellow-600 py-1">Login required for discovery.</p>';
         } else if (err.status === 403) {
-            el.innerHTML = '<p class="text-xs text-yellow-600 py-1">Permission denied.</p>';
+            const msg = (err.data && err.data.code === 'EVENT_NOT_CONFIRMED')
+                ? 'Not confirmed — awaiting MRMS/LSR evidence.'
+                : 'Permission denied.';
+            el.innerHTML = `<p class="text-xs text-yellow-600 py-1">${msg}</p>`;
         } else {
             el.innerHTML = '<p class="text-xs text-red-500 py-1">Discovery failed.</p>';
         }
@@ -432,7 +451,10 @@ async function convertToLeads(eventId, containerId) {
         if (err.status === 401) {
             el.innerHTML = '<p class="text-xs text-yellow-600 py-1">Login required.</p>';
         } else if (err.status === 403) {
-            el.innerHTML = '<p class="text-xs text-yellow-600 py-1">Permission denied.</p>';
+            const msg = (err.data && err.data.code === 'EVENT_NOT_CONFIRMED')
+                ? 'Not confirmed — awaiting MRMS/LSR evidence.'
+                : 'Permission denied.';
+            el.innerHTML = `<p class="text-xs text-yellow-600 py-1">${msg}</p>`;
         } else {
             el.innerHTML = '<p class="text-xs text-red-500 py-1">Conversion failed.</p>';
         }

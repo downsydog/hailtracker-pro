@@ -11,6 +11,7 @@ services:
       - DEV_MODE=${DEV_MODE:-false}
       - SECRET_KEY=${SECRET_KEY:?SECRET_KEY is required}
       - ENABLE_MRMS=${ENABLE_MRMS:-true}
+      - HAIL_ACTION_MODE=${HAIL_ACTION_MODE:-truth}
       - MRMS_REFRESH_SECONDS=${MRMS_REFRESH_SECONDS:-120}
       - MRMS_PROVIDER=${MRMS_PROVIDER:-aws}
       - DATABASE_URL=postgresql://hailtracker:${POSTGRES_PASSWORD:-hailtracker_dev}@postgres:5432/hailtracker

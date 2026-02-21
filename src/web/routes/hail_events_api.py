@@ -21,19 +21,27 @@ import os
 hail_events_api_bp = Blueprint('hail_events_api', __name__, url_prefix='/api/hail-events')
 
 
-def _require_confirmed_event(event_id):
-    """
-    No-guess monetization gate: only CONFIRMED events with hard hail
-    evidence are actionable for business discovery, lead conversion,
-    and CSV export.
+def _get_action_mode():
+    """Return the actionability mode from env: 'truth' or 'instrument'."""
+    mode = os.environ.get('HAIL_ACTION_MODE', 'truth').lower().strip()
+    return mode if mode in ('truth', 'instrument') else 'truth'
 
-    Hard evidence = instrumented measurement or verified report:
-      - MRMS MESH (satellite/radar hail product)
-      - Dual-pol hail signature (HCA hydrometeor classification)
-      - Local storm report (human-verified)
+
+def _require_actionable_event(event_id):
+    """
+    Dual-mode actionability gate for monetization endpoints.
+
+    Mode 'truth' (default):
+        Requires CONFIRMED + (MRMS or LSR) — verified evidence only.
+    Mode 'instrument':
+        Requires CONFIRMED + (MRMS or LSR or dual-pol) — any instrumented evidence.
+
+    Env var: HAIL_ACTION_MODE=truth|instrument  (default: truth)
 
     Returns (event_row, None) on success, or (None, error_response) on rejection.
     """
+    mode = _get_action_mode()
+
     db = get_main_db()
     rows = db.execute(
         "SELECT id, status, evidence_mrms, evidence_dualpol, evidence_lsr, "
@@ -48,17 +56,45 @@ def _require_confirmed_event(event_id):
     has_mrms = bool(ev.get('evidence_mrms', 0))
     has_dualpol = bool(ev.get('evidence_dualpol', 0))
     has_lsr = bool(ev.get('evidence_lsr', 0))
-    has_hard_evidence = has_mrms or has_dualpol or has_lsr
 
-    if status != 'CONFIRMED' or not has_hard_evidence:
+    # Status gate — must be CONFIRMED regardless of mode
+    if status != 'CONFIRMED':
         return None, (jsonify({
             'success': False,
-            'error': 'Event not confirmed with hard evidence',
-            'code': 'EVENT_NOT_CONFIRMED',
-            'detail': f'status={status}, mrms={has_mrms}, dualpol={has_dualpol}, lsr={has_lsr}',
-            'hint': 'Only CONFIRMED events with MRMS, dual-pol, or LSR evidence '
-                    'are eligible for business discovery and lead conversion.'
+            'code': 'EVENT_NOT_ACTIONABLE',
+            'mode': mode,
+            'status': status,
+            'evidence': {'mrms': has_mrms, 'lsr': has_lsr, 'dualpol': has_dualpol},
+            'error': 'Event is not confirmed — still a candidate.',
+            'hint': 'This event needs MRMS MESH or LSR confirmation before it becomes actionable.'
         }), 403)
+
+    # Evidence gate — depends on mode
+    if mode == 'truth':
+        actionable = has_mrms or has_lsr
+        if not actionable:
+            return None, (jsonify({
+                'success': False,
+                'code': 'EVENT_NOT_ACTIONABLE',
+                'mode': mode,
+                'status': status,
+                'evidence': {'mrms': has_mrms, 'lsr': has_lsr, 'dualpol': has_dualpol},
+                'error': 'Verified mode: requires MRMS or LSR evidence.',
+                'hint': 'This event is confirmed by dual-pol radar only. '
+                        'Switch to instrument mode or wait for MRMS/LSR verification.'
+            }), 403)
+    else:  # instrument
+        actionable = has_mrms or has_lsr or has_dualpol
+        if not actionable:
+            return None, (jsonify({
+                'success': False,
+                'code': 'EVENT_NOT_ACTIONABLE',
+                'mode': mode,
+                'status': status,
+                'evidence': {'mrms': has_mrms, 'lsr': has_lsr, 'dualpol': has_dualpol},
+                'error': 'Instrument mode: requires MRMS, LSR, or dual-pol evidence.',
+                'hint': 'This confirmed event has no instrumented evidence yet.'
+            }), 403)
 
     return ev, None
 
@@ -1494,7 +1530,7 @@ def discover_event_businesses(event_id):
     logger = logging.getLogger(__name__)
 
     # Gate: only CONFIRMED events with hard evidence
-    _, gate_err = _require_confirmed_event(event_id)
+    _, gate_err = _require_actionable_event(event_id)
     if gate_err:
         return gate_err
 
@@ -1675,7 +1711,7 @@ def convert_businesses_to_leads(event_id):
     logger = logging.getLogger(__name__)
 
     # Gate: only CONFIRMED events with hard evidence
-    _, gate_err = _require_confirmed_event(event_id)
+    _, gate_err = _require_actionable_event(event_id)
     if gate_err:
         return gate_err
 
@@ -1870,7 +1906,7 @@ def export_businesses_csv(event_id):
     from flask import Response
 
     # Gate: only CONFIRMED events with hard evidence
-    _, gate_err = _require_confirmed_event(event_id)
+    _, gate_err = _require_actionable_event(event_id)
     if gate_err:
         return gate_err
 

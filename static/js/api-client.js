@@ -11,6 +11,7 @@ const api = {
         if (!resp.ok) {
             const err = new Error(`API ${resp.status}`);
             err.status = resp.status;
+            try { err.data = await resp.json(); } catch (_) {}
             throw err;
         }
         return resp.json();

@@ -290,6 +290,7 @@ async function loadMapData() {
     try {
         const eventsResponse = await api.get('/api/events?limit=50');
         hailEvents = eventsResponse.events || eventsResponse || [];
+        window._hailActionMode = eventsResponse.action_mode || 'truth';
         renderSwaths(hailEvents);
     } catch (error) {
         console.warn('Failed to load hail events:', error);
@@ -332,8 +333,22 @@ async function loadMapData() {
 
 function buildPopupHtml(event, maxHail) {
     const uid = 'biz-' + event.id;
-    const isConfirmed = event.status === 'CONFIRMED' && (event.evidence_mrms || event.evidence_dualpol || event.evidence_lsr);
+    const isConfirmed = event.status === 'CONFIRMED';
 
+    // Evidence labels
+    const evidenceTags = [];
+    if (event.evidence_mrms) evidenceTags.push('<span class="text-xs px-1 py-0.5 bg-green-100 text-green-700 rounded">MRMS Verified</span>');
+    if (event.evidence_lsr)  evidenceTags.push('<span class="text-xs px-1 py-0.5 bg-green-100 text-green-700 rounded">LSR Verified</span>');
+    if (event.evidence_dualpol) evidenceTags.push('<span class="text-xs px-1 py-0.5 bg-blue-100 text-blue-700 rounded">Radar-confirmed</span>');
+    const evidenceHtml = evidenceTags.length ? evidenceTags.join(' ') : '<span class="text-xs text-gray-400">No evidence</span>';
+
+    // Mode badge (set by loadMapData from API response)
+    const mode = window._hailActionMode || 'truth';
+    const modeBadge = mode === 'truth'
+        ? '<span class="text-xs px-1.5 py-0.5 bg-emerald-50 text-emerald-700 rounded border border-emerald-200">Verified mode</span>'
+        : '<span class="text-xs px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded border border-blue-200">Instrument mode</span>';
+
+    // Show action buttons for CONFIRMED events; server gate enforces evidence requirements
     let actionButtons = '';
     if (isConfirmed) {
         actionButtons = `
@@ -354,21 +369,23 @@ function buildPopupHtml(event, maxHail) {
     } else {
         actionButtons = `
             <p class="text-xs text-gray-400 italic mt-1">
-                Candidate — awaiting MRMS/LSR confirmation
+                Candidate — awaiting confirmation
             </p>`;
     }
 
     return `
-        <div class="popup-header">
+        <div class="popup-header" style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
             <strong>${event.event_name || 'Hail Event'}</strong>
-            <span class="text-xs ml-1 px-1.5 py-0.5 rounded ${isConfirmed ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}">
+            <span class="text-xs px-1.5 py-0.5 rounded ${isConfirmed ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}">
                 ${event.status || 'CANDIDATE'}
             </span>
+            ${modeBadge}
         </div>
         <div class="popup-body">
             <p><strong>Date:</strong> ${event.event_date || 'N/A'}</p>
             <p><strong>Max Hail:</strong> ${maxHail}" diameter</p>
             <p><strong>Severity:</strong> ${event.severity || 'Unknown'}</p>
+            <p style="margin-top:2px">${evidenceHtml}</p>
         </div>
         <div class="popup-actions" style="flex-direction:column">
             <button onclick="loadBusinesses(${event.id}, '${uid}')"
@@ -425,11 +442,11 @@ async function runDiscovery(eventId, containerId) {
     } catch (err) {
         if (err.status === 401) {
             el.innerHTML = '<p class="text-xs text-yellow-600 py-1">Login required for discovery.</p>';
+        } else if (err.status === 403 && err.data && err.data.code === 'EVENT_NOT_ACTIONABLE') {
+            const hint = err.data.hint ? `<br><span class="text-gray-400">${err.data.hint}</span>` : '';
+            el.innerHTML = `<p class="text-xs text-yellow-600 py-1">${err.data.error}${hint}</p>`;
         } else if (err.status === 403) {
-            const msg = (err.data && err.data.code === 'EVENT_NOT_CONFIRMED')
-                ? 'Not confirmed — awaiting MRMS/LSR evidence.'
-                : 'Permission denied.';
-            el.innerHTML = `<p class="text-xs text-yellow-600 py-1">${msg}</p>`;
+            el.innerHTML = '<p class="text-xs text-yellow-600 py-1">Permission denied.</p>';
         } else {
             el.innerHTML = '<p class="text-xs text-red-500 py-1">Discovery failed.</p>';
         }
@@ -450,11 +467,11 @@ async function convertToLeads(eventId, containerId) {
     } catch (err) {
         if (err.status === 401) {
             el.innerHTML = '<p class="text-xs text-yellow-600 py-1">Login required.</p>';
+        } else if (err.status === 403 && err.data && err.data.code === 'EVENT_NOT_ACTIONABLE') {
+            const hint = err.data.hint ? `<br><span class="text-gray-400">${err.data.hint}</span>` : '';
+            el.innerHTML = `<p class="text-xs text-yellow-600 py-1">${err.data.error}${hint}</p>`;
         } else if (err.status === 403) {
-            const msg = (err.data && err.data.code === 'EVENT_NOT_CONFIRMED')
-                ? 'Not confirmed — awaiting MRMS/LSR evidence.'
-                : 'Permission denied.';
-            el.innerHTML = `<p class="text-xs text-yellow-600 py-1">${msg}</p>`;
+            el.innerHTML = '<p class="text-xs text-yellow-600 py-1">Permission denied.</p>';
         } else {
             el.innerHTML = '<p class="text-xs text-red-500 py-1">Conversion failed.</p>';
         }

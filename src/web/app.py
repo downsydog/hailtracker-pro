@@ -370,9 +370,14 @@ def create_app(config=None):
             }
             events.append(ev)
 
+        action_mode = os.environ.get('HAIL_ACTION_MODE', 'truth').lower().strip()
+        if action_mode not in ('truth', 'instrument'):
+            action_mode = 'truth'
+
         return jsonify({
             'events': events,
             'count': len(events),
+            'action_mode': action_mode,
             'filters': {
                 'days': days,
                 'min_size': min_size,

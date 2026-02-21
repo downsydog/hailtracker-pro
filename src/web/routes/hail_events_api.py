@@ -14,7 +14,7 @@ Endpoints:
 
 from flask import Blueprint, request, jsonify
 from datetime import datetime, date, timedelta
-from src.core.auth.decorators import login_required
+from src.core.auth.decorators import login_required, require_any_permission
 from src.db.main_db import get_main_db, MAIN_DB_PATH
 import os
 
@@ -1423,3 +1423,176 @@ def get_event_businesses(event_id):
             'businesses': [],
             'count': 0,
         })
+
+
+# =============================================================================
+# DISCOVER BUSINESSES (run OSM discovery into swath_businesses cache)
+# =============================================================================
+
+@hail_events_api_bp.route('/<int:event_id>/discover-businesses', methods=['POST'])
+@login_required
+@require_any_permission('leads.view_all', 'admin.access')
+def discover_event_businesses(event_id):
+    """
+    Run business discovery for a hail event's swath area.
+
+    Fetches the event from the main DB (PG or SQLite), runs OSM discovery,
+    filters by point-in-polygon, and caches results in the CRM DB.
+
+    JSON body (all optional):
+        force_refresh: bool  — re-run even if cache exists (default false)
+
+    Returns:
+        {success, event_id, discovered_count, total_cached_count}
+    """
+    import json
+    import sqlite3 as _sqlite3
+    import logging
+
+    logger = logging.getLogger(__name__)
+    body = request.get_json(silent=True) or {}
+    force_refresh = body.get('force_refresh', False)
+
+    # 1. Fetch event from main DB (works with both PG and SQLite)
+    db = get_main_db()
+    rows = db.execute(
+        "SELECT id, event_name, event_date, center_lat, center_lon, "
+        "max_hail_size, swath_polygon FROM hail_events WHERE id = ?",
+        (event_id,)
+    )
+
+    if not rows:
+        return jsonify({'success': False, 'error': 'Event not found'}), 404
+
+    event = rows[0]
+    center_lat = event.get('center_lat')
+    center_lon = event.get('center_lon')
+
+    if not center_lat or not center_lon:
+        return jsonify({
+            'success': False,
+            'error': 'Event missing center coordinates'
+        }), 400
+
+    # 2. Check CRM cache
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))))
+    crm_path = os.path.join(project_root, 'data', 'hailtracker_crm.db')
+
+    try:
+        crm_conn = _sqlite3.connect(crm_path)
+        cached_count = crm_conn.execute(
+            'SELECT COUNT(*) FROM swath_businesses WHERE event_id = ?',
+            (event_id,)
+        ).fetchone()[0]
+        crm_conn.close()
+    except _sqlite3.OperationalError:
+        cached_count = 0
+
+    if cached_count > 0 and not force_refresh:
+        return jsonify({
+            'success': True,
+            'event_id': event_id,
+            'discovered_count': 0,
+            'total_cached_count': cached_count,
+            'source': 'cache'
+        })
+
+    # 3. Initialize discovery service (CRM path only — we skip hail DB read)
+    from src.business.swath_discovery import SwathDiscoveryService
+    service = SwathDiscoveryService(crm_db_path=crm_path)
+
+    # 4. Build swath polygon from event data
+    polygon = None
+    raw_polygon = event.get('swath_polygon')
+    if raw_polygon:
+        try:
+            geojson = json.loads(raw_polygon) if isinstance(raw_polygon, str) else raw_polygon
+            if geojson and geojson.get('type') == 'Polygon':
+                polygon = geojson
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    max_hail = float(event.get('max_hail_size') or 1.0)
+    if polygon is None:
+        radius_miles = max(2.0, max_hail * 2.5)
+        polygon = service._create_circle_polygon(
+            float(center_lat), float(center_lon), radius_miles
+        )
+
+    # 5. Calculate search radius
+    search_area = service.get_swath_search_area(polygon)
+    if search_area:
+        _, _, radius_miles = search_area
+    else:
+        radius_miles = max(2.0, max_hail * 2.5)
+
+    # Add small buffer for edge businesses
+    search_radius = radius_miles + 1.0
+
+    # 6. Run OSM discovery (free, unlimited, no API key needed)
+    logger.info(
+        "Running OSM discovery for event %s at (%.4f, %.4f) radius %.1f mi",
+        event_id, float(center_lat), float(center_lon), search_radius
+    )
+    try:
+        businesses = service.search_osm_comprehensive(
+            float(center_lat), float(center_lon), search_radius
+        )
+    except Exception as e:
+        logger.error("OSM discovery failed for event %s: %s", event_id, e)
+        return jsonify({
+            'success': False,
+            'error': f'Discovery failed: {str(e)}'
+        }), 500
+
+    # 7. Point-in-polygon filter
+    in_swath = [
+        b for b in businesses
+        if service.point_in_polygon(
+            float(b.get('latitude', 0)),
+            float(b.get('longitude', 0)),
+            polygon
+        )
+    ]
+
+    logger.info(
+        "Event %s: %d OSM results, %d in swath",
+        event_id, len(businesses), len(in_swath)
+    )
+
+    # 8. Clear old cache if force_refresh
+    if force_refresh and cached_count > 0:
+        try:
+            crm_conn = _sqlite3.connect(crm_path)
+            crm_conn.execute(
+                'DELETE FROM swath_businesses WHERE event_id = ?',
+                (event_id,)
+            )
+            crm_conn.commit()
+            crm_conn.close()
+        except _sqlite3.OperationalError:
+            pass
+
+    # 9. Save to cache
+    storm_date = event.get('event_date', '')
+    service._save_businesses_to_cache(in_swath, event_id, storm_date)
+
+    # 10. Get final cached count
+    try:
+        crm_conn = _sqlite3.connect(crm_path)
+        total_count = crm_conn.execute(
+            'SELECT COUNT(*) FROM swath_businesses WHERE event_id = ?',
+            (event_id,)
+        ).fetchone()[0]
+        crm_conn.close()
+    except _sqlite3.OperationalError:
+        total_count = len(in_swath)
+
+    return jsonify({
+        'success': True,
+        'event_id': event_id,
+        'discovered_count': len(in_swath),
+        'total_cached_count': total_count,
+        'source': 'discovery'
+    })

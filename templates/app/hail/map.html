@@ -346,6 +346,10 @@ function buildPopupHtml(event, maxHail) {
                     class="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 w-full text-center">
                 Show Businesses
             </button>
+            <button onclick="runDiscovery(${event.id}, '${uid}')"
+                    class="px-3 py-1.5 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 w-full text-center mt-1">
+                Run Discovery
+            </button>
             <div id="${uid}" style="max-height:200px;overflow-y:auto"></div>
         </div>
     `;
@@ -374,6 +378,32 @@ async function loadBusinesses(eventId, containerId) {
         el.innerHTML = `<p class="text-xs font-medium text-gray-700 pt-2 pb-1">${data.count} businesses</p>${rows}`;
     } catch (err) {
         el.innerHTML = '<p class="text-xs text-red-500 py-1">Failed to load businesses.</p>';
+    }
+}
+
+async function runDiscovery(eventId, containerId) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    el.innerHTML = '<p class="text-xs text-blue-600 py-1">Discovering businesses&hellip; this may take a moment.</p>';
+    try {
+        const data = await api.post('/api/hail-events/' + eventId + '/discover-businesses', {});
+        if (data.success) {
+            const msg = data.source === 'cache'
+                ? `${data.total_cached_count} businesses already cached.`
+                : `Found ${data.discovered_count} businesses (${data.total_cached_count} total).`;
+            el.innerHTML = `<p class="text-xs text-green-600 py-1">${msg}</p>`;
+            setTimeout(() => loadBusinesses(eventId, containerId), 500);
+        } else {
+            el.innerHTML = `<p class="text-xs text-red-500 py-1">${data.error || 'Discovery failed.'}</p>`;
+        }
+    } catch (err) {
+        if (err.status === 401) {
+            el.innerHTML = '<p class="text-xs text-yellow-600 py-1">Login required for discovery.</p>';
+        } else if (err.status === 403) {
+            el.innerHTML = '<p class="text-xs text-yellow-600 py-1">Permission denied.</p>';
+        } else {
+            el.innerHTML = '<p class="text-xs text-red-500 py-1">Discovery failed.</p>';
+        }
     }
 }
 

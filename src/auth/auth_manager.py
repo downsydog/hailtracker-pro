@@ -4,6 +4,8 @@ Handles user authentication, sessions, and permissions
 """
 
 import sqlite3
+from src.db.engine import get_raw_connection, is_postgres
+from src.db.compat import sql
 import bcrypt
 import secrets
 from datetime import datetime, timedelta
@@ -16,10 +18,13 @@ class AuthManager:
 
     def __init__(self, db_path='data/hailtracker_crm.db'):
         self.db_path = db_path
-        self._ensure_auth_tables()
+        if not is_postgres():
+            self._ensure_auth_tables()
 
     def _ensure_auth_tables(self):
         """Create auth tables if they don't exist"""
+        if is_postgres():
+            return
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
 
         conn = sqlite3.connect(self.db_path)
@@ -59,17 +64,19 @@ class AuthManager:
         admin_password = 'admin123'
         password_hash = bcrypt.hashpw(admin_password.encode('utf-8'), bcrypt.gensalt())
 
-        cursor.execute("""
+        cursor.execute(sql.adapt("""
             UPDATE users
             SET password_hash = ?
             WHERE username = 'admin'
-        """, (password_hash.decode('utf-8'),))
+        """), (password_hash.decode('utf-8'),))
 
         conn.commit()
         conn.close()
 
     def get_connection(self):
         """Get database connection"""
+        if is_postgres():
+            return get_raw_connection()
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         return conn
@@ -90,12 +97,19 @@ class AuthManager:
             conn = self.get_connection()
             cursor = conn.cursor()
 
-            cursor.execute("""
-                INSERT INTO users (email, username, password_hash, full_name, role, company_id)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (email, username, password_hash.decode('utf-8'), full_name, role, company_id))
+            if is_postgres():
+                cursor.execute(sql.adapt("""
+                    INSERT INTO users (email, username, password_hash, full_name, role, company_id)
+                    VALUES (?, ?, ?, ?, ?, ?) RETURNING id
+                """), (email, username, password_hash.decode('utf-8'), full_name, role, company_id))
+                user_id = cursor.fetchone()['id']
+            else:
+                cursor.execute(sql.adapt("""
+                    INSERT INTO users (email, username, password_hash, full_name, role, company_id)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """), (email, username, password_hash.decode('utf-8'), full_name, role, company_id))
+                user_id = cursor.lastrowid
 
-            user_id = cursor.lastrowid
             conn.commit()
             conn.close()
 
@@ -103,7 +117,7 @@ class AuthManager:
 
             return user_id
 
-        except sqlite3.IntegrityError as e:
+        except Exception as e:
             print(f"User creation failed: {e}")
             return None
 
@@ -114,10 +128,10 @@ class AuthManager:
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(sql.adapt("""
             SELECT * FROM users
-            WHERE (username = ? OR email = ?) AND active = 1
-        """, (username_or_email, username_or_email))
+            WHERE (username = ? OR email = ?) AND active = TRUE
+        """), (username_or_email, username_or_email))
 
         user = cursor.fetchone()
 
@@ -130,12 +144,12 @@ class AuthManager:
         # Verify password
         if bcrypt.checkpw(password.encode('utf-8'), user['password_hash'].encode('utf-8')):
             # Update login stats
-            cursor.execute("""
+            cursor.execute(sql.adapt("""
                 UPDATE users
                 SET last_login = CURRENT_TIMESTAMP,
                     login_count = login_count + 1
                 WHERE id = ?
-            """, (user['id'],))
+            """), (user['id'],))
 
             conn.commit()
             conn.close()
@@ -156,7 +170,7 @@ class AuthManager:
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+        cursor.execute(sql.adapt("SELECT * FROM users WHERE id = ?"), (user_id,))
         user = cursor.fetchone()
         conn.close()
 
@@ -168,7 +182,7 @@ class AuthManager:
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
+        cursor.execute(sql.adapt("SELECT * FROM users WHERE email = ?"), (email,))
         user = cursor.fetchone()
         conn.close()
 
@@ -195,11 +209,11 @@ class AuthManager:
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute(f"""
+        cursor.execute(sql.adapt(f"""
             UPDATE users
             SET {', '.join(updates)}
             WHERE id = ?
-        """, values)
+        """), values)
 
         conn.commit()
         conn.close()
@@ -224,11 +238,11 @@ class AuthManager:
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(sql.adapt("""
             UPDATE users
             SET password_hash = ?
             WHERE id = ?
-        """, (new_hash.decode('utf-8'), user_id))
+        """), (new_hash.decode('utf-8'), user_id))
 
         conn.commit()
         conn.close()
@@ -250,12 +264,12 @@ class AuthManager:
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(sql.adapt("""
             UPDATE users
             SET reset_token = ?,
                 reset_token_expires = ?
             WHERE id = ?
-        """, (token, expires.isoformat(), user['id']))
+        """), (token, expires.isoformat(), user['id']))
 
         conn.commit()
         conn.close()
@@ -271,11 +285,11 @@ class AuthManager:
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(sql.adapt("""
             SELECT * FROM users
             WHERE reset_token = ?
             AND reset_token_expires > ?
-        """, (token, datetime.now().isoformat()))
+        """), (token, datetime.now().isoformat()))
 
         user = cursor.fetchone()
 
@@ -285,13 +299,13 @@ class AuthManager:
 
         new_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt())
 
-        cursor.execute("""
+        cursor.execute(sql.adapt("""
             UPDATE users
             SET password_hash = ?,
                 reset_token = NULL,
                 reset_token_expires = NULL
             WHERE id = ?
-        """, (new_hash.decode('utf-8'), user['id']))
+        """), (new_hash.decode('utf-8'), user['id']))
 
         conn.commit()
         conn.close()
@@ -319,10 +333,10 @@ class AuthManager:
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(sql.adapt("""
             SELECT allowed FROM permissions
             WHERE role = ? AND resource = ? AND action = ?
-        """, (user['role'], resource, action))
+        """), (user['role'], resource, action))
 
         result = cursor.fetchone()
         conn.close()
@@ -341,13 +355,13 @@ class AuthManager:
 
         # Get permission names by joining through role_permissions
         # The user's role field contains the role name (e.g., 'admin')
-        cursor.execute("""
+        cursor.execute(sql.adapt("""
             SELECT p.name
             FROM permissions p
             JOIN role_permissions rp ON rp.permission_id = p.id
             JOIN roles r ON r.id = rp.role_id
             WHERE r.name = ?
-        """, (user['role'],))
+        """), (user['role'],))
 
         permissions = cursor.fetchall()
         conn.close()
@@ -367,10 +381,18 @@ class AuthManager:
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("""
-            INSERT INTO audit_log (user_id, action, resource_type, resource_id, details, ip_address)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (user_id, action, resource_type, resource_id, details, ip_address))
+        if is_postgres():
+            # PG table is audit_logs with columns: description, metadata
+            meta = f'{resource_type}:{resource_id}' if resource_type else None
+            cursor.execute("""
+                INSERT INTO audit_logs (user_id, action, description, metadata, ip_address)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (user_id, action, details, meta, ip_address))
+        else:
+            cursor.execute("""
+                INSERT INTO audit_log (user_id, action, resource_type, resource_id, details, ip_address)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (user_id, action, resource_type, resource_id, details, ip_address))
 
         conn.commit()
         conn.close()
@@ -381,19 +403,26 @@ class AuthManager:
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        if user_id:
-            cursor.execute("""
-                SELECT * FROM audit_log
-                WHERE user_id = ?
-                ORDER BY timestamp DESC
-                LIMIT ?
-            """, (user_id, limit))
+        if is_postgres():
+            table = 'audit_logs'
+            ts_col = 'created_at'
         else:
-            cursor.execute("""
-                SELECT * FROM audit_log
-                ORDER BY timestamp DESC
+            table = 'audit_log'
+            ts_col = 'timestamp'
+
+        if user_id:
+            cursor.execute(sql.adapt(f"""
+                SELECT * FROM {table}
+                WHERE user_id = ?
+                ORDER BY {ts_col} DESC
                 LIMIT ?
-            """, (limit,))
+            """), (user_id, limit))
+        else:
+            cursor.execute(sql.adapt(f"""
+                SELECT * FROM {table}
+                ORDER BY {ts_col} DESC
+                LIMIT ?
+            """), (limit,))
 
         logs = cursor.fetchall()
         conn.close()
@@ -410,12 +439,12 @@ class AuthManager:
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(sql.adapt("""
             SELECT id, email, username, full_name, role, active, created_at, last_login, login_count, company_id
             FROM users
             WHERE company_id = ?
             ORDER BY created_at DESC
-        """, (company_id,))
+        """), (company_id,))
 
         users = cursor.fetchall()
         conn.close()
@@ -429,18 +458,18 @@ class AuthManager:
         cursor = conn.cursor()
 
         if active_only:
-            cursor.execute("""
+            cursor.execute(sql.adapt("""
                 SELECT id, email, username, full_name, role, active, created_at, last_login
                 FROM users
-                WHERE active = 1
+                WHERE active = TRUE
                 ORDER BY created_at DESC
-            """)
+            """))
         else:
-            cursor.execute("""
+            cursor.execute(sql.adapt("""
                 SELECT id, email, username, full_name, role, active, created_at, last_login
                 FROM users
                 ORDER BY created_at DESC
-            """)
+            """))
 
         users = cursor.fetchall()
         conn.close()
@@ -453,11 +482,11 @@ class AuthManager:
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(sql.adapt("""
             UPDATE users
-            SET active = 0
+            SET active = FALSE
             WHERE id = ?
-        """, (user_id,))
+        """), (user_id,))
 
         conn.commit()
         conn.close()
@@ -473,11 +502,11 @@ class AuthManager:
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(sql.adapt("""
             UPDATE users
-            SET active = 1
+            SET active = TRUE
             WHERE id = ?
-        """, (user_id,))
+        """), (user_id,))
 
         conn.commit()
         conn.close()

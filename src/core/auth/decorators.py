@@ -71,6 +71,10 @@ def require_permission(permission: str):
                     }), 401
                 return redirect(url_for('auth.login', next=request.url))
 
+            # Admin bypasses all permission checks
+            if g.current_user.get('role') == 'admin':
+                return f(*args, **kwargs)
+
             user_perms = g.current_user.get('permissions', [])
             if permission not in user_perms:
                 if request.is_json or request.path.startswith('/api/'):
@@ -109,6 +113,10 @@ def require_any_permission(*permissions):
                     }), 401
                 return redirect(url_for('auth.login', next=request.url))
 
+            # Admin bypasses all permission checks
+            if g.current_user.get('role') == 'admin':
+                return f(*args, **kwargs)
+
             user_perms = set(g.current_user.get('permissions', []))
             if not user_perms.intersection(set(permissions)):
                 if request.is_json or request.path.startswith('/api/'):
@@ -146,6 +154,10 @@ def require_all_permissions(*permissions):
                         'code': 'AUTH_REQUIRED'
                     }), 401
                 return redirect(url_for('auth.login', next=request.url))
+
+            # Admin bypasses all permission checks
+            if g.current_user.get('role') == 'admin':
+                return f(*args, **kwargs)
 
             user_perms = set(g.current_user.get('permissions', []))
             missing = set(permissions) - user_perms

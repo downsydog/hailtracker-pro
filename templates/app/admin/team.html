@@ -1,0 +1,897 @@
+{% extends 'layouts/base_app.html' %}
+{% from 'components/ui/_page_header.html' import page_header %}
+{% from 'components/ui/_stat_card.html' import stat_card, stat_card_grid %}
+{% from 'components/ui/_datatable.html' import datatable %}
+{% from 'components/ui/_drawer.html' import drawer, drawer_trigger %}
+{% from 'components/ui/_form_field.html' import form_field, form_group %}
+{% from 'components/ui/_empty_state.html' import empty_state %}
+
+{% block title %}Team Management - HailTracker Pro{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Page Header -->
+    {{ page_header(
+        title='Team Management',
+        subtitle='Manage users, roles, and permissions',
+        breadcrumbs=[
+            {'label': 'Dashboard', 'url': '/app/dashboard'},
+            {'label': 'Admin', 'url': '/app/admin'},
+            {'label': 'Team'}
+        ],
+        actions=[{
+            'label': 'Invite User',
+            'icon': 'user-plus',
+            'onclick': 'openInviteDrawer()',
+            'variant': 'primary'
+        }]
+    ) }}
+
+    <!-- Stats Cards -->
+    <div id="stats-grid">
+        {{ stat_card_grid(cards=[
+            {'id': 'stat-total', 'label': 'Total Users', 'value': '-', 'icon': 'users', 'color': 'blue'},
+            {'id': 'stat-active', 'label': 'Active', 'value': '-', 'icon': 'user-check', 'color': 'green'},
+            {'id': 'stat-pending', 'label': 'Pending Invites', 'value': '-', 'icon': 'mail', 'color': 'orange'},
+            {'id': 'stat-admins', 'label': 'Admins', 'value': '-', 'icon': 'shield', 'color': 'purple'}
+        ]) }}
+    </div>
+
+    <!-- Filters -->
+    <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+        <div class="flex flex-col lg:flex-row gap-4">
+            <!-- Search -->
+            <div class="flex-1 relative">
+                <i data-lucide="search" class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400"></i>
+                <input type="text"
+                       id="search-input"
+                       placeholder="Search by name or email..."
+                       class="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+            </div>
+
+            <!-- Role Filter -->
+            <select id="filter-role"
+                    class="px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white min-w-[160px]">
+                <option value="">All Roles</option>
+                <option value="admin">Administrator</option>
+                <option value="office_manager">Office Manager</option>
+                <option value="sales">Sales Rep</option>
+                <option value="technician">Technician</option>
+                <option value="user">Basic User</option>
+            </select>
+
+            <!-- Status Filter -->
+            <select id="filter-status"
+                    class="px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white min-w-[140px]">
+                <option value="">All Statuses</option>
+                <option value="active">Active</option>
+                <option value="pending">Pending</option>
+                <option value="inactive">Inactive</option>
+            </select>
+
+            <!-- Clear Filters -->
+            <button onclick="clearFilters()"
+                    class="px-4 py-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors whitespace-nowrap">
+                <i data-lucide="x" class="w-4 h-4 inline mr-1"></i>
+                Clear
+            </button>
+        </div>
+    </div>
+
+    <!-- Users Table -->
+    <div id="users-table-container">
+        {{ datatable(
+            id='users-table',
+            columns=[
+                {'key': 'user', 'label': 'User', 'sortable': true},
+                {'key': 'email', 'label': 'Email', 'sortable': true},
+                {'key': 'role', 'label': 'Role', 'sortable': true},
+                {'key': 'status', 'label': 'Status', 'sortable': true},
+                {'key': 'last_active', 'label': 'Last Active', 'sortable': true},
+                {'key': 'actions', 'label': '', 'sortable': false, 'width': '140px'}
+            ],
+            empty_icon='users',
+            empty_title='No users found',
+            empty_message='Invite your first team member or adjust filters'
+        ) }}
+    </div>
+</div>
+
+<!-- User Detail Drawer -->
+{{ drawer(
+    id='user-detail-drawer',
+    title='User Details',
+    size='lg'
+) }}
+
+<!-- Invite User Drawer -->
+{{ drawer(
+    id='invite-drawer',
+    title='Invite User',
+    size='md'
+) }}
+
+<!-- Edit User Drawer -->
+{{ drawer(
+    id='edit-drawer',
+    title='Edit User',
+    size='md'
+) }}
+
+<!-- Confirm Deactivate Modal -->
+<div id="deactivate-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+    <div class="bg-white rounded-xl shadow-xl max-w-md w-full mx-4 p-6">
+        <div class="flex items-center gap-3 mb-4">
+            <div class="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+                <i data-lucide="alert-triangle" class="w-5 h-5 text-red-600"></i>
+            </div>
+            <h3 class="text-lg font-semibold text-gray-900">Deactivate User</h3>
+        </div>
+        <p class="text-gray-600 mb-6">Are you sure you want to deactivate <strong id="deactivate-user-name"></strong>? They will no longer be able to access the system.</p>
+        <div class="flex justify-end gap-3">
+            <button onclick="closeDeactivateModal()" class="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">
+                Cancel
+            </button>
+            <button onclick="confirmDeactivate()" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700">
+                Deactivate
+            </button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/api-client.js') }}"></script>
+<script>
+// State
+let users = [];
+let roles = [];
+let selectedUser = null;
+let pendingDeactivateId = null;
+
+// Initialize
+document.addEventListener('DOMContentLoaded', () => {
+    loadUsers();
+    loadRoles();
+    setupEventListeners();
+});
+
+// Setup event listeners
+function setupEventListeners() {
+    // Search with debounce
+    let searchTimeout;
+    document.getElementById('search-input').addEventListener('input', (e) => {
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(() => loadUsers(), 300);
+    });
+
+    // Filter changes
+    ['filter-role', 'filter-status'].forEach(id => {
+        document.getElementById(id).addEventListener('change', loadUsers);
+    });
+}
+
+// Load users from API
+async function loadUsers() {
+    showTableLoading();
+
+    const params = {};
+
+    const search = document.getElementById('search-input').value.trim();
+    if (search) params.search = search;
+
+    const role = document.getElementById('filter-role').value;
+    if (role) params.role = role;
+
+    const status = document.getElementById('filter-status').value;
+    if (status) params.status = status;
+
+    try {
+        const response = await adminApi.listUsers(params);
+        users = response.users || [];
+
+        if (response.stats) {
+            updateStats(response.stats);
+        }
+
+        renderUsers();
+    } catch (error) {
+        console.error('Error loading users:', error);
+        showTableError();
+    }
+}
+
+// Load roles
+async function loadRoles() {
+    try {
+        const response = await adminApi.getRoles();
+        roles = response.roles || [];
+    } catch (error) {
+        console.error('Error loading roles:', error);
+    }
+}
+
+// Update stats display
+function updateStats(stats) {
+    const updateStat = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) {
+            const valueEl = el.querySelector('.text-2xl');
+            if (valueEl) valueEl.textContent = value?.toLocaleString() || '0';
+        }
+    };
+
+    updateStat('stat-total', stats.total);
+    updateStat('stat-active', stats.active);
+    updateStat('stat-pending', stats.pending);
+    updateStat('stat-admins', stats.admins);
+}
+
+// Role badge colors
+const roleColors = {
+    'admin': 'bg-purple-100 text-purple-800',
+    'office_manager': 'bg-blue-100 text-blue-800',
+    'sales': 'bg-green-100 text-green-800',
+    'technician': 'bg-orange-100 text-orange-800',
+    'user': 'bg-gray-100 text-gray-800'
+};
+
+const roleLabels = {
+    'admin': 'Administrator',
+    'office_manager': 'Office Manager',
+    'sales': 'Sales Rep',
+    'technician': 'Technician',
+    'user': 'Basic User'
+};
+
+// Status badge colors
+const statusColors = {
+    'active': 'bg-green-100 text-green-800',
+    'pending': 'bg-yellow-100 text-yellow-800',
+    'inactive': 'bg-gray-100 text-gray-800'
+};
+
+// Render users table
+function renderUsers() {
+    const tbody = document.querySelector('#users-table tbody');
+    if (!tbody) return;
+
+    if (users.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="6" class="px-6 py-12 text-center">
+                    <div class="flex flex-col items-center">
+                        <i data-lucide="users" class="w-12 h-12 text-gray-300 mb-4"></i>
+                        <h3 class="text-lg font-medium text-gray-900 mb-1">No users found</h3>
+                        <p class="text-gray-500 mb-4">Invite your first team member or adjust filters</p>
+                        <button onclick="openInviteDrawer()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                            <i data-lucide="user-plus" class="w-4 h-4 inline mr-2"></i>
+                            Invite User
+                        </button>
+                    </div>
+                </td>
+            </tr>
+        `;
+        lucide.createIcons();
+        return;
+    }
+
+    tbody.innerHTML = users.map(user => {
+        const fullName = [user.first_name, user.last_name].filter(Boolean).join(' ') || 'Unnamed';
+        const initials = fullName.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+
+        return `
+            <tr class="hover:bg-gray-50 cursor-pointer border-b border-gray-100" onclick="openUserDetail(${user.id})">
+                <td class="px-6 py-4">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
+                            ${user.avatar_url
+                                ? `<img src="${user.avatar_url}" class="w-10 h-10 rounded-full object-cover">`
+                                : `<span class="text-blue-600 font-medium text-sm">${initials}</span>`
+                            }
+                        </div>
+                        <div>
+                            <div class="font-medium text-gray-900">${fullName}</div>
+                        </div>
+                    </div>
+                </td>
+                <td class="px-6 py-4 text-gray-600">${user.email}</td>
+                <td class="px-6 py-4">
+                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${roleColors[user.role] || 'bg-gray-100 text-gray-800'}">
+                        ${roleLabels[user.role] || user.role}
+                    </span>
+                </td>
+                <td class="px-6 py-4">
+                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusColors[user.status] || 'bg-gray-100 text-gray-800'}">
+                        ${user.status.charAt(0).toUpperCase() + user.status.slice(1)}
+                    </span>
+                </td>
+                <td class="px-6 py-4 text-sm text-gray-500">
+                    ${user.last_login_at ? formatDate(user.last_login_at) : 'Never'}
+                </td>
+                <td class="px-6 py-4">
+                    <div class="flex items-center gap-1" onclick="event.stopPropagation()">
+                        <button onclick="openEditDrawer(${user.id})"
+                                class="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                title="Edit">
+                            <i data-lucide="pencil" class="w-4 h-4"></i>
+                        </button>
+                        ${user.status === 'pending' ? `
+                            <button onclick="resendInvite(${user.id})"
+                                    class="p-2 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                                    title="Resend Invite">
+                                <i data-lucide="mail" class="w-4 h-4"></i>
+                            </button>
+                        ` : `
+                            <button onclick="resetPassword(${user.id})"
+                                    class="p-2 text-gray-400 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-colors"
+                                    title="Reset Password">
+                                <i data-lucide="key" class="w-4 h-4"></i>
+                            </button>
+                        `}
+                        ${user.status !== 'inactive' ? `
+                            <button onclick="openDeactivateModal(${user.id}, '${fullName.replace(/'/g, "\\'")}')"
+                                    class="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                    title="Deactivate">
+                                <i data-lucide="user-x" class="w-4 h-4"></i>
+                            </button>
+                        ` : ''}
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
+
+    lucide.createIcons();
+}
+
+// Show table loading
+function showTableLoading() {
+    const tbody = document.querySelector('#users-table tbody');
+    if (!tbody) return;
+
+    tbody.innerHTML = Array(5).fill(0).map(() => `
+        <tr class="animate-pulse">
+            <td class="px-6 py-4">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 bg-gray-200 rounded-full"></div>
+                    <div class="h-4 bg-gray-200 rounded w-32"></div>
+                </div>
+            </td>
+            <td class="px-6 py-4"><div class="h-4 bg-gray-200 rounded w-40"></div></td>
+            <td class="px-6 py-4"><div class="h-6 bg-gray-200 rounded-full w-24"></div></td>
+            <td class="px-6 py-4"><div class="h-6 bg-gray-200 rounded-full w-16"></div></td>
+            <td class="px-6 py-4"><div class="h-4 bg-gray-200 rounded w-24"></div></td>
+            <td class="px-6 py-4"><div class="h-8 bg-gray-200 rounded w-24"></div></td>
+        </tr>
+    `).join('');
+}
+
+// Show table error
+function showTableError() {
+    const tbody = document.querySelector('#users-table tbody');
+    if (!tbody) return;
+
+    tbody.innerHTML = `
+        <tr>
+            <td colspan="6" class="px-6 py-12 text-center">
+                <div class="flex flex-col items-center">
+                    <i data-lucide="alert-circle" class="w-12 h-12 text-red-300 mb-4"></i>
+                    <h3 class="text-lg font-medium text-gray-900 mb-1">Failed to load users</h3>
+                    <p class="text-gray-500 mb-4">Please try again</p>
+                    <button onclick="loadUsers()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                        Retry
+                    </button>
+                </div>
+            </td>
+        </tr>
+    `;
+    lucide.createIcons();
+}
+
+// Clear filters
+function clearFilters() {
+    document.getElementById('search-input').value = '';
+    document.getElementById('filter-role').value = '';
+    document.getElementById('filter-status').value = '';
+    loadUsers();
+}
+
+// Format date
+function formatDate(dateStr) {
+    if (!dateStr) return '-';
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+// Format date time
+function formatDateTime(dateStr) {
+    if (!dateStr) return '-';
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric',
+        hour: 'numeric', minute: '2-digit'
+    });
+}
+
+// ============================
+// USER DETAIL DRAWER
+// ============================
+
+async function openUserDetail(id) {
+    const drawer = document.getElementById('user-detail-drawer');
+    const content = drawer.querySelector('.drawer-content');
+
+    content.innerHTML = `
+        <div class="p-6 flex items-center justify-center">
+            <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        </div>
+    `;
+    drawer.classList.remove('hidden');
+    setTimeout(() => drawer.querySelector('.drawer-panel')?.classList.remove('translate-x-full'), 10);
+
+    try {
+        const user = await adminApi.getUser(id);
+        selectedUser = user;
+
+        const fullName = [user.first_name, user.last_name].filter(Boolean).join(' ') || 'Unnamed';
+        const initials = fullName.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+
+        content.innerHTML = `
+            <div class="p-6 space-y-6">
+                <!-- Header -->
+                <div class="flex items-start gap-4">
+                    <div class="w-16 h-16 rounded-full bg-blue-100 flex items-center justify-center">
+                        ${user.avatar_url
+                            ? `<img src="${user.avatar_url}" class="w-16 h-16 rounded-full object-cover">`
+                            : `<span class="text-blue-600 font-bold text-xl">${initials}</span>`
+                        }
+                    </div>
+                    <div class="flex-1">
+                        <h3 class="text-xl font-bold text-gray-900">${fullName}</h3>
+                        <p class="text-gray-500">${user.email}</p>
+                        <div class="flex items-center gap-2 mt-2">
+                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${roleColors[user.role] || 'bg-gray-100'}">
+                                ${roleLabels[user.role] || user.role}
+                            </span>
+                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusColors[user.status] || 'bg-gray-100'}">
+                                ${user.status.charAt(0).toUpperCase() + user.status.slice(1)}
+                            </span>
+                        </div>
+                    </div>
+                    <button onclick="openEditDrawer(${user.id}); closeDrawer('user-detail-drawer');"
+                            class="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg">
+                        <i data-lucide="pencil" class="w-5 h-5"></i>
+                    </button>
+                </div>
+
+                <!-- Contact Info -->
+                <div class="bg-gray-50 rounded-lg p-4">
+                    <h4 class="font-medium text-gray-900 mb-3">Contact Information</h4>
+                    <dl class="space-y-2 text-sm">
+                        <div class="flex justify-between">
+                            <dt class="text-gray-500">Email</dt>
+                            <dd class="text-gray-900">${user.email}</dd>
+                        </div>
+                        <div class="flex justify-between">
+                            <dt class="text-gray-500">Phone</dt>
+                            <dd class="text-gray-900">${user.phone || '-'}</dd>
+                        </div>
+                    </dl>
+                </div>
+
+                <!-- Account Info -->
+                <div class="bg-gray-50 rounded-lg p-4">
+                    <h4 class="font-medium text-gray-900 mb-3">Account Information</h4>
+                    <dl class="space-y-2 text-sm">
+                        <div class="flex justify-between">
+                            <dt class="text-gray-500">Role</dt>
+                            <dd class="text-gray-900">${roleLabels[user.role] || user.role}</dd>
+                        </div>
+                        <div class="flex justify-between">
+                            <dt class="text-gray-500">Status</dt>
+                            <dd class="text-gray-900">${user.status.charAt(0).toUpperCase() + user.status.slice(1)}</dd>
+                        </div>
+                        <div class="flex justify-between">
+                            <dt class="text-gray-500">Created</dt>
+                            <dd class="text-gray-900">${formatDate(user.created_at)}</dd>
+                        </div>
+                        <div class="flex justify-between">
+                            <dt class="text-gray-500">Last Login</dt>
+                            <dd class="text-gray-900">${user.last_login_at ? formatDateTime(user.last_login_at) : 'Never'}</dd>
+                        </div>
+                    </dl>
+                </div>
+
+                <!-- Recent Activity -->
+                <div class="bg-white border border-gray-200 rounded-lg">
+                    <div class="px-4 py-3 border-b border-gray-200">
+                        <h4 class="font-medium text-gray-900">Recent Activity</h4>
+                    </div>
+                    ${user.activity && user.activity.length > 0 ? `
+                        <div class="divide-y divide-gray-100 max-h-64 overflow-y-auto">
+                            ${user.activity.map(act => `
+                                <div class="px-4 py-3">
+                                    <div class="flex items-center justify-between">
+                                        <span class="text-sm text-gray-900">${formatActivityAction(act.action)}</span>
+                                        <span class="text-xs text-gray-500">${formatDateTime(act.created_at)}</span>
+                                    </div>
+                                    ${act.ip_address ? `<div class="text-xs text-gray-400 mt-1">IP: ${act.ip_address}</div>` : ''}
+                                </div>
+                            `).join('')}
+                        </div>
+                    ` : `
+                        <div class="p-8 text-center text-gray-500">
+                            <i data-lucide="activity" class="w-8 h-8 mx-auto mb-2 text-gray-300"></i>
+                            No activity recorded
+                        </div>
+                    `}
+                </div>
+
+                <!-- Actions -->
+                <div class="flex flex-wrap gap-3 pt-4 border-t border-gray-200">
+                    ${user.status === 'pending' ? `
+                        <button onclick="resendInvite(${user.id})" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                            <i data-lucide="mail" class="w-4 h-4 inline mr-2"></i>
+                            Resend Invite
+                        </button>
+                    ` : `
+                        <button onclick="resetPassword(${user.id})" class="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200">
+                            <i data-lucide="key" class="w-4 h-4 inline mr-2"></i>
+                            Reset Password
+                        </button>
+                    `}
+                    ${user.status !== 'inactive' ? `
+                        <button onclick="openDeactivateModal(${user.id}, '${fullName.replace(/'/g, "\\'")}')" class="px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg">
+                            <i data-lucide="user-x" class="w-4 h-4 inline mr-2"></i>
+                            Deactivate
+                        </button>
+                    ` : ''}
+                </div>
+            </div>
+        `;
+
+        lucide.createIcons();
+    } catch (error) {
+        console.error('Error loading user:', error);
+        content.innerHTML = `
+            <div class="p-6 text-center">
+                <i data-lucide="alert-circle" class="w-12 h-12 text-red-300 mx-auto mb-4"></i>
+                <p class="text-gray-500">Failed to load user details</p>
+            </div>
+        `;
+        lucide.createIcons();
+    }
+}
+
+// Format activity action
+function formatActivityAction(action) {
+    const actions = {
+        'login': 'Logged in',
+        'logout': 'Logged out',
+        'password_changed': 'Changed password',
+        'profile_updated': 'Updated profile',
+        'user_created': 'Created user',
+        'user_updated': 'Updated user',
+        'user_deactivated': 'Deactivated user',
+        'settings_updated': 'Updated settings',
+        'invite_resent': 'Resent invitation',
+        'password_reset_sent': 'Sent password reset'
+    };
+    return actions[action] || action.replace(/_/g, ' ');
+}
+
+// ============================
+// INVITE USER DRAWER
+// ============================
+
+function openInviteDrawer() {
+    const drawer = document.getElementById('invite-drawer');
+    const content = drawer.querySelector('.drawer-content');
+
+    const roleOptions = roles.map(r =>
+        `<option value="${r.id}">${r.name}</option>`
+    ).join('');
+
+    content.innerHTML = `
+        <form id="invite-form" onsubmit="inviteUser(event)" class="p-6 space-y-6" data-validate-form>
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">First Name</label>
+                    <input type="text" name="first_name"
+                           class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500"
+                           placeholder="John">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Last Name</label>
+                    <input type="text" name="last_name"
+                           class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500"
+                           placeholder="Doe">
+                </div>
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Email *</label>
+                <input type="email" name="email" required data-validate="required email"
+                       class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500"
+                       placeholder="john@company.com">
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Role *</label>
+                <select name="role" required
+                        class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500">
+                    ${roleOptions || `
+                        <option value="user">Basic User</option>
+                        <option value="technician">Technician</option>
+                        <option value="sales">Sales Rep</option>
+                        <option value="office_manager">Office Manager</option>
+                        <option value="admin">Administrator</option>
+                    `}
+                </select>
+            </div>
+
+            <div class="flex items-center gap-2">
+                <input type="checkbox" name="send_invite" id="send_invite" checked
+                       class="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
+                <label for="send_invite" class="text-sm text-gray-700">Send invitation email</label>
+            </div>
+
+            <div class="bg-blue-50 rounded-lg p-4">
+                <div class="flex gap-3">
+                    <i data-lucide="info" class="w-5 h-5 text-blue-600 flex-shrink-0"></i>
+                    <div class="text-sm text-blue-700">
+                        An email will be sent to the user with instructions to set up their account and password.
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex justify-end gap-3 pt-4 border-t border-gray-200">
+                <button type="button" onclick="closeDrawer('invite-drawer')"
+                        class="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">
+                    Cancel
+                </button>
+                <button type="submit"
+                        class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                    <i data-lucide="send" class="w-4 h-4 inline mr-2"></i>
+                    Send Invite
+                </button>
+            </div>
+        </form>
+    `;
+
+    drawer.classList.remove('hidden');
+    setTimeout(() => drawer.querySelector('.drawer-panel')?.classList.remove('translate-x-full'), 10);
+
+    lucide.createIcons();
+}
+
+// Invite user
+async function inviteUser(event) {
+    event.preventDefault();
+
+    const form = event.target;
+    const formData = new FormData(form);
+
+    const data = {
+        email: formData.get('email'),
+        first_name: formData.get('first_name') || '',
+        last_name: formData.get('last_name') || '',
+        role: formData.get('role'),
+        send_invite: form.querySelector('#send_invite').checked
+    };
+
+    try {
+        await adminApi.createUser(data);
+        closeDrawer('invite-drawer');
+        loadUsers();
+    } catch (error) {
+        console.error('Error inviting user:', error);
+    }
+}
+
+// ============================
+// EDIT USER DRAWER
+// ============================
+
+async function openEditDrawer(id) {
+    const drawer = document.getElementById('edit-drawer');
+    const content = drawer.querySelector('.drawer-content');
+
+    content.innerHTML = `
+        <div class="p-6 flex items-center justify-center">
+            <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        </div>
+    `;
+    drawer.classList.remove('hidden');
+    setTimeout(() => drawer.querySelector('.drawer-panel')?.classList.remove('translate-x-full'), 10);
+
+    try {
+        const user = await adminApi.getUser(id);
+
+        const roleOptions = roles.map(r =>
+            `<option value="${r.id}" ${user.role === r.id ? 'selected' : ''}>${r.name}</option>`
+        ).join('') || `
+            <option value="user" ${user.role === 'user' ? 'selected' : ''}>Basic User</option>
+            <option value="technician" ${user.role === 'technician' ? 'selected' : ''}>Technician</option>
+            <option value="sales" ${user.role === 'sales' ? 'selected' : ''}>Sales Rep</option>
+            <option value="office_manager" ${user.role === 'office_manager' ? 'selected' : ''}>Office Manager</option>
+            <option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Administrator</option>
+        `;
+
+        content.innerHTML = `
+            <form id="edit-form" onsubmit="updateUser(event, ${id})" class="p-6 space-y-6">
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">First Name</label>
+                        <input type="text" name="first_name" value="${user.first_name || ''}"
+                               class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Last Name</label>
+                        <input type="text" name="last_name" value="${user.last_name || ''}"
+                               class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                    <input type="email" value="${user.email}" disabled
+                           class="w-full px-4 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-500">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+                    <input type="tel" name="phone" value="${user.phone || ''}"
+                           class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500"
+                           placeholder="(555) 123-4567">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Role</label>
+                    <select name="role"
+                            class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500">
+                        ${roleOptions}
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                    <select name="status"
+                            class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500">
+                        <option value="active" ${user.status === 'active' ? 'selected' : ''}>Active</option>
+                        <option value="inactive" ${user.status === 'inactive' ? 'selected' : ''}>Inactive</option>
+                    </select>
+                </div>
+
+                <div class="flex justify-end gap-3 pt-4 border-t border-gray-200">
+                    <button type="button" onclick="closeDrawer('edit-drawer')"
+                            class="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">
+                        Cancel
+                    </button>
+                    <button type="submit"
+                            class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                        Save Changes
+                    </button>
+                </div>
+            </form>
+        `;
+
+        lucide.createIcons();
+    } catch (error) {
+        console.error('Error loading user:', error);
+        content.innerHTML = `
+            <div class="p-6 text-center">
+                <i data-lucide="alert-circle" class="w-12 h-12 text-red-300 mx-auto mb-4"></i>
+                <p class="text-gray-500">Failed to load user</p>
+            </div>
+        `;
+        lucide.createIcons();
+    }
+}
+
+// Update user
+async function updateUser(event, id) {
+    event.preventDefault();
+
+    const form = event.target;
+    const formData = new FormData(form);
+
+    const data = {
+        first_name: formData.get('first_name'),
+        last_name: formData.get('last_name'),
+        phone: formData.get('phone'),
+        role: formData.get('role'),
+        status: formData.get('status')
+    };
+
+    try {
+        await adminApi.updateUser(id, data);
+        closeDrawer('edit-drawer');
+        loadUsers();
+    } catch (error) {
+        console.error('Error updating user:', error);
+    }
+}
+
+// ============================
+// ACTIONS
+// ============================
+
+async function resetPassword(id) {
+    if (!confirm('Send a password reset email to this user?')) return;
+
+    try {
+        await adminApi.resetUserPassword(id);
+    } catch (error) {
+        console.error('Error resetting password:', error);
+    }
+}
+
+async function resendInvite(id) {
+    try {
+        await adminApi.resendInvite(id);
+    } catch (error) {
+        console.error('Error resending invite:', error);
+    }
+}
+
+function openDeactivateModal(id, name) {
+    pendingDeactivateId = id;
+    document.getElementById('deactivate-user-name').textContent = name;
+    document.getElementById('deactivate-modal').classList.remove('hidden');
+    lucide.createIcons();
+}
+
+function closeDeactivateModal() {
+    pendingDeactivateId = null;
+    document.getElementById('deactivate-modal').classList.add('hidden');
+}
+
+async function confirmDeactivate() {
+    if (!pendingDeactivateId) return;
+
+    try {
+        await adminApi.deactivateUser(pendingDeactivateId);
+        closeDeactivateModal();
+        closeDrawer('user-detail-drawer');
+        loadUsers();
+    } catch (error) {
+        console.error('Error deactivating user:', error);
+    }
+}
+
+// ============================
+// DRAWER MANAGEMENT
+// ============================
+
+function closeDrawer(id) {
+    const drawer = document.getElementById(id);
+    if (!drawer) return;
+
+    const panel = drawer.querySelector('.drawer-panel');
+    if (panel) panel.classList.add('translate-x-full');
+
+    setTimeout(() => drawer.classList.add('hidden'), 300);
+}
+
+document.addEventListener('click', (e) => {
+    if (e.target.classList.contains('drawer-backdrop')) {
+        const drawer = e.target.closest('[id$="-drawer"]');
+        if (drawer) closeDrawer(drawer.id);
+    }
+});
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        ['user-detail-drawer', 'invite-drawer', 'edit-drawer'].forEach(id => {
+            const drawer = document.getElementById(id);
+            if (drawer && !drawer.classList.contains('hidden')) {
+                closeDrawer(id);
+            }
+        });
+        closeDeactivateModal();
+    }
+});
+</script>
+{% endblock %}

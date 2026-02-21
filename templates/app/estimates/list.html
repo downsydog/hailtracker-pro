@@ -1,0 +1,1255 @@
+{% extends 'layouts/base_app.html' %}
+{% from 'components/ui/_page_header.html' import page_header %}
+{% from 'components/ui/_stat_card.html' import stat_card, stat_card_grid %}
+{% from 'components/ui/_datatable.html' import datatable %}
+{% from 'components/ui/_drawer.html' import drawer, drawer_trigger %}
+{% from 'components/ui/_form_field.html' import form_field, form_group %}
+{% from 'components/ui/_empty_state.html' import empty_state %}
+
+{% block title %}Estimates - HailTracker Pro{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Page Header -->
+    {{ page_header(
+        title='Estimates',
+        subtitle='Create and manage repair estimates',
+        breadcrumbs=[
+            {'label': 'Dashboard', 'url': '/app/dashboard'},
+            {'label': 'Estimates'}
+        ],
+        actions=[{
+            'label': 'New Estimate',
+            'icon': 'plus',
+            'onclick': 'openNewEstimateDrawer()',
+            'variant': 'primary'
+        }]
+    ) }}
+
+    <!-- Stats Cards -->
+    <div id="stats-grid">
+        {{ stat_card_grid(cards=[
+            {'id': 'stat-total', 'label': 'Total Estimates', 'value': '-', 'icon': 'file-text', 'color': 'blue'},
+            {'id': 'stat-pending', 'label': 'Pending Approval', 'value': '-', 'icon': 'clock', 'color': 'orange'},
+            {'id': 'stat-approved', 'label': 'Approved This Month', 'value': '-', 'icon': 'check-circle', 'color': 'green'},
+            {'id': 'stat-conversion', 'label': 'Conversion Rate', 'value': '-', 'icon': 'trending-up', 'color': 'purple'}
+        ]) }}
+    </div>
+
+    <!-- Filters -->
+    <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+        <div class="flex flex-col lg:flex-row gap-4">
+            <!-- Search -->
+            <div class="flex-1 relative">
+                <i data-lucide="search" class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400"></i>
+                <input type="text"
+                       id="search-input"
+                       placeholder="Search by estimate #, customer, or vehicle..."
+                       class="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+            </div>
+
+            <!-- Status Filter -->
+            <select id="filter-status"
+                    class="px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white min-w-[160px]">
+                <option value="">All Statuses</option>
+                <option value="DRAFT">Draft</option>
+                <option value="SENT">Sent</option>
+                <option value="APPROVED">Approved</option>
+                <option value="DECLINED">Declined</option>
+                <option value="CONVERTED">Converted</option>
+            </select>
+
+            <!-- Date From -->
+            <input type="date"
+                   id="filter-date-from"
+                   class="px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white"
+                   placeholder="From date">
+
+            <!-- Date To -->
+            <input type="date"
+                   id="filter-date-to"
+                   class="px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white"
+                   placeholder="To date">
+
+            <!-- Clear Filters -->
+            <button onclick="clearFilters()"
+                    class="px-4 py-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors whitespace-nowrap">
+                <i data-lucide="x" class="w-4 h-4 inline mr-1"></i>
+                Clear
+            </button>
+        </div>
+    </div>
+
+    <!-- Estimates Table -->
+    <div id="estimates-table-container">
+        {{ datatable(
+            id='estimates-table',
+            columns=[
+                {'key': 'estimate_number', 'label': 'Estimate #', 'sortable': true},
+                {'key': 'customer', 'label': 'Customer', 'sortable': true},
+                {'key': 'vehicle', 'label': 'Vehicle', 'sortable': false},
+                {'key': 'total', 'label': 'Total', 'sortable': true},
+                {'key': 'status', 'label': 'Status', 'sortable': true},
+                {'key': 'created_at', 'label': 'Created', 'sortable': true},
+                {'key': 'actions', 'label': '', 'sortable': false, 'width': '140px'}
+            ],
+            empty_icon='file-text',
+            empty_title='No estimates found',
+            empty_message='Create your first estimate or adjust your filters'
+        ) }}
+    </div>
+
+    <!-- Pagination -->
+    <div id="pagination-container" class="hidden">
+        <div class="flex items-center justify-between bg-white rounded-xl shadow-sm border border-gray-100 px-6 py-4">
+            <div class="text-sm text-gray-600">
+                Showing <span id="showing-start">0</span> to <span id="showing-end">0</span> of <span id="total-count">0</span> estimates
+            </div>
+            <div class="flex items-center gap-2">
+                <button id="prev-page" onclick="changePage(-1)" disabled
+                        class="px-3 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <i data-lucide="chevron-left" class="w-4 h-4"></i>
+                </button>
+                <span class="px-4 py-2 text-sm">
+                    Page <span id="current-page">1</span> of <span id="total-pages">1</span>
+                </span>
+                <button id="next-page" onclick="changePage(1)" disabled
+                        class="px-3 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <i data-lucide="chevron-right" class="w-4 h-4"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Estimate Detail Drawer -->
+{{ drawer(
+    id='estimate-detail-drawer',
+    title='Estimate Details',
+    size='xl'
+) }}
+
+<!-- New Estimate Drawer -->
+{{ drawer(
+    id='new-estimate-drawer',
+    title='Create New Estimate',
+    size='xl'
+) }}
+
+<!-- Send Estimate Modal -->
+<div id="send-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+    <div class="bg-white rounded-xl shadow-xl max-w-md w-full mx-4 p-6">
+        <h3 class="text-lg font-semibold text-gray-900 mb-4">Send Estimate</h3>
+        <p class="text-gray-600 mb-4">Send this estimate to <span id="send-customer-name" class="font-medium"></span>?</p>
+        <p class="text-sm text-gray-500 mb-6">They will receive an email with the estimate details and can approve or decline it.</p>
+        <div class="flex justify-end gap-3">
+            <button onclick="closeSendModal()" class="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">
+                Cancel
+            </button>
+            <button onclick="confirmSendEstimate()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                <i data-lucide="send" class="w-4 h-4 inline mr-2"></i>
+                Send Estimate
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Convert to Job Modal -->
+<div id="convert-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+    <div class="bg-white rounded-xl shadow-xl max-w-md w-full mx-4 p-6">
+        <h3 class="text-lg font-semibold text-gray-900 mb-4">Convert to Job</h3>
+        <p class="text-gray-600 mb-6">Convert this estimate to a job? This will create a new job with the estimate details.</p>
+        <div class="flex justify-end gap-3">
+            <button onclick="closeConvertModal()" class="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">
+                Cancel
+            </button>
+            <button onclick="confirmConvertToJob()" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
+                <i data-lucide="briefcase" class="w-4 h-4 inline mr-2"></i>
+                Create Job
+            </button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/api-client.js') }}"></script>
+<script>
+// State
+let estimates = [];
+let currentPage = 1;
+let perPage = 20;
+let totalPages = 1;
+let totalCount = 0;
+let sortBy = 'created_at';
+let sortDir = 'desc';
+let selectedEstimate = null;
+let serviceTypes = [];
+let pendingSendId = null;
+let pendingConvertId = null;
+
+// Initialize
+document.addEventListener('DOMContentLoaded', () => {
+    loadEstimates().then(() => {
+        // Check for ?open= URL parameter to auto-open drawer
+        const urlParams = new URLSearchParams(window.location.search);
+        const openId = urlParams.get('open');
+        if (openId) {
+            openEstimateDetail(parseInt(openId));
+            // Clean up URL
+            window.history.replaceState({}, '', window.location.pathname);
+        }
+    });
+    loadServiceTypes();
+    setupEventListeners();
+});
+
+// Setup event listeners
+function setupEventListeners() {
+    // Search with debounce
+    let searchTimeout;
+    document.getElementById('search-input').addEventListener('input', (e) => {
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(() => {
+            currentPage = 1;
+            loadEstimates();
+        }, 300);
+    });
+
+    // Filter changes
+    ['filter-status', 'filter-date-from', 'filter-date-to'].forEach(id => {
+        document.getElementById(id).addEventListener('change', () => {
+            currentPage = 1;
+            loadEstimates();
+        });
+    });
+
+    // Column sorting
+    document.querySelectorAll('[data-sort]').forEach(header => {
+        header.addEventListener('click', () => {
+            const column = header.dataset.sort;
+            if (sortBy === column) {
+                sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+            } else {
+                sortBy = column;
+                sortDir = 'asc';
+            }
+            loadEstimates();
+        });
+    });
+}
+
+// Load estimates from API
+async function loadEstimates() {
+    showTableLoading();
+
+    const params = {
+        page: currentPage,
+        per_page: perPage,
+        sort_by: sortBy,
+        sort_dir: sortDir
+    };
+
+    const search = document.getElementById('search-input').value.trim();
+    if (search) params.search = search;
+
+    const status = document.getElementById('filter-status').value;
+    if (status) params.status = status;
+
+    const dateFrom = document.getElementById('filter-date-from').value;
+    if (dateFrom) params.date_from = dateFrom;
+
+    const dateTo = document.getElementById('filter-date-to').value;
+    if (dateTo) params.date_to = dateTo;
+
+    try {
+        const response = await estimatesApi.list(params);
+        estimates = response.estimates || [];
+        totalCount = response.total || 0;
+        totalPages = response.total_pages || 1;
+        currentPage = response.page || 1;
+
+        if (response.stats) {
+            updateStats(response.stats);
+        }
+
+        renderEstimates();
+        updatePagination();
+    } catch (error) {
+        console.error('Error loading estimates:', error);
+        showTableError();
+    }
+}
+
+// Load service types
+async function loadServiceTypes() {
+    try {
+        const response = await estimatesApi.getServiceTypes();
+        serviceTypes = response.service_types || [];
+    } catch (error) {
+        console.error('Error loading service types:', error);
+    }
+}
+
+// Update stats display
+function updateStats(stats) {
+    const statTotal = document.getElementById('stat-total');
+    const statPending = document.getElementById('stat-pending');
+    const statApproved = document.getElementById('stat-approved');
+    const statConversion = document.getElementById('stat-conversion');
+
+    if (statTotal) {
+        const valueEl = statTotal.querySelector('.text-2xl');
+        if (valueEl) valueEl.textContent = stats.total?.toLocaleString() || '0';
+    }
+    if (statPending) {
+        const valueEl = statPending.querySelector('.text-2xl');
+        if (valueEl) valueEl.textContent = stats.pending_approval?.toLocaleString() || '0';
+    }
+    if (statApproved) {
+        const valueEl = statApproved.querySelector('.text-2xl');
+        if (valueEl) valueEl.textContent = stats.approved_this_month?.toLocaleString() || '0';
+    }
+    if (statConversion) {
+        const valueEl = statConversion.querySelector('.text-2xl');
+        if (valueEl) valueEl.textContent = (stats.conversion_rate || 0) + '%';
+    }
+}
+
+// Status badge classes
+const statusClasses = {
+    'DRAFT': 'bg-gray-100 text-gray-800',
+    'SENT': 'bg-blue-100 text-blue-800',
+    'APPROVED': 'bg-green-100 text-green-800',
+    'DECLINED': 'bg-red-100 text-red-800',
+    'CONVERTED': 'bg-purple-100 text-purple-800'
+};
+
+const statusLabels = {
+    'DRAFT': 'Draft',
+    'SENT': 'Sent',
+    'APPROVED': 'Approved',
+    'DECLINED': 'Declined',
+    'CONVERTED': 'Converted'
+};
+
+// Render estimates table
+function renderEstimates() {
+    const tbody = document.querySelector('#estimates-table tbody');
+    if (!tbody) return;
+
+    if (estimates.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="7" class="px-6 py-12 text-center">
+                    <div class="flex flex-col items-center">
+                        <i data-lucide="file-text" class="w-12 h-12 text-gray-300 mb-4"></i>
+                        <h3 class="text-lg font-medium text-gray-900 mb-1">No estimates found</h3>
+                        <p class="text-gray-500 mb-4">Create your first estimate or adjust your filters</p>
+                        <button onclick="openNewEstimateDrawer()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                            <i data-lucide="plus" class="w-4 h-4 inline mr-2"></i>
+                            New Estimate
+                        </button>
+                    </div>
+                </td>
+            </tr>
+        `;
+        lucide.createIcons();
+        return;
+    }
+
+    tbody.innerHTML = estimates.map(est => `
+        <tr class="hover:bg-gray-50 cursor-pointer border-b border-gray-100" onclick="openEstimateDetail(${est.id})">
+            <td class="px-6 py-4">
+                <div class="font-medium text-blue-600">${est.estimate_number || '-'}</div>
+                <div class="text-xs text-gray-500">${est.item_count || 0} items</div>
+            </td>
+            <td class="px-6 py-4">
+                <div class="font-medium text-gray-900">${est.customer_name || '-'}</div>
+                <div class="text-sm text-gray-500">${est.customer_email || ''}</div>
+            </td>
+            <td class="px-6 py-4">
+                ${est.vehicle_year ? `
+                    <div class="text-gray-900">${est.vehicle_year} ${est.vehicle_make || ''} ${est.vehicle_model || ''}</div>
+                    <div class="text-xs text-gray-500">${est.vehicle_vin || ''}</div>
+                ` : '<span class="text-gray-400">-</span>'}
+            </td>
+            <td class="px-6 py-4">
+                <div class="font-semibold text-gray-900">$${(est.total || 0).toLocaleString(undefined, {minimumFractionDigits: 2})}</div>
+            </td>
+            <td class="px-6 py-4">
+                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusClasses[est.status] || 'bg-gray-100 text-gray-800'}">
+                    ${statusLabels[est.status] || est.status}
+                </span>
+            </td>
+            <td class="px-6 py-4 text-sm text-gray-500">
+                ${formatDate(est.created_at)}
+            </td>
+            <td class="px-6 py-4">
+                <div class="flex items-center gap-1" onclick="event.stopPropagation()">
+                    ${est.status === 'DRAFT' || est.status === 'SENT' ? `
+                        <button onclick="openSendModal(${est.id}, '${(est.customer_name || '').replace(/'/g, "\\'")}')"
+                                class="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                title="${est.status === 'SENT' ? 'Resend' : 'Send'}">
+                            <i data-lucide="send" class="w-4 h-4"></i>
+                        </button>
+                    ` : ''}
+                    ${est.status === 'APPROVED' || est.status === 'SENT' ? `
+                        <button onclick="openConvertModal(${est.id})"
+                                class="p-2 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                                title="Convert to Job">
+                            <i data-lucide="briefcase" class="w-4 h-4"></i>
+                        </button>
+                    ` : ''}
+                    ${est.status === 'CONVERTED' && est.converted_job_id ? `
+                        <a href="/app/jobs/${est.converted_job_id}"
+                           class="p-2 text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-colors"
+                           title="View Job">
+                            <i data-lucide="external-link" class="w-4 h-4"></i>
+                        </a>
+                    ` : ''}
+                    <button onclick="openEstimateDetail(${est.id})"
+                            class="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                            title="View Details">
+                        <i data-lucide="eye" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            </td>
+        </tr>
+    `).join('');
+
+    lucide.createIcons();
+}
+
+// Show table loading
+function showTableLoading() {
+    const tbody = document.querySelector('#estimates-table tbody');
+    if (!tbody) return;
+
+    tbody.innerHTML = Array(5).fill(0).map(() => `
+        <tr class="animate-pulse">
+            <td class="px-6 py-4"><div class="h-4 bg-gray-200 rounded w-24"></div></td>
+            <td class="px-6 py-4"><div class="h-4 bg-gray-200 rounded w-32"></div></td>
+            <td class="px-6 py-4"><div class="h-4 bg-gray-200 rounded w-36"></div></td>
+            <td class="px-6 py-4"><div class="h-4 bg-gray-200 rounded w-20"></div></td>
+            <td class="px-6 py-4"><div class="h-6 bg-gray-200 rounded-full w-16"></div></td>
+            <td class="px-6 py-4"><div class="h-4 bg-gray-200 rounded w-24"></div></td>
+            <td class="px-6 py-4"><div class="h-8 bg-gray-200 rounded w-24"></div></td>
+        </tr>
+    `).join('');
+}
+
+// Show table error
+function showTableError() {
+    const tbody = document.querySelector('#estimates-table tbody');
+    if (!tbody) return;
+
+    tbody.innerHTML = `
+        <tr>
+            <td colspan="7" class="px-6 py-12 text-center">
+                <div class="flex flex-col items-center">
+                    <i data-lucide="alert-circle" class="w-12 h-12 text-red-300 mb-4"></i>
+                    <h3 class="text-lg font-medium text-gray-900 mb-1">Failed to load estimates</h3>
+                    <p class="text-gray-500 mb-4">Please try again</p>
+                    <button onclick="loadEstimates()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                        Retry
+                    </button>
+                </div>
+            </td>
+        </tr>
+    `;
+    lucide.createIcons();
+}
+
+// Update pagination
+function updatePagination() {
+    const container = document.getElementById('pagination-container');
+    if (totalCount === 0) {
+        container.classList.add('hidden');
+        return;
+    }
+
+    container.classList.remove('hidden');
+
+    const start = (currentPage - 1) * perPage + 1;
+    const end = Math.min(currentPage * perPage, totalCount);
+
+    document.getElementById('showing-start').textContent = start;
+    document.getElementById('showing-end').textContent = end;
+    document.getElementById('total-count').textContent = totalCount;
+    document.getElementById('current-page').textContent = currentPage;
+    document.getElementById('total-pages').textContent = totalPages;
+
+    document.getElementById('prev-page').disabled = currentPage <= 1;
+    document.getElementById('next-page').disabled = currentPage >= totalPages;
+}
+
+// Change page
+function changePage(delta) {
+    const newPage = currentPage + delta;
+    if (newPage < 1 || newPage > totalPages) return;
+    currentPage = newPage;
+    loadEstimates();
+}
+
+// Clear filters
+function clearFilters() {
+    document.getElementById('search-input').value = '';
+    document.getElementById('filter-status').value = '';
+    document.getElementById('filter-date-from').value = '';
+    document.getElementById('filter-date-to').value = '';
+    currentPage = 1;
+    loadEstimates();
+}
+
+// Format date
+function formatDate(dateStr) {
+    if (!dateStr) return '-';
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+// Format currency
+function formatCurrency(amount) {
+    return '$' + (amount || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+
+// ============================
+// ESTIMATE DETAIL DRAWER
+// ============================
+
+async function openEstimateDetail(id) {
+    const drawer = document.getElementById('estimate-detail-drawer');
+    const content = drawer.querySelector('.drawer-content');
+
+    content.innerHTML = `
+        <div class="p-6 flex items-center justify-center">
+            <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        </div>
+    `;
+    drawer.classList.remove('hidden');
+    setTimeout(() => drawer.querySelector('.drawer-panel')?.classList.remove('translate-x-full'), 10);
+
+    try {
+        const estimate = await estimatesApi.get(id);
+        selectedEstimate = estimate;
+
+        content.innerHTML = `
+            <div class="p-6 space-y-6">
+                <!-- Header -->
+                <div class="flex items-start justify-between">
+                    <div>
+                        <h3 class="text-xl font-bold text-gray-900">${estimate.estimate_number}</h3>
+                        <p class="text-gray-500">Created ${formatDate(estimate.created_at)}</p>
+                    </div>
+                    <span class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${statusClasses[estimate.status] || 'bg-gray-100'}">
+                        ${statusLabels[estimate.status] || estimate.status}
+                    </span>
+                </div>
+
+                <!-- Customer & Vehicle Info -->
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="bg-gray-50 rounded-lg p-4">
+                        <h4 class="font-medium text-gray-900 mb-2">Customer</h4>
+                        <div class="text-gray-600">${estimate.customer_name || '-'}</div>
+                        <div class="text-sm text-gray-500">${estimate.customer_email || ''}</div>
+                        <div class="text-sm text-gray-500">${estimate.customer_phone || ''}</div>
+                    </div>
+                    <div class="bg-gray-50 rounded-lg p-4">
+                        <h4 class="font-medium text-gray-900 mb-2">Vehicle</h4>
+                        ${estimate.vehicle_year ? `
+                            <div class="text-gray-600">${estimate.vehicle_year} ${estimate.vehicle_make || ''} ${estimate.vehicle_model || ''}</div>
+                            <div class="text-sm text-gray-500">${estimate.vehicle_color || ''}</div>
+                            <div class="text-sm text-gray-500 font-mono">${estimate.vehicle_vin || ''}</div>
+                        ` : '<div class="text-gray-400">No vehicle selected</div>'}
+                    </div>
+                </div>
+
+                <!-- Line Items -->
+                <div class="bg-white border border-gray-200 rounded-lg overflow-hidden">
+                    <div class="px-4 py-3 bg-gray-50 border-b border-gray-200">
+                        <h4 class="font-medium text-gray-900">Line Items</h4>
+                    </div>
+                    ${estimate.items && estimate.items.length > 0 ? `
+                        <table class="w-full">
+                            <thead class="bg-gray-50 border-b border-gray-200">
+                                <tr>
+                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Service</th>
+                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
+                                    <th class="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Qty</th>
+                                    <th class="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Price</th>
+                                    <th class="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Total</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-100">
+                                ${estimate.items.map(item => `
+                                    <tr>
+                                        <td class="px-4 py-3 text-sm text-gray-600">${item.service_type || 'PDR'}</td>
+                                        <td class="px-4 py-3 text-sm text-gray-900">${item.description}</td>
+                                        <td class="px-4 py-3 text-sm text-gray-600 text-right">${item.quantity}</td>
+                                        <td class="px-4 py-3 text-sm text-gray-600 text-right">${formatCurrency(item.unit_price)}</td>
+                                        <td class="px-4 py-3 text-sm font-medium text-gray-900 text-right">${formatCurrency(item.line_total)}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    ` : `
+                        <div class="p-8 text-center text-gray-500">
+                            <i data-lucide="package" class="w-8 h-8 mx-auto mb-2 text-gray-300"></i>
+                            No line items
+                        </div>
+                    `}
+                </div>
+
+                <!-- Totals -->
+                <div class="bg-gray-50 rounded-lg p-4 space-y-2">
+                    <div class="flex justify-between text-gray-600">
+                        <span>Subtotal</span>
+                        <span>${formatCurrency(estimate.subtotal)}</span>
+                    </div>
+                    ${estimate.tax_rate > 0 ? `
+                        <div class="flex justify-between text-gray-600">
+                            <span>Tax (${estimate.tax_rate}%)</span>
+                            <span>${formatCurrency(estimate.tax_amount)}</span>
+                        </div>
+                    ` : ''}
+                    <div class="flex justify-between text-lg font-bold text-gray-900 pt-2 border-t border-gray-200">
+                        <span>Total</span>
+                        <span>${formatCurrency(estimate.total)}</span>
+                    </div>
+                </div>
+
+                <!-- Notes -->
+                ${estimate.notes ? `
+                    <div class="bg-white border border-gray-200 rounded-lg p-4">
+                        <h4 class="font-medium text-gray-900 mb-2">Notes</h4>
+                        <p class="text-gray-600 text-sm whitespace-pre-wrap">${estimate.notes}</p>
+                    </div>
+                ` : ''}
+
+                <!-- Terms -->
+                ${estimate.terms ? `
+                    <div class="bg-white border border-gray-200 rounded-lg p-4">
+                        <h4 class="font-medium text-gray-900 mb-2">Terms & Conditions</h4>
+                        <p class="text-gray-600 text-sm whitespace-pre-wrap">${estimate.terms}</p>
+                    </div>
+                ` : ''}
+
+                <!-- Timeline -->
+                <div class="bg-white border border-gray-200 rounded-lg p-4">
+                    <h4 class="font-medium text-gray-900 mb-3">Timeline</h4>
+                    <div class="space-y-3 text-sm">
+                        <div class="flex items-center gap-3">
+                            <div class="w-2 h-2 bg-gray-400 rounded-full"></div>
+                            <span class="text-gray-600">Created on ${formatDate(estimate.created_at)}</span>
+                        </div>
+                        ${estimate.sent_at ? `
+                            <div class="flex items-center gap-3">
+                                <div class="w-2 h-2 bg-blue-500 rounded-full"></div>
+                                <span class="text-gray-600">Sent on ${formatDate(estimate.sent_at)}</span>
+                            </div>
+                        ` : ''}
+                        ${estimate.approved_at ? `
+                            <div class="flex items-center gap-3">
+                                <div class="w-2 h-2 bg-green-500 rounded-full"></div>
+                                <span class="text-gray-600">Approved on ${formatDate(estimate.approved_at)}</span>
+                            </div>
+                        ` : ''}
+                        ${estimate.declined_at ? `
+                            <div class="flex items-center gap-3">
+                                <div class="w-2 h-2 bg-red-500 rounded-full"></div>
+                                <span class="text-gray-600">Declined on ${formatDate(estimate.declined_at)}</span>
+                            </div>
+                        ` : ''}
+                        ${estimate.converted_at ? `
+                            <div class="flex items-center gap-3">
+                                <div class="w-2 h-2 bg-purple-500 rounded-full"></div>
+                                <span class="text-gray-600">Converted to Job on ${formatDate(estimate.converted_at)}</span>
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+
+                <!-- Actions -->
+                <div class="flex flex-wrap gap-3 pt-4 border-t border-gray-200">
+                    ${estimate.status === 'DRAFT' ? `
+                        <button onclick="editEstimate(${estimate.id})" class="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200">
+                            <i data-lucide="pencil" class="w-4 h-4 inline mr-2"></i>
+                            Edit
+                        </button>
+                        <button onclick="openSendModal(${estimate.id}, '${(estimate.customer_name || '').replace(/'/g, "\\'")}')" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                            <i data-lucide="send" class="w-4 h-4 inline mr-2"></i>
+                            Send to Customer
+                        </button>
+                        <button onclick="confirmDeleteEstimate(${estimate.id})" class="px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg">
+                            <i data-lucide="trash-2" class="w-4 h-4 inline mr-2"></i>
+                            Delete
+                        </button>
+                    ` : ''}
+                    ${estimate.status === 'SENT' ? `
+                        <button onclick="openSendModal(${estimate.id}, '${(estimate.customer_name || '').replace(/'/g, "\\'")}')" class="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200">
+                            <i data-lucide="send" class="w-4 h-4 inline mr-2"></i>
+                            Resend
+                        </button>
+                        <button onclick="markApproved(${estimate.id})" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
+                            <i data-lucide="check" class="w-4 h-4 inline mr-2"></i>
+                            Mark Approved
+                        </button>
+                        <button onclick="markDeclined(${estimate.id})" class="px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg">
+                            <i data-lucide="x" class="w-4 h-4 inline mr-2"></i>
+                            Mark Declined
+                        </button>
+                    ` : ''}
+                    ${estimate.status === 'APPROVED' ? `
+                        <button onclick="openConvertModal(${estimate.id})" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
+                            <i data-lucide="briefcase" class="w-4 h-4 inline mr-2"></i>
+                            Convert to Job
+                        </button>
+                    ` : ''}
+                    ${estimate.status === 'CONVERTED' && estimate.converted_job_id ? `
+                        <a href="/app/jobs/${estimate.converted_job_id}" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700">
+                            <i data-lucide="external-link" class="w-4 h-4 inline mr-2"></i>
+                            View Job #${estimate.converted_job_id}
+                        </a>
+                    ` : ''}
+                </div>
+            </div>
+        `;
+
+        lucide.createIcons();
+    } catch (error) {
+        console.error('Error loading estimate:', error);
+        content.innerHTML = `
+            <div class="p-6 text-center">
+                <i data-lucide="alert-circle" class="w-12 h-12 text-red-300 mx-auto mb-4"></i>
+                <p class="text-gray-500">Failed to load estimate</p>
+            </div>
+        `;
+        lucide.createIcons();
+    }
+}
+
+// ============================
+// NEW ESTIMATE DRAWER
+// ============================
+
+function openNewEstimateDrawer() {
+    const drawer = document.getElementById('new-estimate-drawer');
+    const content = drawer.querySelector('.drawer-content');
+
+    content.innerHTML = `
+        <form id="new-estimate-form" onsubmit="createEstimate(event)" class="h-full flex flex-col" data-validate-form>
+            <div class="flex-1 overflow-y-auto p-6 space-y-6">
+                <!-- Customer Selection -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Customer *</label>
+                    <div class="relative">
+                        <input type="text"
+                               id="est-customer-search"
+                               placeholder="Search for customer..."
+                               class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500"
+                               autocomplete="off">
+                        <input type="hidden" id="est-customer-id" name="customer_id" required data-validate="required">
+                        <div id="est-customer-results" class="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg hidden max-h-48 overflow-y-auto"></div>
+                    </div>
+                    <div id="est-selected-customer" class="hidden mt-2 p-3 bg-blue-50 rounded-lg">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <span id="est-selected-customer-name" class="font-medium text-blue-900"></span>
+                                <span id="est-selected-customer-email" class="text-sm text-blue-700 ml-2"></span>
+                            </div>
+                            <button type="button" onclick="clearEstCustomerSelection()" class="text-blue-600 hover:text-blue-800">
+                                <i data-lucide="x" class="w-4 h-4"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Vehicle Selection -->
+                <div id="est-vehicle-section" class="hidden">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Vehicle</label>
+                    <select id="est-vehicle-id" name="vehicle_id"
+                            class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500">
+                        <option value="">Select a vehicle (optional)</option>
+                    </select>
+                </div>
+
+                <!-- Tax Rate -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Tax Rate (%)</label>
+                    <input type="number" id="est-tax-rate" name="tax_rate" step="0.01" min="0" max="100" value="0"
+                           class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500"
+                           onchange="recalculateTotals()">
+                </div>
+
+                <!-- Line Items -->
+                <div>
+                    <div class="flex items-center justify-between mb-2">
+                        <label class="block text-sm font-medium text-gray-700">Line Items *</label>
+                        <button type="button" onclick="addLineItem()" class="text-sm text-blue-600 hover:text-blue-800">
+                            <i data-lucide="plus" class="w-4 h-4 inline mr-1"></i>
+                            Add Item
+                        </button>
+                    </div>
+                    <div id="line-items-container" class="space-y-3">
+                        <!-- Line items will be added here -->
+                    </div>
+                    <div id="no-items-message" class="text-center py-8 text-gray-500 border-2 border-dashed border-gray-200 rounded-lg">
+                        <i data-lucide="package" class="w-8 h-8 mx-auto mb-2 text-gray-300"></i>
+                        <p>No line items yet</p>
+                        <button type="button" onclick="addLineItem()" class="mt-2 text-blue-600 hover:text-blue-800 text-sm">
+                            Add your first item
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Totals -->
+                <div class="bg-gray-50 rounded-lg p-4 space-y-2">
+                    <div class="flex justify-between text-gray-600">
+                        <span>Subtotal</span>
+                        <span id="est-subtotal">$0.00</span>
+                    </div>
+                    <div class="flex justify-between text-gray-600">
+                        <span>Tax (<span id="est-tax-rate-display">0</span>%)</span>
+                        <span id="est-tax-amount">$0.00</span>
+                    </div>
+                    <div class="flex justify-between text-lg font-bold text-gray-900 pt-2 border-t border-gray-200">
+                        <span>Total</span>
+                        <span id="est-total">$0.00</span>
+                    </div>
+                </div>
+
+                <!-- Notes -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+                    <textarea id="est-notes" name="notes" rows="3"
+                              class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500"
+                              placeholder="Internal notes about this estimate..."></textarea>
+                </div>
+
+                <!-- Terms -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Terms & Conditions</label>
+                    <textarea id="est-terms" name="terms" rows="3"
+                              class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500">Estimate valid for 30 days. Subject to change upon inspection. Payment due upon completion of work.</textarea>
+                </div>
+            </div>
+
+            <!-- Actions -->
+            <div class="border-t border-gray-200 p-4 bg-white">
+                <div class="flex justify-end gap-3">
+                    <button type="button" onclick="closeDrawer('new-estimate-drawer')"
+                            class="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">
+                        Cancel
+                    </button>
+                    <button type="submit" name="action" value="draft"
+                            class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700">
+                        Save as Draft
+                    </button>
+                    <button type="submit" name="action" value="send"
+                            class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                        <i data-lucide="send" class="w-4 h-4 inline mr-2"></i>
+                        Save & Send
+                    </button>
+                </div>
+            </div>
+        </form>
+    `;
+
+    // Setup customer search
+    setupEstCustomerSearch();
+
+    // Show drawer
+    drawer.classList.remove('hidden');
+    setTimeout(() => drawer.querySelector('.drawer-panel')?.classList.remove('translate-x-full'), 10);
+
+    lucide.createIcons();
+}
+
+// Customer search for estimate form
+function setupEstCustomerSearch() {
+    const input = document.getElementById('est-customer-search');
+    const results = document.getElementById('est-customer-results');
+    let searchTimeout;
+
+    input.addEventListener('input', async (e) => {
+        clearTimeout(searchTimeout);
+        const query = e.target.value.trim();
+
+        if (query.length < 2) {
+            results.classList.add('hidden');
+            return;
+        }
+
+        searchTimeout = setTimeout(async () => {
+            try {
+                const response = await customersApi.search(query);
+                const customers = response.customers || [];
+
+                if (customers.length === 0) {
+                    results.innerHTML = '<div class="p-3 text-gray-500 text-sm">No customers found</div>';
+                } else {
+                    results.innerHTML = customers.map(c => `
+                        <button type="button"
+                                onclick="selectEstCustomer(${c.id}, '${(c.name || '').replace(/'/g, "\\'")}', '${(c.email || '').replace(/'/g, "\\'")}')"
+                                class="w-full text-left px-4 py-3 hover:bg-gray-50 border-b border-gray-100 last:border-0">
+                            <div class="font-medium text-gray-900">${c.name || 'Unknown'}</div>
+                            <div class="text-sm text-gray-500">${c.email || ''} ${c.phone ? '| ' + c.phone : ''}</div>
+                        </button>
+                    `).join('');
+                }
+
+                results.classList.remove('hidden');
+            } catch (error) {
+                console.error('Error searching customers:', error);
+            }
+        }, 300);
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('#est-customer-search') && !e.target.closest('#est-customer-results')) {
+            results.classList.add('hidden');
+        }
+    });
+}
+
+// Select customer for estimate
+async function selectEstCustomer(id, name, email) {
+    document.getElementById('est-customer-id').value = id;
+    document.getElementById('est-selected-customer-name').textContent = name;
+    document.getElementById('est-selected-customer-email').textContent = email;
+    document.getElementById('est-selected-customer').classList.remove('hidden');
+    document.getElementById('est-customer-search').classList.add('hidden');
+    document.getElementById('est-customer-results').classList.add('hidden');
+
+    // Load customer's vehicles
+    try {
+        const response = await customersApi.get(id);
+        const vehicles = response.vehicles || [];
+
+        const vehicleSelect = document.getElementById('est-vehicle-id');
+        vehicleSelect.innerHTML = '<option value="">Select a vehicle (optional)</option>';
+
+        if (vehicles.length > 0) {
+            vehicles.forEach(v => {
+                const option = document.createElement('option');
+                option.value = v.id;
+                option.textContent = `${v.year || ''} ${v.make || ''} ${v.model || ''} ${v.vin ? '(' + v.vin + ')' : ''}`.trim();
+                vehicleSelect.appendChild(option);
+            });
+            document.getElementById('est-vehicle-section').classList.remove('hidden');
+        } else {
+            document.getElementById('est-vehicle-section').classList.add('hidden');
+        }
+    } catch (error) {
+        console.error('Error loading customer vehicles:', error);
+    }
+
+    lucide.createIcons();
+}
+
+// Clear customer selection
+function clearEstCustomerSelection() {
+    document.getElementById('est-customer-id').value = '';
+    document.getElementById('est-selected-customer').classList.add('hidden');
+    document.getElementById('est-customer-search').classList.remove('hidden');
+    document.getElementById('est-customer-search').value = '';
+    document.getElementById('est-vehicle-section').classList.add('hidden');
+    lucide.createIcons();
+}
+
+// Line item counter
+let lineItemCounter = 0;
+
+// Add line item to form
+function addLineItem() {
+    lineItemCounter++;
+    const container = document.getElementById('line-items-container');
+    document.getElementById('no-items-message').classList.add('hidden');
+
+    const itemHtml = `
+        <div id="line-item-${lineItemCounter}" class="bg-white border border-gray-200 rounded-lg p-4">
+            <div class="flex items-start gap-4">
+                <div class="flex-1 grid grid-cols-12 gap-3">
+                    <div class="col-span-3">
+                        <label class="block text-xs font-medium text-gray-500 mb-1">Service Type</label>
+                        <select name="items[${lineItemCounter}][service_type]" onchange="updateLineTotal(${lineItemCounter})"
+                                class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500">
+                            ${serviceTypes.map(st => `<option value="${st.value}">${st.label}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="col-span-5">
+                        <label class="block text-xs font-medium text-gray-500 mb-1">Description</label>
+                        <input type="text" name="items[${lineItemCounter}][description]" required
+                               class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                               placeholder="Service description">
+                    </div>
+                    <div class="col-span-1">
+                        <label class="block text-xs font-medium text-gray-500 mb-1">Qty</label>
+                        <input type="number" name="items[${lineItemCounter}][quantity]" value="1" min="1" step="1"
+                               class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 line-qty"
+                               data-item="${lineItemCounter}"
+                               onchange="updateLineTotal(${lineItemCounter})">
+                    </div>
+                    <div class="col-span-2">
+                        <label class="block text-xs font-medium text-gray-500 mb-1">Unit Price</label>
+                        <input type="number" name="items[${lineItemCounter}][unit_price]" value="0" min="0" step="0.01"
+                               class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 line-price"
+                               data-item="${lineItemCounter}"
+                               onchange="updateLineTotal(${lineItemCounter})">
+                    </div>
+                    <div class="col-span-1">
+                        <label class="block text-xs font-medium text-gray-500 mb-1">Total</label>
+                        <div id="line-total-${lineItemCounter}" class="px-3 py-2 text-sm font-medium text-gray-900">$0.00</div>
+                    </div>
+                </div>
+                <button type="button" onclick="removeLineItem(${lineItemCounter})" class="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg mt-5">
+                    <i data-lucide="trash-2" class="w-4 h-4"></i>
+                </button>
+            </div>
+        </div>
+    `;
+
+    container.insertAdjacentHTML('beforeend', itemHtml);
+    lucide.createIcons();
+}
+
+// Remove line item
+function removeLineItem(id) {
+    document.getElementById(`line-item-${id}`).remove();
+
+    // Check if any items remain
+    const container = document.getElementById('line-items-container');
+    if (container.children.length === 0) {
+        document.getElementById('no-items-message').classList.remove('hidden');
+    }
+
+    recalculateTotals();
+}
+
+// Update line total
+function updateLineTotal(id) {
+    const qty = parseFloat(document.querySelector(`input[name="items[${id}][quantity]"]`)?.value) || 0;
+    const price = parseFloat(document.querySelector(`input[name="items[${id}][unit_price]"]`)?.value) || 0;
+    const total = qty * price;
+
+    document.getElementById(`line-total-${id}`).textContent = formatCurrency(total);
+    recalculateTotals();
+}
+
+// Recalculate totals
+function recalculateTotals() {
+    let subtotal = 0;
+
+    // Sum all line items
+    document.querySelectorAll('#line-items-container > div').forEach(item => {
+        const itemId = item.id.replace('line-item-', '');
+        const qty = parseFloat(document.querySelector(`input[name="items[${itemId}][quantity]"]`)?.value) || 0;
+        const price = parseFloat(document.querySelector(`input[name="items[${itemId}][unit_price]"]`)?.value) || 0;
+        subtotal += qty * price;
+    });
+
+    const taxRate = parseFloat(document.getElementById('est-tax-rate')?.value) || 0;
+    const taxAmount = subtotal * (taxRate / 100);
+    const total = subtotal + taxAmount;
+
+    document.getElementById('est-subtotal').textContent = formatCurrency(subtotal);
+    document.getElementById('est-tax-rate-display').textContent = taxRate;
+    document.getElementById('est-tax-amount').textContent = formatCurrency(taxAmount);
+    document.getElementById('est-total').textContent = formatCurrency(total);
+}
+
+// Create estimate
+async function createEstimate(event) {
+    event.preventDefault();
+
+    const form = event.target;
+    const formData = new FormData(form);
+    const action = event.submitter?.value || 'draft';
+
+    // Collect line items
+    const items = [];
+    document.querySelectorAll('#line-items-container > div').forEach(item => {
+        const itemId = item.id.replace('line-item-', '');
+        items.push({
+            service_type: document.querySelector(`select[name="items[${itemId}][service_type]"]`)?.value,
+            description: document.querySelector(`input[name="items[${itemId}][description]"]`)?.value,
+            quantity: parseFloat(document.querySelector(`input[name="items[${itemId}][quantity]"]`)?.value) || 1,
+            unit_price: parseFloat(document.querySelector(`input[name="items[${itemId}][unit_price]"]`)?.value) || 0
+        });
+    });
+
+    if (items.length === 0) {
+        alert('Please add at least one line item');
+        return;
+    }
+
+    const data = {
+        customer_id: parseInt(formData.get('customer_id')),
+        vehicle_id: formData.get('vehicle_id') ? parseInt(formData.get('vehicle_id')) : null,
+        tax_rate: parseFloat(formData.get('tax_rate')) || 0,
+        notes: formData.get('notes') || '',
+        terms: formData.get('terms') || '',
+        items: items
+    };
+
+    try {
+        const estimate = await estimatesApi.create(data);
+
+        if (action === 'send') {
+            await estimatesApi.send(estimate.id);
+        }
+
+        closeDrawer('new-estimate-drawer');
+        loadEstimates();
+    } catch (error) {
+        console.error('Error creating estimate:', error);
+    }
+}
+
+// ============================
+// ACTIONS
+// ============================
+
+// Send modal
+function openSendModal(id, customerName) {
+    pendingSendId = id;
+    document.getElementById('send-customer-name').textContent = customerName;
+    document.getElementById('send-modal').classList.remove('hidden');
+    lucide.createIcons();
+}
+
+function closeSendModal() {
+    pendingSendId = null;
+    document.getElementById('send-modal').classList.add('hidden');
+}
+
+async function confirmSendEstimate() {
+    if (!pendingSendId) return;
+
+    try {
+        await estimatesApi.send(pendingSendId);
+        closeSendModal();
+        closeDrawer('estimate-detail-drawer');
+        loadEstimates();
+    } catch (error) {
+        console.error('Error sending estimate:', error);
+    }
+}
+
+// Convert modal
+function openConvertModal(id) {
+    pendingConvertId = id;
+    document.getElementById('convert-modal').classList.remove('hidden');
+    lucide.createIcons();
+}
+
+function closeConvertModal() {
+    pendingConvertId = null;
+    document.getElementById('convert-modal').classList.add('hidden');
+}
+
+async function confirmConvertToJob() {
+    if (!pendingConvertId) return;
+
+    try {
+        const result = await estimatesApi.convertToJob(pendingConvertId);
+        closeConvertModal();
+        closeDrawer('estimate-detail-drawer');
+        loadEstimates();
+
+        if (result.job_id) {
+            if (confirm('Job created successfully! Would you like to view it?')) {
+                window.location.href = `/app/jobs/${result.job_id}`;
+            }
+        }
+    } catch (error) {
+        console.error('Error converting to job:', error);
+    }
+}
+
+// Mark approved
+async function markApproved(id) {
+    if (!confirm('Mark this estimate as approved?')) return;
+
+    try {
+        await estimatesApi.approve(id);
+        closeDrawer('estimate-detail-drawer');
+        loadEstimates();
+    } catch (error) {
+        console.error('Error approving estimate:', error);
+    }
+}
+
+// Mark declined
+async function markDeclined(id) {
+    const reason = prompt('Reason for declining (optional):');
+    if (reason === null) return; // Cancelled
+
+    try {
+        await estimatesApi.decline(id, reason);
+        closeDrawer('estimate-detail-drawer');
+        loadEstimates();
+    } catch (error) {
+        console.error('Error declining estimate:', error);
+    }
+}
+
+// Edit estimate
+function editEstimate(id) {
+    closeDrawer('estimate-detail-drawer');
+    // Open new estimate drawer with data pre-filled
+    // For now, redirect to form page
+    window.location.href = `/app/estimates/${id}/edit`;
+}
+
+// Delete estimate
+async function confirmDeleteEstimate(id) {
+    if (!confirm('Are you sure you want to delete this estimate? This action cannot be undone.')) return;
+
+    try {
+        await estimatesApi.delete(id);
+        closeDrawer('estimate-detail-drawer');
+        loadEstimates();
+    } catch (error) {
+        console.error('Error deleting estimate:', error);
+    }
+}
+
+// ============================
+// DRAWER MANAGEMENT
+// ============================
+
+function closeDrawer(id) {
+    const drawer = document.getElementById(id);
+    if (!drawer) return;
+
+    const panel = drawer.querySelector('.drawer-panel');
+    if (panel) panel.classList.add('translate-x-full');
+
+    setTimeout(() => drawer.classList.add('hidden'), 300);
+}
+
+// Close drawer on backdrop click
+document.addEventListener('click', (e) => {
+    if (e.target.classList.contains('drawer-backdrop')) {
+        const drawer = e.target.closest('[id$="-drawer"]');
+        if (drawer) closeDrawer(drawer.id);
+    }
+});
+
+// Close drawer on Escape
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        ['estimate-detail-drawer', 'new-estimate-drawer'].forEach(id => {
+            const drawer = document.getElementById(id);
+            if (drawer && !drawer.classList.contains('hidden')) {
+                closeDrawer(id);
+            }
+        });
+        closeSendModal();
+        closeConvertModal();
+    }
+});
+</script>
+{% endblock %}

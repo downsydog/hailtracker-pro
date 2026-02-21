@@ -1,0 +1,170 @@
+{#
+    Drawer (Slide-out Panel) Component
+    ===================================
+    Usage:
+    from 'components/ui/_drawer.html' import drawer, drawer_trigger
+
+    Trigger button:
+    drawer_trigger('lead-drawer', 'View Details', icon='eye')
+
+    Drawer panel - place at end of page:
+    call drawer('lead-drawer', title='Lead Details', size='md')
+        <div class="space-y-4">
+            <p>Your drawer content here...</p>
+        </div>
+    endcall
+
+    Sizes: sm (320px), md (480px), lg (640px), xl (800px), full (100%)
+    Positions: right (default), left
+#}
+
+{% macro drawer_trigger(drawer_id, label=None, icon=None, variant='secondary', class='') %}
+<button type="button"
+        onclick="openDrawer('{{ drawer_id }}')"
+        class="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-colors {{ class }}
+               {% if variant == 'primary' %}bg-blue-600 text-white hover:bg-blue-700
+               {% elif variant == 'ghost' %}text-gray-600 hover:text-gray-900 hover:bg-gray-100
+               {% else %}bg-white text-gray-700 border border-gray-300 hover:bg-gray-50{% endif %}">
+    {% if icon %}<i data-lucide="{{ icon }}" class="w-4 h-4"></i>{% endif %}
+    {% if label %}{{ label }}{% endif %}
+</button>
+{% endmacro %}
+
+
+{% macro drawer(id, title=None, subtitle=None, size='md', position='right', footer=None) %}
+{% set sizes = {'sm': 'max-w-sm', 'md': 'max-w-md', 'lg': 'max-w-lg', 'xl': 'max-w-3xl', 'full': 'max-w-full'} %}
+{% set size_class = sizes.get(size, sizes.md) %}
+
+{# Backdrop #}
+<div id="{{ id }}-backdrop"
+     class="fixed inset-0 bg-black/50 z-40 opacity-0 invisible transition-opacity duration-300"
+     onclick="closeDrawer('{{ id }}')">
+</div>
+
+{# Drawer Panel #}
+<div id="{{ id }}"
+     class="fixed top-0 bottom-0 {{ 'right-0' if position == 'right' else 'left-0' }} w-full {{ size_class }} bg-white shadow-xl z-50
+            transform {{ 'translate-x-full' if position == 'right' else '-translate-x-full' }} transition-transform duration-300 ease-out
+            flex flex-col"
+     data-drawer
+     data-position="{{ position }}"
+     role="dialog"
+     aria-modal="true"
+     aria-labelledby="{{ id }}-title">
+
+    {# Header #}
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+        <div>
+            {% if title %}
+            <h2 id="{{ id }}-title" class="text-lg font-semibold text-gray-900">{{ title }}</h2>
+            {% endif %}
+            {% if subtitle %}
+            <p id="{{ id }}-subtitle" class="mt-0.5 text-sm text-gray-500">{{ subtitle }}</p>
+            {% endif %}
+        </div>
+        <button type="button"
+                onclick="closeDrawer('{{ id }}')"
+                class="p-2 -mr-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                aria-label="Close">
+            <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+    </div>
+
+    {# Content #}
+    <div class="flex-1 overflow-y-auto px-6 py-4 drawer-content">
+        {% if caller is defined %}{{ caller() }}{% endif %}
+    </div>
+
+    {# Footer (optional) #}
+    {% if footer %}
+    <div class="px-6 py-4 border-t border-gray-200 bg-gray-50">
+        {{ footer | safe }}
+    </div>
+    {% endif %}
+</div>
+
+{# Drawer Script (only rendered once) #}
+{% if not drawer_script_loaded %}
+{% set drawer_script_loaded = true %}
+<script>
+// Store trigger element for focus return
+let drawerTriggerElement = null;
+
+function openDrawer(id) {
+    const drawer = document.getElementById(id);
+    const backdrop = document.getElementById(id + '-backdrop');
+    const position = drawer.dataset.position || 'right';
+
+    // Store the element that triggered the drawer for focus return
+    drawerTriggerElement = document.activeElement;
+
+    backdrop.classList.remove('opacity-0', 'invisible');
+    backdrop.classList.add('opacity-100');
+
+    drawer.classList.remove(position === 'right' ? 'translate-x-full' : '-translate-x-full');
+    drawer.classList.add('translate-x-0');
+
+    document.body.style.overflow = 'hidden';
+
+    // Focus first focusable element (close button or first input)
+    setTimeout(() => {
+        const closeBtn = drawer.querySelector('button[aria-label="Close"]');
+        const focusable = drawer.querySelector('input, select, textarea, [tabindex]:not([tabindex="-1"])');
+        (focusable || closeBtn)?.focus();
+    }, 100);
+
+    // Setup focus trap
+    setupFocusTrap(drawer);
+}
+
+function closeDrawer(id) {
+    const drawer = document.getElementById(id);
+    const backdrop = document.getElementById(id + '-backdrop');
+    const position = drawer.dataset.position || 'right';
+
+    backdrop.classList.add('opacity-0', 'invisible');
+    backdrop.classList.remove('opacity-100');
+
+    drawer.classList.add(position === 'right' ? 'translate-x-full' : '-translate-x-full');
+    drawer.classList.remove('translate-x-0');
+
+    document.body.style.overflow = '';
+
+    // Return focus to trigger element
+    if (drawerTriggerElement) {
+        drawerTriggerElement.focus();
+        drawerTriggerElement = null;
+    }
+}
+
+// Focus trap for accessibility
+function setupFocusTrap(container) {
+    const focusableSelector = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+
+    container.addEventListener('keydown', function(e) {
+        if (e.key !== 'Tab') return;
+
+        const focusableElements = container.querySelectorAll(focusableSelector);
+        const firstElement = focusableElements[0];
+        const lastElement = focusableElements[focusableElements.length - 1];
+
+        if (e.shiftKey && document.activeElement === firstElement) {
+            e.preventDefault();
+            lastElement.focus();
+        } else if (!e.shiftKey && document.activeElement === lastElement) {
+            e.preventDefault();
+            firstElement.focus();
+        }
+    });
+}
+
+// Close on Escape key
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        const openDrawer = document.querySelector('[data-drawer].translate-x-0');
+        if (openDrawer) closeDrawer(openDrawer.id);
+    }
+});
+</script>
+{% endif %}
+{% endmacro %}

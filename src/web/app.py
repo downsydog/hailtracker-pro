@@ -104,6 +104,10 @@ def create_app(config=None):
     login_manager.login_message = 'Please log in to access this page.'
     login_manager.login_message_category = 'info'
 
+    # Bootstrap PG auth tables/seeds (no-op on SQLite)
+    from src.db.pg_bootstrap import pg_bootstrap
+    pg_bootstrap()
+
     # Initialize auth manager
     auth_manager = AuthManager()
 
